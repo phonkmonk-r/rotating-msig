@@ -31,6 +31,8 @@ export interface SafeState {
   /** The guard read from the Safe's storage is enabled as module, transaction guard and module guard. */
   installed: boolean;
   epoch: bigint;
+  /** Slot IDs handed out so far; the next added signer gets this ID. */
+  slotCount: number;
   slots: SlotState[];
   /** Owners not tracked by any slot. Only possible when the guard is not installed (or broken). */
   unmanagedOwners: Address[];
@@ -69,7 +71,7 @@ export async function readSafeState(client: PublicClient, safe: Address, guardAd
     moduleGuard,
   };
   if (isAddressEqual(target, ZERO_ADDRESS)) {
-    return { ...base, installed: false, epoch: 0n, slots: [], unmanagedOwners: [...owners], bufferSize: 0 };
+    return { ...base, installed: false, epoch: 0n, slotCount: 0, slots: [], unmanagedOwners: [...owners], bufferSize: 0 };
   }
 
   const [moduleEnabled, config, bufferSize] = await Promise.all([
@@ -107,7 +109,7 @@ export async function readSafeState(client: PublicClient, safe: Address, guardAd
   );
   slots.sort((a, b) => a.slotId - b.slotId);
 
-  return { ...base, installed, epoch: config[0], slots, unmanagedOwners, bufferSize: Number(bufferSize) };
+  return { ...base, installed, epoch: config[0], slotCount: Number(config[1]), slots, unmanagedOwners, bufferSize: Number(bufferSize) };
 }
 
 export type Severity = "critical" | "warning";

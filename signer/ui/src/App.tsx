@@ -242,7 +242,7 @@ function Shell({
         {status && page === "overview" && <Overview status={status} queue={queue} onOpenTransactions={() => setPage("transactions")} />}
         {status && page === "transactions" && <Transactions status={status} queue={queue} onBusy={data.setBusy} onRefresh={() => void data.refresh()} />}
         {status && page === "browse" && <Browse status={status} request={dappRequest} />}
-        {status && page === "signers" && <Signers status={status} />}
+        {status && page === "signers" && <Signers status={status} pending={queue.length} />}
         {status && page === "settings" && desktopState && <Settings status={status} desktopState={desktopState} onChangeSafe={onChangeSafe!} onLock={onLock!} onProfileChanged={onProfileChanged!} onSwitchProfile={onSwitchProfile!} />}
       </main>
     </div>

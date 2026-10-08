@@ -95,6 +95,15 @@ export interface CreatingView {
   estimatedCost?: string;
 }
 
+/** This signer being added to an existing Safe, waiting for the slot to be created. */
+export interface AddingView {
+  safe: string;
+  chainId: number;
+  chainName: string;
+  slotId: number;
+  myPackage: string;
+}
+
 export type CreateStage = "deploying" | "installing" | "done" | "joining";
 
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -138,6 +147,10 @@ interface DesktopBridge {
   createLaunch(): Promise<Result<true>>;
   createCheck(): Promise<Result<boolean>>;
   createCancel(): Promise<Result<true>>;
+  addingState(): Promise<Result<AddingView | null>>;
+  addingPrepare(safe: string): Promise<Result<true>>;
+  addingCheck(): Promise<Result<boolean>>;
+  addingCancel(): Promise<Result<true>>;
   onCreateStage(listener: (stage: CreateStage) => void): () => void;
   onBrowserState(listener: (state: BrowserState) => void): () => void;
   onBrowserRequest(listener: (request: DappRequest | null) => void): () => void;
@@ -224,6 +237,10 @@ export const desktop = bridge
       createLaunch: () => unwrap(bridge.createLaunch()),
       createCheck: () => unwrap(bridge.createCheck()),
       createCancel: () => unwrap(bridge.createCancel()),
+      addingState: () => unwrap(bridge.addingState()),
+      addingPrepare: (safe: string) => unwrap(bridge.addingPrepare(safe)),
+      addingCheck: () => unwrap(bridge.addingCheck()),
+      addingCancel: () => unwrap(bridge.addingCancel()),
       onCreateStage: (listener: (stage: CreateStage) => void) => bridge.onCreateStage(listener),
     }
   : undefined;

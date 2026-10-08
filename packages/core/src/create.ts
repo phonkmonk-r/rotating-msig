@@ -185,6 +185,36 @@ export function createSlotPackage(invite: SafeInvite, { file, tree }: LoadedTree
   };
 }
 
+/**
+ * Every reason a single package does not fit `expected`: wrong Safe or slot, a first key that is not index 0, staged
+ * keys that are not indexes 1 to 5, or any key not proven against the package's root.
+ */
+export function checkPackage(pkg: SlotPackage, expected: { chainId: number; safe: Address; slotId: number }): string[] {
+  const errors: string[] = [];
+  if (pkg.slotId !== expected.slotId) errors.push(`the package is for slot ${pkg.slotId}`);
+  if (pkg.chainId !== expected.chainId || !isAddressEqual(pkg.safe, expected.safe)) errors.push("the package is for another Safe");
+  const { config } = pkg;
+  if (config.startIndex !== 0) errors.push("the slot must start at index 0");
+  if (config.size < INSTALL_STAGE_COUNT + 1) errors.push("the tree is too small");
+  if (pkg.stage.length !== INSTALL_STAGE_COUNT || pkg.stage.some((entry, i) => entry.index !== i + 1)) errors.push(`staged keys must be indexes 1 to ${INSTALL_STAGE_COUNT}`);
+  const meta = { chainId: expected.chainId, safe: expected.safe, slotId: expected.slotId, base: pkg.base };
+  for (const entry of packageKeys(pkg)) {
+    let valid = false;
+    try {
+      valid = StandardMerkleTree.verify(config.root, [...LEAF_TYPES], leafValue(meta, entry.index, getAddress(entry.owner)), entry.proof);
+    } catch {
+      valid = false;
+    }
+    if (!valid) errors.push(`key ${entry.index} is not in the slot's tree`);
+  }
+  return errors;
+}
+
+/** The package's first owner followed by its staged keys. */
+export function packageKeys(pkg: SlotPackage): StageEntry[] {
+  return [{ index: pkg.config.startIndex, owner: pkg.config.owner, proof: pkg.config.proof }, ...pkg.stage];
+}
+
 /** Every reason a package must not go into the install, checked against the invite and the other packages. */
 export function verifyPackages(invite: SafeInvite, packages: readonly SlotPackage[]): string[] {
   const errors: string[] = [];
@@ -197,23 +227,10 @@ export function verifyPackages(invite: SafeInvite, packages: readonly SlotPackag
       errors.push(`${label}: missing`);
       continue;
     }
-    if (pkg.slotId !== slot) errors.push(`${label}: the package is for slot ${pkg.slotId}`);
-    if (pkg.chainId !== invite.chainId || !isAddressEqual(pkg.safe, invite.safe)) errors.push(`${label}: the package is for another Safe`);
+    for (const error of checkPackage(pkg, { chainId: invite.chainId, safe: invite.safe, slotId: slot })) errors.push(`${label}: ${error}`);
     if (!isAddressEqual(pkg.operator, invite.owners[slot]!)) errors.push(`${label}: the package is from ${pkg.operator}, not ${invite.owners[slot]}`);
     const { config } = pkg;
-    if (config.startIndex !== 0) errors.push(`${label}: the slot must start at index 0`);
-    if (config.size < INSTALL_STAGE_COUNT + 1) errors.push(`${label}: the tree is too small`);
-    if (pkg.stage.length !== INSTALL_STAGE_COUNT || pkg.stage.some((entry, i) => entry.index !== i + 1)) errors.push(`${label}: staged keys must be indexes 1 to ${INSTALL_STAGE_COUNT}`);
-
-    const meta = { chainId: invite.chainId, safe: invite.safe, slotId: slot, base: pkg.base };
-    for (const entry of [{ index: 0, owner: config.owner, proof: config.proof }, ...pkg.stage]) {
-      let valid = false;
-      try {
-        valid = StandardMerkleTree.verify(config.root, [...LEAF_TYPES], leafValue(meta, entry.index, getAddress(entry.owner)), entry.proof);
-      } catch {
-        valid = false;
-      }
-      if (!valid) errors.push(`${label}: key ${entry.index} is not in the slot's tree`);
+    for (const entry of packageKeys(pkg)) {
       const key = entry.owner.toLowerCase();
       if (invite.owners.some((owner) => isAddressEqual(owner, entry.owner))) errors.push(`${label}: key ${entry.index} is an operator account`);
       const other = seenAddresses.get(key);

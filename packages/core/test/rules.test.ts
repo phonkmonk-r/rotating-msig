@@ -35,6 +35,7 @@ function state(overrides: Partial<SafeState> = {}): SafeState {
     moduleGuard: GUARD,
     installed: true,
     epoch: 1n,
+    slotCount: 3,
     slots: [slot(0, A), slot(1, B), slot(2, C)],
     unmanagedOwners: [],
     bufferSize: 5,
@@ -125,14 +126,14 @@ describe("decodeActions", () => {
     const tx = batch([guardCalls.forceRotate(GUARD, [2]), safeCalls.changeThreshold(SAFE, 3), { to: B, value: 5n * 10n ** 17n, data: "0x", operation: 0 }]);
     const actions = decodeActions(tx, DECODE);
     assert.deepEqual(actions.map((a) => a.kind), ["guard-admin", "safe-admin", "transfer"]);
-    assert.match(actions[0]!.summary, /forceRotate\(\[2\]\)/);
-    assert.match(actions[1]!.summary, /changeThreshold\(3\)/);
+    assert.match(actions[0]!.summary, /Rotate slot\(s\) 2 to their next keys/);
+    assert.match(actions[1]!.summary, /Require 3 signature\(s\)/);
     assert.match(actions[2]!.summary, /Send 0.5 ETH/);
   });
 
   it("summarises staging compactly and decodes ERC-20 transfers", () => {
     const stage = guardCalls.stage(GUARD, SAFE, 1, [{ index: 6, owner: A, proof: [] }]);
-    assert.match(decodeActions(stage, DECODE)[0]!.summary, /stage\(0x1111…1111, 1, 1 entries\)/i);
+    assert.match(decodeActions(stage, DECODE)[0]!.summary, /Stage 1 next key\(s\) for slot 1/);
     const token = { to: C, value: 0n, data: "0xa9059cbb000000000000000000000000aaaa0000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000064" as Hex, operation: 0 as const };
     assert.match(decodeActions(token, DECODE)[0]!.summary, /Transfer 100 units of token 0xcccc…0003 to 0xaaaa…0001/i);
   });

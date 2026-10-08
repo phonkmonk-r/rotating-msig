@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { formatEther } from "viem";
 
-import { desktop, type CreateStage, type CreatingView, type DesktopState, type JoinProgress } from "./api";
+import { desktop, type AddingView, type CreateStage, type CreatingView, type DesktopState, type JoinProgress } from "./api";
 import { IconCheck, IconCopy, IconPlus } from "./icons";
 import { JoinSafe } from "./JoinSafe";
 import { Address, Avatar, Badge } from "./ui";
@@ -9,25 +9,32 @@ import { Address, Avatar, Badge } from "./ui";
 const CHECK_MS = 15_000;
 const SEPOLIA = 11155111;
 
-type Choice = "join" | "create" | "invite";
+type Choice = "join" | "create" | "invite" | "added";
 
 /** First connection: join an existing Safe, create a new one, or prepare a slot from an invite. */
 export function Setup({ state, onDone, onCancel }: { state: DesktopState; onDone: () => void; onCancel?: () => void }) {
   const [choice, setChoice] = useState<Choice>();
   const [creating, setCreating] = useState<CreatingView | null>();
+  const [adding, setAdding] = useState<AddingView | null>();
 
-  const reload = useCallback(async () => setCreating(await desktop!.creatingState()), []);
+  const reload = useCallback(async () => {
+    const [nextCreating, nextAdding] = await Promise.all([desktop!.creatingState(), desktop!.addingState()]);
+    setCreating(nextCreating);
+    setAdding(nextAdding);
+  }, []);
   useEffect(() => {
     void reload();
   }, [reload]);
 
-  if (creating === undefined) return null;
+  if (creating === undefined || adding === undefined) return null;
+  if (adding) return <AddedRoom view={adding} onChange={() => void reload()} onDone={onDone} />;
   if (creating?.role === "creator") return <CreatorRoom view={creating} onChange={() => void reload()} onDone={onDone} />;
   if (creating?.role === "signer") return <SignerRoom view={creating} onChange={() => void reload()} onDone={onDone} />;
 
   if (choice === "join") return <JoinSafe initial={state} onDone={onDone} onCancel={() => setChoice(undefined)} />;
   if (choice === "create") return <CreateForm operator={state.vault.operator!} onBack={() => setChoice(undefined)} onPlanned={() => void reload()} />;
   if (choice === "invite") return <InviteForm onBack={() => setChoice(undefined)} onAccepted={() => void reload()} />;
+  if (choice === "added") return <AddedForm onBack={() => setChoice(undefined)} onPrepared={() => void reload()} />;
 
   return (
     <div className="auth-card">
@@ -37,6 +44,7 @@ export function Setup({ state, onDone, onCancel }: { state: DesktopState; onDone
         <ChoiceButton title="Join a Safe" note="Its rotation is already set up" onClick={() => setChoice("join")} />
         <ChoiceButton title="Create a new Safe" note="You invite the other signers" onClick={() => setChoice("create")} />
         <ChoiceButton title="I have an invite" note="Someone is creating a Safe with you" onClick={() => setChoice("invite")} />
+        <ChoiceButton title="I'm being added to a Safe" note="Its signers will add you as a new signer" onClick={() => setChoice("added")} />
       </div>
       {state.vault.operator && (
         <div className="operator-box">
@@ -424,6 +432,111 @@ function SignerRoom({ view, onChange, onDone }: { view: CreatingView; onChange: 
       <div className="form-actions">
         <button type="button" onClick={() => void desktop!.createCancel().then(onChange)} disabled={checking}>
           Leave
+        </button>
+        <button type="button" className="primary" onClick={() => void check()} disabled={checking}>
+          {checking ? "Checking…" : "Check now"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AddedForm({ onBack, onPrepared }: { onBack: () => void; onPrepared: () => void }) {
+  const [safe, setSafe] = useState("");
+  const [error, setError] = useState<string>();
+  const [working, setWorking] = useState(false);
+  const { percent } = useDeriving();
+  const valid = /^0x[0-9a-fA-F]{40}$/.test(safe.trim());
+
+  async function submit() {
+    setWorking(true);
+    setError(undefined);
+    try {
+      await desktop!.addingPrepare(safe.trim());
+      onPrepared();
+    } catch (caught) {
+      const message = (caught as Error).message;
+      setError(message.charAt(0).toUpperCase() + message.slice(1));
+      setWorking(false);
+    }
+  }
+
+  return (
+    <form
+      className="auth-card"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (valid && !working) void submit();
+      }}
+    >
+      <h2>Join as a new signer</h2>
+      <p className="muted">Enter the Safe's address. The app generates your keys for its next slot and gives you a package for its signers.</p>
+      <label className="field">
+        <span className="field-label">Safe address</span>
+        <input placeholder="0x…" spellCheck={false} value={safe} onChange={(e) => setSafe(e.target.value)} disabled={working} />
+      </label>
+      {working && <Progress label="Generating your keys" percent={percent} />}
+      {error && <div className="note critical">{error}</div>}
+      <div className="form-actions">
+        <button type="button" onClick={onBack} disabled={working}>
+          Back
+        </button>
+        <button type="submit" className="primary" disabled={!valid || working}>
+          {working ? "Preparing…" : "Continue"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function AddedRoom({ view, onChange, onDone }: { view: AddingView; onChange: () => void; onDone: () => void }) {
+  const [error, setError] = useState<string>();
+  const [checking, setChecking] = useState(false);
+  const { percent, progress } = useDeriving();
+
+  const check = useCallback(async () => {
+    setChecking(true);
+    setError(undefined);
+    try {
+      if (await desktop!.addingCheck()) onDone();
+    } catch (caught) {
+      setError((caught as Error).message);
+    } finally {
+      setChecking(false);
+    }
+  }, [onDone]);
+
+  useEffect(() => {
+    const timer = setInterval(() => void check(), CHECK_MS);
+    return () => clearInterval(timer);
+  }, [check]);
+
+  return (
+    <div className="auth-card wide">
+      <h2>Waiting to be added</h2>
+      <p className="muted">
+        Send this package to one of the Safe's signers. They add you from Signers, Add a signer; once another signer executes it, this screen continues.
+      </p>
+      <dl className="kv">
+        <dt>Safe</dt>
+        <dd>
+          <Address address={view.safe} />
+        </dd>
+        <dt>Network</dt>
+        <dd>{view.chainName}</dd>
+        <dt>Your slot</dt>
+        <dd>{view.slotId}</dd>
+      </dl>
+      <CopyBox label="Your slot package" value={view.myPackage} hint="Holds only addresses and proofs, never keys." />
+      <div className="note pending">
+        <span className="spinner" />
+        <span>Waiting for the signers to add you</span>
+      </div>
+      {checking && progress && <Progress label="Connecting" percent={percent} />}
+      {error && <div className="note critical">{error.charAt(0).toUpperCase() + error.slice(1)}</div>}
+      <div className="form-actions">
+        <button type="button" onClick={() => void desktop!.addingCancel().then(onChange)} disabled={checking}>
+          Cancel
         </button>
         <button type="button" className="primary" onClick={() => void check()} disabled={checking}>
           {checking ? "Checking…" : "Check now"}

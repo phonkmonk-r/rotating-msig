@@ -1567,3 +1567,32 @@ button.danger {
   color: var(--text);
   font-size: 16px;
 }
+
+/* ---------- Manage signers ---------- */
+
+.manage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.manage-actions button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.manage-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.slot-picker-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}

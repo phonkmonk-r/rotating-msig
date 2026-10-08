@@ -24,6 +24,7 @@ function state(overrides: Partial<SafeState> = {}): SafeState {
     moduleGuard: "0x0000000000000000000000000000000000000000",
     installed: false,
     epoch: 0n,
+    slotCount: 0,
     slots: [],
     unmanagedOwners: OWNERS,
     bufferSize: 0,

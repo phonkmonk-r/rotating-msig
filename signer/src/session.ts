@@ -1,6 +1,9 @@
 import {
   assess,
   buildProposal,
+  checkPackage,
+  decodePackage,
+  packageKeys,
   deploymentsFor,
   describeRevert,
   evaluate,
@@ -370,6 +373,27 @@ export class SignerSession {
       if (input.kind === "erc20") {
         const balance = await this.options.publicClient.readContract({ address: call.to, abi: erc20Abi, functionName: "balanceOf", args: [state.safe] });
         if (balance < BigInt(input.amount)) throw new Error("the Safe does not hold that many tokens");
+      }
+      const owners = state.owners.length;
+      const checkThreshold = (threshold: number, signers: number) => {
+        if (!Number.isInteger(threshold) || threshold < 1 || threshold > signers) throw new Error(`the threshold must be between 1 and ${signers}`);
+      };
+      if (input.kind === "threshold") {
+        checkThreshold(input.threshold, owners);
+        if (input.threshold === state.threshold) throw new Error(`the Safe already requires ${input.threshold}`);
+      }
+      if (input.kind === "remove-signer") {
+        if (!state.slots.some((slot) => slot.slotId === input.slotId)) throw new Error(`slot ${input.slotId} has no signer`);
+        if (owners < 2) throw new Error("the last signer cannot be removed");
+        checkThreshold(input.threshold, owners - 1);
+      }
+      if (input.kind === "add-signer") {
+        const pkg = decodePackage(input.package);
+        const errors = checkPackage(pkg, { chainId: state.chainId, safe: state.safe, slotId: state.slotCount });
+        const known = new Set([...state.owners, ...state.slots.flatMap((slot) => slot.staged)].map((address) => address.toLowerCase()));
+        if (packageKeys(pkg).some((entry) => known.has(entry.owner.toLowerCase()))) errors.push("the package reuses an address of a current signer");
+        if (errors.length > 0) throw new Error(`the new signer's package does not fit: ${errors.join("; ")}`);
+        checkThreshold(input.threshold, owners + 1);
       }
       if (input.kind === "force-rotate") {
         for (const slotId of input.slotIds) {

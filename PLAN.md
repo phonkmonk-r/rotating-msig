@@ -378,7 +378,7 @@ Still to do:
    - 4e. Staging: refill buffers from tree files, from a non-owner wallet or inside a batch.
    - 4f. Exposure tracker: Transaction Service confirmations, `ApproveHash` events, owner nonces, escape-hatch signers; one-click `forceRotate`.
    - 4g. Executor pre-flight: simulate the next transaction with the executor's signature, check buffers and gas, warn on prior confirmation, point to a private RPC.
-   - 4h. Admin: add or remove a slot, replace a root, skip indexes, escape hatch.
+   - 4h. Admin: add or remove a slot, replace a root, skip indexes, escape hatch. In the signer app (2026-10-08): add a signer (the newcomer chooses "I'm being added to a Safe", their app generates a tree for the next slot ID and a slot package; an existing signer proposes `addSlot` plus staging in one batch), remove a signer, change the threshold, force-rotate (with select all), and the escape hatch behind a typed confirmation. Each is checked against chain state before signing and proposed like any transaction. Replacing a slot's root (renewing a nearly used tree) and skipping indexes are still to do; a 10,000-key tree lasts 10,000 signatures.
    - 4i. Rotation signer: local web UI that confirms and executes with the signer's current owner key (section 10). In progress:
      - 4i-1. Core: Transaction Service client, SafeTx hashing checked against the contract, action decoding, rules engine.
      - 4i-2. `packages/keys`: seed and Ledger sources shared with the generator; resolve the current owner key from tree file and chain.

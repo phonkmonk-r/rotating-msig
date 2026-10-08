@@ -151,7 +151,16 @@ export function NewTransaction({ status, onClose, onProposed }: { status: Status
               </label>
             );
           })}
-          <p className="muted small">Moves each chosen slot to its next key. Use it for keys exposed outside a transaction.</p>
+          <div className="slot-picker-footer">
+            <p className="muted small">Moves each chosen slot to its next key. Use it for keys exposed outside a transaction.</p>
+            <button
+              type="button"
+              className="link-button small"
+              onClick={() => setSlots(others.filter((signer) => signer.staged > 0).map((signer) => signer.slotId))}
+            >
+              Select all
+            </button>
+          </div>
         </div>
       ) : (
         <div className="composer-fields">

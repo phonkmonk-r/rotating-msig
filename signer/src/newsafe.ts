@@ -14,6 +14,9 @@ import {
   safeProxyFactoryAbi,
   verifyInvite,
   createSlotPackage,
+  INSTALL_STAGE_COUNT,
+  slotConfig,
+  stageEntries,
   type SafeDeployments,
   type SafeInvite,
   type SlotPackage,
@@ -136,4 +139,38 @@ export async function createSafe(
   if (!installed.installed || installed.threshold !== invite.threshold) throw new Error(`the install was sent (${installTx}) but the Safe does not show it`);
   onStage?.("done");
   return { safe: invite.safe, deployTx, installTx };
+}
+
+/**
+ * Prepares this signer to be added to an existing guarded Safe: generates their tree for the slot ID the guard hands
+ * out next, and the package an existing signer proposes with. If two newcomers prepare at once, the second package
+ * no longer fits once the first is added and must be prepared again.
+ */
+export async function prepareNewSlot(
+  context: NewSafeContext,
+  source: AddressSource,
+  safe: Address,
+  onProgress?: (done: number, total: number) => void,
+  size = DEFAULT_TREE_SIZE,
+): Promise<{ tree: TreeFile; package: SlotPackage }> {
+  const state = await readSafeState(context.client, safe);
+  if (!state.installed) throw new Error("this Safe does not have the rotation guard installed");
+  const meta = { chainId: context.chain.id, safe: state.safe, slotId: state.slotCount, base: defaultBase(context.chain.id, state.safe) };
+  const first = await source.address(meta.base);
+  if (state.owners.some((owner) => isAddressEqual(owner, first))) throw new Error("this seed is already a signer of this Safe");
+  const tree = await generateTree(source, meta, size, onProgress);
+  const loaded = loadTreeFile(JSON.stringify(tree));
+  return {
+    tree,
+    package: {
+      v: 1,
+      chainId: tree.chainId,
+      safe: tree.safe,
+      slotId: tree.slotId,
+      operator: await source.address(OPERATOR_ACCOUNT),
+      base: tree.base,
+      config: slotConfig(loaded.tree, tree, 0, ""),
+      stage: stageEntries(loaded.tree, tree, 1, INSTALL_STAGE_COUNT),
+    },
+  };
 }

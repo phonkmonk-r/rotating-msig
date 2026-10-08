@@ -23,7 +23,7 @@ function state(file: TreeFile, ownerIndex: number, owner = file.addresses[ownerI
   const slot: SlotState = { slotId: file.slotId, root: file.root, owner, size: file.size, ownerIndex, nextStageIndex: ownerIndex + 3, staged: [], unstaged: 0, ownerBalance: 0n };
   return {
     safe: SAFE, chainId: 11155111, owners: [owner], threshold: 1, nonce: 0n, balance: 0n,
-    guard: SAFE, moduleGuard: SAFE, installed: true, epoch: 1n, slots: [slot], unmanagedOwners: [], bufferSize: 5,
+    guard: SAFE, moduleGuard: SAFE, installed: true, epoch: 1n, slotCount: 1, slots: [slot], unmanagedOwners: [], bufferSize: 5,
   };
 }
 

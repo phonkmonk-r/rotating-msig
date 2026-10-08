@@ -1,6 +1,7 @@
 import { encodeFunctionData, erc20Abi, getAddress, isAddress, isHex, type Address, type Hex } from "viem";
 
-import { batch, guardCalls, type MetaTx } from "./calls.js";
+import { batch, guardCalls, safeCalls, type MetaTx } from "./calls.js";
+import { decodePackage } from "./create.js";
 
 /** A call requested by a dApp, as it arrives from the browser (values are decimal or 0x-hex wei). */
 export interface DappCall {
@@ -17,7 +18,11 @@ export type ProposalInput =
   | { kind: "eth"; to: string; amount: string }
   | { kind: "erc20"; token: string; to: string; amount: string }
   | { kind: "force-rotate"; slotIds: number[] }
-  | { kind: "calls"; origin: string; calls: DappCall[] };
+  | { kind: "calls"; origin: string; calls: DappCall[] }
+  | { kind: "threshold"; threshold: number }
+  | { kind: "add-signer"; package: string; threshold: number }
+  | { kind: "remove-signer"; slotId: number; threshold: number }
+  | { kind: "escape" };
 
 /** Most calls one dApp request may batch. */
 export const MAX_DAPP_CALLS = 20;
@@ -71,6 +76,20 @@ export function buildProposal(input: ProposalInput, context: { safe: Address; gu
       if (new Set(input.slotIds).size !== input.slotIds.length) throw new Error("each slot can be rotated once");
       return guardCalls.forceRotate(context.guard, input.slotIds);
     }
+    case "threshold":
+      return safeCalls.changeThreshold(context.safe, input.threshold);
+    case "remove-signer":
+      return guardCalls.removeSlot(context.guard, input.slotId, input.threshold);
+    case "add-signer": {
+      // The new slot's first key becomes an owner and its next keys are staged in the same transaction.
+      const pkg = decodePackage(input.package);
+      return batch(
+        [guardCalls.addSlot(context.guard, pkg.config, input.threshold), guardCalls.stage(context.guard, context.safe, pkg.slotId, pkg.stage)],
+        context.multiSendCallOnly,
+      );
+    }
+    case "escape":
+      return safeCalls.escape(context.safe);
     case "calls": {
       if (input.calls.length === 0) throw new Error("the dApp sent no calls");
       if (input.calls.length > MAX_DAPP_CALLS) throw new Error(`at most ${MAX_DAPP_CALLS} calls per request`);

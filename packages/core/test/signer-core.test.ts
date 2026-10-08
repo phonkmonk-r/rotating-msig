@@ -120,7 +120,7 @@ describe("decodeActions", () => {
     const batched = batch([safeCalls.changeThreshold(SAFE, 2), guardCalls.forceRotate(GUARD, [1])]);
     const actions = decodeActions(batched, CONTEXT);
     assert.deepEqual(actions.map((a) => a.kind), ["safe-admin", "guard-admin"]);
-    assert.match(actions[1]!.summary, /forceRotate/);
+    assert.match(actions[1]!.summary, /Rotate slot\(s\) 1/);
   });
 
   it("flags the escape hatch and foreign delegatecalls", () => {
@@ -155,6 +155,7 @@ function state(overrides: Partial<SafeState> = {}): SafeState {
     moduleGuard: GUARD,
     installed: true,
     epoch: 1n,
+    slotCount: 3,
     slots: [slot(0, A), slot(1, B), slot(2, C)],
     unmanagedOwners: [],
     bufferSize: 5,

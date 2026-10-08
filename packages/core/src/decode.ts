@@ -58,6 +58,29 @@ export function decodeActions(tx: Pick<MetaTx, "to" | "value" | "data" | "operat
   return [decodeCall(tx, context)];
 }
 
+function describeGuardCall(name: string, args: readonly unknown[]): string | undefined {
+  switch (name) {
+    case "addSlot": {
+      const [config, threshold] = args as [{ owner: Address }, bigint];
+      return `Add a signer whose first key is ${short(config.owner)}; require ${threshold} signature(s)`;
+    }
+    case "removeSlot": {
+      const [slotId, threshold] = args as [bigint, bigint];
+      return `Remove the signer in slot ${slotId}; require ${threshold} signature(s)`;
+    }
+    case "stage": {
+      const [, slotId, entries] = args as [Address, bigint, readonly unknown[]];
+      return `Stage ${entries.length} next key(s) for slot ${slotId}`;
+    }
+    case "forceRotate": {
+      const [slotIds] = args as [readonly bigint[]];
+      return `Rotate slot(s) ${slotIds.join(", ")} to their next keys`;
+    }
+    default:
+      return undefined;
+  }
+}
+
 function decodeCall(tx: Pick<MetaTx, "to" | "value" | "data">, context: DecodeContext): Action {
   const base = { to: tx.to, value: tx.value };
   if (tx.data === "0x" || size(tx.data) === 0) {
@@ -70,6 +93,9 @@ function decodeCall(tx: Pick<MetaTx, "to" | "value" | "data">, context: DecodeCo
       if (decoded.functionName === "setGuard" && isAddressEqual(decoded.args[0] as Address, ZERO_ADDRESS)) {
         return { ...base, kind: "escape", summary: "Escape hatch: remove the transaction guard. Signers of this transaction are not rotated; treat them as burned" };
       }
+      if (decoded.functionName === "changeThreshold") {
+        return { ...base, kind: "safe-admin", summary: `Require ${decoded.args[0]} signature(s) to execute` };
+      }
       return { ...base, kind: "safe-admin", summary: `Safe: ${decoded.functionName}(${formatArgs(decoded.args)})` };
     } catch {
       return { ...base, kind: "call", summary: `Unknown call to the Safe itself (selector ${tx.data.slice(0, 10)})` };
@@ -79,6 +105,8 @@ function decodeCall(tx: Pick<MetaTx, "to" | "value" | "data">, context: DecodeCo
   if (context.guard && isAddressEqual(tx.to, context.guard)) {
     try {
       const decoded = decodeFunctionData({ abi: rotationGuardAbi, data: tx.data });
+      const friendly = describeGuardCall(decoded.functionName, decoded.args as readonly unknown[]);
+      if (friendly) return { ...base, kind: "guard-admin", summary: friendly };
       return { ...base, kind: "guard-admin", summary: `Rotation guard: ${decoded.functionName}(${formatArgs(decoded.args, decoded.functionName === "stage")})` };
     } catch {
       return { ...base, kind: "call", summary: `Unknown call to the rotation guard (selector ${tx.data.slice(0, 10)})` };

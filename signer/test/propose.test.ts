@@ -84,7 +84,7 @@ describe("proposing from the app", { skip }, () => {
     const before = await readSafeState(chain.client, chain.safe);
     const slot1Index = before.slots.find((s) => s.slotId === 1)!.ownerIndex;
     const proposed = await sessions[0]!.propose({ kind: "force-rotate", slotIds: [1] });
-    assert.match(proposed.actions[0]!.summary, /forceRotate/);
+    assert.match(proposed.actions[0]!.summary, /Rotate slot\(s\) 1/);
     await executeAndWait(sessions[2]!, proposed.safeTxHash);
     const after = await readSafeState(chain.client, chain.safe);
     assert.equal(after.slots.find((s) => s.slotId === 1)!.ownerIndex, slot1Index + 1, "slot 1 rotated without signing");

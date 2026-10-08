@@ -18,9 +18,9 @@ import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { isHex, type Hex } from "viem";
 
 import { createSession } from "../src/create.js";
-import { JoinError, joinSafe, readClient, type JoinProgress } from "../src/join.js";
+import { detectChains, JoinError, joinSafe, readClient, type JoinProgress } from "../src/join.js";
 import { chainFor } from "../src/networks.js";
-import { createSafe, planSafe, prepareSlot, type NewSafeContext } from "../src/newsafe.js";
+import { createSafe, planSafe, prepareNewSlot, prepareSlot, type NewSafeContext } from "../src/newsafe.js";
 import type { SignerSession } from "../src/session.js";
 import { DappBrowser, type Bounds } from "./browser.js";
 import { ProfileStore, type ProfileEntry } from "./profiles.js";
@@ -72,6 +72,7 @@ const profileDir = () => profiles.dir(activeProfile().id);
 const settingsPath = () => join(profileDir(), "settings.json");
 const vaultPath = () => join(profileDir(), "vault.json");
 const creatingPath = () => join(profileDir(), "creating.json");
+const addingPath = () => join(profileDir(), "adding.json");
 const treePath = (settings: Pick<Settings, "chainId" | "safe" | "slotId">) =>
   join(profileDir(), "trees", `${settings.chainId}-${settings.safe.toLowerCase()}-slot${settings.slotId}.json`);
 
@@ -324,6 +325,62 @@ handle("create:check", async () => {
 
 handle("create:cancel", () => {
   writeCreating(undefined);
+  return true;
+});
+
+/** Being added to an existing guarded Safe: this signer's package for the next slot, until the slot exists. */
+interface Adding {
+  chainId: number;
+  safe: string;
+  package: SlotPackage;
+}
+
+function readAdding(): Adding | undefined {
+  if (!activeId) return undefined;
+  try {
+    return JSON.parse(readFileSync(addingPath(), "utf8")) as Adding;
+  } catch {
+    return undefined;
+  }
+}
+
+handle("adding:state", () => {
+  const adding = readAdding();
+  if (!adding) return null;
+  return { safe: adding.safe, chainId: adding.chainId, chainName: chainFor(adding.chainId).name, slotId: adding.package.slotId, myPackage: encodePackage(adding.package) };
+});
+
+handle("adding:prepare", async (safe: unknown) => {
+  if (!source) throw new Error("unlock your wallet first");
+  const address = String(safe).trim();
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) throw new Error("that is not a Safe address");
+  const chains = await detectChains(address as `0x${string}`, readSettings()?.rpc);
+  if (chains.length === 0) throw new Error("no Safe at this address on Ethereum or Sepolia");
+  const chainId = chains[0]!;
+  const { tree, package: pkg } = await prepareNewSlot(newSafeContext(chainId), source, address as `0x${string}`, (done, total) =>
+    sendToWindow("app:progress", { stage: "deriving", done, total }),
+  );
+  const path = treePath({ chainId, safe: tree.safe, slotId: tree.slotId });
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(tree));
+  writeFileSync(addingPath(), JSON.stringify({ chainId, safe: tree.safe, package: pkg } satisfies Adding, null, 2));
+  return true;
+});
+
+/** Joins once the Safe has this signer's new slot. */
+handle("adding:check", async () => {
+  const adding = readAdding();
+  if (!adding) throw new Error("you are not being added to a Safe");
+  const state = await readSafeState(newSafeContext(adding.chainId).client, adding.safe as `0x${string}`);
+  const slot = state.slots.find((candidate) => candidate.slotId === adding.package.slotId);
+  if (!slot || slot.root !== adding.package.config.root) return false;
+  await joinWith(adding.safe, { chainId: adding.chainId }, (progress) => sendToWindow("app:progress", progress));
+  rmSync(addingPath(), { force: true });
+  return true;
+});
+
+handle("adding:cancel", () => {
+  rmSync(addingPath(), { force: true });
   return true;
 });
 
