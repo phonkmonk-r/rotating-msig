@@ -275,3 +275,82 @@ button:disabled {
   opacity: 0.6;
   cursor: default;
 }
+
+h3 {
+  font-size: 13px;
+  margin: 20px 0 8px;
+}
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.tabs button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.setup p {
+  margin: 6px 0;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+input:not([type="file"]),
+select {
+  font: inherit;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  min-width: 0;
+}
+
+.row input {
+  flex: 1 1 280px;
+}
+
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.ok-text {
+  color: var(--accent);
+}
+
+ul.plain {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+}
+
+ul.plain li {
+  margin: 4px 0;
+}
+
+td.root {
+  font-size: 12px;
+  white-space: normal;
+  word-break: break-all;
+  min-width: 260px;
+}
+
+.details {
+  margin-top: 12px;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}

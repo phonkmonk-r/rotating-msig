@@ -1,41 +1,10 @@
-import { assess, describeRevert, readSafeState, type Finding, type SafeState, type SlotState } from "@rotating-msig/core";
-import { useCallback, useEffect, useState } from "react";
-import type { Address, PublicClient } from "viem";
+import { assess, type Finding, type SlotState } from "@rotating-msig/core";
 
 import { chainName, formatEth, shortAddress } from "./format";
+import type { SafeStateHandle } from "./useSafeState";
 
-const REFRESH_MS = 12_000;
-
-interface Props {
-  client: PublicClient;
-  safe: Address;
-  guard?: Address;
-}
-
-export function Dashboard({ client, safe, guard }: Props) {
-  const [state, setState] = useState<SafeState>();
-  const [error, setError] = useState<string>();
-  const [loading, setLoading] = useState(false);
-  const [updatedAt, setUpdatedAt] = useState<Date>();
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    try {
-      setState(await readSafeState(client, safe, guard));
-      setError(undefined);
-      setUpdatedAt(new Date());
-    } catch (caught) {
-      setError(describeRevert(caught) ?? (caught as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [client, safe, guard]);
-
-  useEffect(() => {
-    void refresh();
-    const timer = setInterval(() => void refresh(), REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [refresh]);
+export function Dashboard({ handle }: { handle: SafeStateHandle }) {
+  const { state, error, loading, updatedAt, refresh } = handle;
 
   if (!state) {
     return <p className="muted">{error ? `Could not read the Safe: ${error}` : "Reading the Safe…"}</p>;

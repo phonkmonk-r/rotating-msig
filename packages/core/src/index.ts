@@ -1,6 +1,7 @@
 export * from "./addresses.js";
 export * from "./calls.js";
 export * from "./errors.js";
+export * from "./setup.js";
 export * from "./state.js";
 export * from "./tree.js";
 export { rotationGuardAbi } from "./abi/rotationGuard.js";

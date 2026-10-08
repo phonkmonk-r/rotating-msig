@@ -88,8 +88,11 @@ export interface InstallPlan {
   multiSendCallOnly?: Address;
 }
 
-/** The single setup transaction: enable module, set both guards, initialize, stage. */
-export function installTx(plan: InstallPlan): MetaTx {
+/**
+ * The setup calls, unbatched: enable module, set both guards, initialize, stage. Safe{Wallet} batches a list sent
+ * through the Safe Apps SDK itself; this is safe for setup because the guard is not active until the batch completes.
+ */
+export function installCalls(plan: InstallPlan): MetaTx[] {
   if (plan.oldOwners.length !== plan.configs.length) throw new Error("one config is needed per current owner");
   if (plan.stage.length !== plan.configs.length) throw new Error("one stage list is needed per slot");
   plan.configs.forEach((config, slot) => {
@@ -98,14 +101,16 @@ export function installTx(plan: InstallPlan): MetaTx {
       throw new Error(`slot ${slot}: staging must start at index ${config.startIndex + 1}, not ${first.index}`);
     }
   });
-  return batch(
-    [
-      safeCalls.enableModule(plan.safe, plan.guard),
-      safeCalls.setGuard(plan.safe, plan.guard),
-      safeCalls.setModuleGuard(plan.safe, plan.guard),
-      guardCalls.initialize(plan.guard, plan.oldOwners, plan.configs),
-      ...plan.stage.flatMap((entries, slot) => (entries.length > 0 ? [guardCalls.stage(plan.guard, plan.safe, slot, entries)] : [])),
-    ],
-    plan.multiSendCallOnly,
-  );
+  return [
+    safeCalls.enableModule(plan.safe, plan.guard),
+    safeCalls.setGuard(plan.safe, plan.guard),
+    safeCalls.setModuleGuard(plan.safe, plan.guard),
+    guardCalls.initialize(plan.guard, plan.oldOwners, plan.configs),
+    ...plan.stage.flatMap((entries, slot) => (entries.length > 0 ? [guardCalls.stage(plan.guard, plan.safe, slot, entries)] : [])),
+  ];
+}
+
+/** The setup calls as one delegatecall to MultiSendCallOnly, for executing outside Safe{Wallet}. */
+export function installTx(plan: InstallPlan): MetaTx {
+  return batch(installCalls(plan), plan.multiSendCallOnly);
 }

@@ -1,12 +1,36 @@
 import type { Address, Hex } from "viem";
 
-/** Canonical Safe 1.5.0 deployments on Ethereum mainnet, verified on-chain (see test/RotationGuard.fork.t.sol). */
-export const MAINNET = {
-  chainId: 1,
+export interface SafeDeployments {
+  safeSingleton: Address;
+  safeProxyFactory: Address;
+  multiSendCallOnly: Address;
+}
+
+/**
+ * Canonical Safe 1.5.0 deployments. Identical on mainnet and Sepolia (verified on-chain; the MultiSendCallOnly
+ * bytecode matches byte for byte). Mainnet is covered by test/RotationGuard.fork.t.sol.
+ */
+const CANONICAL: SafeDeployments = {
   safeSingleton: "0xFf51A5898e281Db6DfC7855790607438dF2ca44b",
   safeProxyFactory: "0x14F2982D601c9458F93bd70B218933A6f8165e7b",
   multiSendCallOnly: "0xA83c336B20401Af773B6219BA5027174338D1836",
-} as const satisfies Record<string, Address | number>;
+};
+
+export const SEPOLIA_CHAIN_ID = 11155111;
+
+/** Chains the project supports: mainnet for production, Sepolia for testing with Safe{Wallet}. */
+export const DEPLOYMENTS: Readonly<Record<number, SafeDeployments>> = {
+  1: CANONICAL,
+  [SEPOLIA_CHAIN_ID]: CANONICAL,
+};
+
+export const MAINNET = { chainId: 1, ...CANONICAL } as const;
+
+export function deploymentsFor(chainId: number): SafeDeployments {
+  const deployments = DEPLOYMENTS[chainId];
+  if (!deployments) throw new Error(`chain ${chainId} is not supported (mainnet and Sepolia only)`);
+  return deployments;
+}
 
 /** Safe storage slot holding the transaction guard (GuardManager.GUARD_STORAGE_SLOT). */
 export const GUARD_STORAGE_SLOT: Hex = "0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8";

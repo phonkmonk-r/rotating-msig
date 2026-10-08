@@ -3,6 +3,8 @@
 #   demo/run.sh             run the demo and stop Anvil afterwards
 #   KEEP=1 demo/run.sh      leave Anvil running on :8545 so you can poke at it with cast
 #   ROUNDS=8 SIZE=12 demo/run.sh
+#   SETUP_ONLY=1 demo/run.sh  deploy and generate trees, then stop before installing (keeps Anvil running), to try the
+#                             Safe App's setup wizard with the tree files in demo/out/
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -31,7 +33,7 @@ step "Building core and generator"
 npm install --silent --no-audit --no-fund && npm run build --silent
 
 step "Starting Anvil (mainnet fork)"
-anvil --fork-url "$MAINNET_RPC_URL" --port 8545 --silent &
+anvil --fork-url "$MAINNET_RPC_URL" --port 8545 --silent > "$OUT/anvil.log" 2>&1 &
 ANVIL_PID=$!
 if [ -z "${KEEP:-}" ]; then trap 'kill $ANVIL_PID 2>/dev/null' EXIT; fi
 until cast chain-id --rpc-url "$RPC" >/dev/null 2>&1; do sleep 0.5; done
@@ -54,6 +56,19 @@ for slot in 0 1 2; do
   $CLI config --tree "$OUT/slot$slot.json" --cid "demo-slot-$slot" > "$OUT/slot$slot-config.json"
   $CLI entries --tree "$OUT/slot$slot.json" --from 1 --count $((SIZE - 1)) | jq '{count: length, entries: .}' > "$OUT/slot$slot-entries.json"
 done
+
+if [ -n "${SETUP_ONLY:-}" ]; then
+  GUARD=$(jq -r .guard "$OUT/deployment.json")
+  cat <<MSG
+
+Stopped before install. Anvil is running on $RPC (pid $ANVIL_PID).
+  npm run dev -w app    then open http://localhost:5173/?rpc=$RPC&safe=$SAFE&guard=$GUARD
+  and load demo/out/slot0.json, slot1.json, slot2.json in the Setup tab.
+Stop it with: kill $ANVIL_PID
+MSG
+  trap - EXIT
+  exit 0
+fi
 
 step "3. Legacy owners sign one setup transaction (2-of-3) installing the guard"
 forge_run --sig "install()"
