@@ -77,6 +77,21 @@ export async function serve(session: SignerSession, options: ServeOptions): Prom
         return send(res, 409, { error: (error as Error).message });
       }
     }
+    if (req.method === "POST" && url.pathname === "/api/propose") {
+      const body = (await readJson(req)) as { input?: unknown; preview?: unknown };
+      try {
+        return send(res, 200, await session.propose(body.input as never, body.preview === true));
+      } catch (error) {
+        return send(res, 409, { error: (error as Error).message });
+      }
+    }
+    if (req.method === "GET" && url.pathname === "/api/token") {
+      try {
+        return send(res, 200, await session.tokenInfo(url.searchParams.get("address") ?? ""));
+      } catch (error) {
+        return send(res, 404, { error: (error as Error).message });
+      }
+    }
     const execution = url.pathname.match(/^\/api\/executions\/(0x[0-9a-fA-F]{64})$/);
     if (req.method === "GET" && execution) {
       try {

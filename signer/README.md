@@ -2,7 +2,7 @@
 
 Confirms and executes Safe transactions with your **current** rotation key, so you never import or switch wallet accounts after a rotation. It reads which tree index currently owns your slot on-chain, derives exactly that key from your seed (or uses your Ledger), and refuses anything that would break the rotation rules.
 
-Safe{Wallet} stays where transactions are created and the queue is viewed. This tool only does the two steps that need your key: confirm, and execute.
+It also proposes new transactions: **New transaction** on the Transactions page sends ETH or an ERC-20 token, or force-rotates chosen slots (for keys exposed outside a transaction). Your signature on the proposal counts as your confirmation, so another signer executes it and both of you rotate. It proposes only when nothing else is pending and the Safe holds enough to pay. Safe{Wallet} remains available for anything else and as a viewer.
 
 ## Desktop app
 

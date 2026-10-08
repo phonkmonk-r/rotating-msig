@@ -169,7 +169,7 @@ function Shell({ desktopState, onChangeSafe, onLock }: { desktopState?: DesktopS
         {status?.queueError && <div className="note warning banner-top">Transaction Service unavailable: pending transactions may be missing.</div>}
         {!status && !data.error && <div className="loading">Loading…</div>}
         {status && page === "overview" && <Overview status={status} queue={queue} onOpenTransactions={() => setPage("transactions")} />}
-        {status && page === "transactions" && <Transactions status={status} queue={queue} onBusy={data.setBusy} />}
+        {status && page === "transactions" && <Transactions status={status} queue={queue} onBusy={data.setBusy} onRefresh={() => void data.refresh()} />}
         {status && page === "signers" && <Signers status={status} />}
         {status && page === "settings" && desktopState && <Settings status={status} desktopState={desktopState} onChangeSafe={onChangeSafe!} onLock={onLock!} />}
       </main>

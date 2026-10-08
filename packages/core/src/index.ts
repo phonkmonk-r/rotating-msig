@@ -3,6 +3,7 @@ export * from "./base.js";
 export * from "./calls.js";
 export * from "./decode.js";
 export * from "./errors.js";
+export * from "./proposals.js";
 export * from "./rules.js";
 export * from "./safetx.js";
 export * from "./setup.js";

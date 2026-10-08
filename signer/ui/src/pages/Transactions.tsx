@@ -2,20 +2,49 @@ import { useState } from "react";
 
 import { api, type Execution, type QueueItem, type StatusView } from "../api";
 import { explorer, short } from "../format";
-import { IconAlert, IconCheck, IconExternal, IconInbox } from "../icons";
+import { IconAlert, IconCheck, IconExternal, IconInbox, IconPlus } from "../icons";
 import { Avatar, Badge, PageHeader } from "../ui";
+import { NewTransaction } from "./NewTransaction";
 
 const EXECUTION_POLL_MS = 3_000;
 
-export function Transactions({ status, queue, onBusy }: { status: StatusView; queue: QueueItem[]; onBusy: (busy: boolean) => void }) {
+export function Transactions({
+  status,
+  queue,
+  onBusy,
+  onRefresh,
+}: {
+  status: StatusView;
+  queue: QueueItem[];
+  onBusy: (busy: boolean) => void;
+  onRefresh: () => void;
+}) {
+  const [composing, setComposing] = useState(() => window.location.hash.includes("compose"));
   return (
     <>
-      <PageHeader title="Transactions" subtitle={queue.length === 0 ? "Nothing pending" : `${queue.length} pending`} />
-      {queue.length === 0 ? (
+      <PageHeader
+        title="Transactions"
+        subtitle={queue.length === 0 ? "Nothing pending" : `${queue.length} pending`}
+        actions={
+          !composing && (
+            <button
+              type="button"
+              className="primary"
+              onClick={() => setComposing(true)}
+              disabled={queue.length > 0}
+              title={queue.length > 0 ? "Finish the pending transaction first" : undefined}
+            >
+              <IconPlus /> New transaction
+            </button>
+          )
+        }
+      />
+      {composing && <NewTransaction status={status} onClose={() => setComposing(false)} onProposed={onRefresh} />}
+      {queue.length === 0 && !composing ? (
         <div className="empty-state">
           <IconInbox />
           <p>No pending transactions</p>
-          <span className="muted">New proposals show up here automatically.</span>
+          <span className="muted">Propose one, or wait for a signer to.</span>
         </div>
       ) : (
         <div className="stack">

@@ -212,6 +212,8 @@ handle("signer:queue", () => requireSession().queue());
 handle("signer:confirm", (hash: unknown) => requireSession().confirm(requireHash(hash)));
 handle("signer:execute", (hash: unknown) => requireSession().execute(requireHash(hash)));
 handle("signer:execution", (hash: unknown) => requireSession().execution(requireHash(hash)));
+handle("signer:propose", (input: unknown, preview: unknown) => requireSession().propose(input as never, preview === true));
+handle("signer:token", (address: unknown) => requireSession().tokenInfo(String(address)));
 
 function createWindow() {
   const window = (mainWindow = new BrowserWindow({

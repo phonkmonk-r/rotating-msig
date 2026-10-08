@@ -1,5 +1,6 @@
 import {
   assess,
+  buildProposal,
   deploymentsFor,
   describeRevert,
   evaluate,
@@ -7,17 +8,20 @@ import {
   packSignatures,
   preValidatedSignature,
   readSafeState,
+  plainSafeTx,
+  safeTxHash,
   safeTxTypedData,
   type Action,
   type Finding,
   type PendingTx,
+  type ProposalInput,
   type SafeState,
   type TreeFile,
   type TxService,
   type Verdict,
 } from "@rotating-msig/core";
 import { resolveCurrentOwner, type AddressSource, type CurrentOwner } from "@rotating-msig/keys";
-import { createWalletClient, http, type Address, type Chain, type Hex, type PublicClient } from "viem";
+import { createWalletClient, erc20Abi, getAddress, http, isAddress, type Address, type Chain, type Hex, type PublicClient } from "viem";
 
 export interface SessionOptions {
   publicClient: PublicClient;
@@ -87,6 +91,23 @@ export interface QueueItem {
   confirmations: { owner: Address; signatureType: string; counts: boolean }[];
   verdict: Pick<Verdict, "action" | "blockers" | "warnings">;
   submissionDate?: string;
+}
+
+export interface ProposalResult {
+  safeTxHash: Hex;
+  nonce: string;
+  actions: Action[];
+  warnings: string[];
+  /** False for a preview: nothing was signed or sent. */
+  proposed: boolean;
+}
+
+export interface TokenInfo {
+  address: Address;
+  symbol: string;
+  decimals: number;
+  /** The Safe's balance, in base units. */
+  safeBalance: string;
 }
 
 /** An execution this signer sent, as tracked until it is included or reported stuck. */
@@ -196,6 +217,64 @@ export class SignerSession {
         submissionDate: tx.submissionDate,
       };
     });
+  }
+
+  /**
+   * Proposes a transaction at the Safe's next nonce, signed with the current owner key; the signature is the
+   * proposer's confirmation. With `preview`, only checks and describes it. Refuses while another transaction is
+   * pending, since confirmations spread over several transactions can add up to a threshold of exposed keys.
+   */
+  propose(input: ProposalInput, preview = false): Promise<ProposalResult> {
+    const run = async (): Promise<ProposalResult> => {
+      const { state, owner, ownerError } = await this.snapshot();
+      if (!owner) throw new Error(ownerError ?? "your current owner key could not be resolved");
+      if (state.threshold < 2) throw new Error("proposing needs a threshold of at least 2: with 1, the executor signs alone");
+      const queue = await this.options.txService.pending(this.options.safe, state.nonce);
+      if (queue.length > 0) throw new Error(`transaction #${queue[0]!.tx.nonce} is still pending: execute it or replace it in Safe{Wallet} first`);
+
+      const call = buildProposal(input, { safe: state.safe, guard: state.guard });
+      if (input.kind === "eth" && state.balance < call.value) throw new Error("the Safe does not hold that much ETH");
+      if (input.kind === "erc20") {
+        const balance = await this.options.publicClient.readContract({ address: call.to, abi: erc20Abi, functionName: "balanceOf", args: [state.safe] });
+        if (balance < BigInt(input.amount)) throw new Error("the Safe does not hold that many tokens");
+      }
+      if (input.kind === "force-rotate") {
+        for (const slotId of input.slotIds) {
+          const slot = state.slots.find((candidate) => candidate.slotId === slotId);
+          if (!slot) throw new Error(`slot ${slotId} has no owner`);
+          if (slot.staged.length === 0) throw new Error(`slot ${slotId} has no staged key to rotate to`);
+        }
+      }
+
+      const tx = plainSafeTx({ ...call, nonce: state.nonce });
+      const hash = safeTxHash(state.chainId, state.safe, tx);
+      const verdict = this.evaluate(state, { safeTxHash: hash, tx, confirmations: [] }, [], owner);
+      if (verdict.action !== "confirm") throw new Error(`cannot propose: ${verdict.blockers.join("; ")}`);
+
+      const result = { safeTxHash: hash, nonce: tx.nonce.toString(), actions: verdict.actions, warnings: verdict.warnings, proposed: false };
+      if (preview) return result;
+      const signature = await owner.account.signTypedData(safeTxTypedData(state.chainId, state.safe, tx));
+      await this.options.txService.propose(state.safe, tx, owner.account.address, signature);
+      return { ...result, proposed: true };
+    };
+    return preview ? run() : this.exclusive(run);
+  }
+
+  /** Symbol, decimals and the Safe's balance for an ERC-20 token, so amounts can be entered in whole tokens. */
+  async tokenInfo(token: string): Promise<TokenInfo> {
+    if (!isAddress(token, { strict: false })) throw new Error("not a token address");
+    const address = getAddress(token);
+    const { publicClient, safe } = this.options;
+    try {
+      const [symbol, decimals, balance] = await Promise.all([
+        publicClient.readContract({ address, abi: erc20Abi, functionName: "symbol" }),
+        publicClient.readContract({ address, abi: erc20Abi, functionName: "decimals" }),
+        publicClient.readContract({ address, abi: erc20Abi, functionName: "balanceOf", args: [safe] }),
+      ]);
+      return { address, symbol, decimals, safeBalance: balance.toString() };
+    } catch {
+      throw new Error("no ERC-20 token at this address on this network");
+    }
   }
 
   /** Signs the transaction's SafeTx hash with the current owner key and posts the confirmation. */

@@ -167,6 +167,29 @@ export async function startFakeTxService(safe: Address, chainId: number): Promis
         }));
       return json(200, { count: results.length, results });
     }
+    if (req.method === "POST" && list) {
+      let body = "";
+      for await (const chunk of req) body += chunk;
+      const raw = JSON.parse(body) as Record<string, string | number | null>;
+      const tx: SafeTx = {
+        to: getAddress(String(raw.to)),
+        value: BigInt(String(raw.value)),
+        data: (raw.data ?? "0x") as Hex,
+        operation: Number(raw.operation) === 1 ? 1 : 0,
+        safeTxGas: BigInt(String(raw.safeTxGas)),
+        baseGas: BigInt(String(raw.baseGas)),
+        gasPrice: BigInt(String(raw.gasPrice)),
+        gasToken: getAddress(String(raw.gasToken ?? ZERO)),
+        refundReceiver: getAddress(String(raw.refundReceiver ?? ZERO)),
+        nonce: BigInt(String(raw.nonce)),
+      };
+      const hash = safeTxHash(chainId, safe, tx);
+      if (hash !== raw.contractTransactionHash) return json(422, { detail: "hash mismatch" });
+      const owner = await recoverAddress({ hash, signature: raw.signature as Hex });
+      if (owner !== getAddress(String(raw.sender))) return json(422, { detail: "signature is not from sender" });
+      store.set(hash.toLowerCase(), { tx, safeTxHash: hash, confirmations: [{ owner, signature: raw.signature as Hex, signatureType: "EOA" }] });
+      return json(201, {});
+    }
     const confirm = url.pathname.match(/^\/api\/v1\/multisig-transactions\/(0x[0-9a-fA-F]{64})\/confirmations\/$/);
     if (req.method === "POST" && confirm) {
       const entry = store.get(confirm[1]!.toLowerCase());

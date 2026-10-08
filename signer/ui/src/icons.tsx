@@ -80,6 +80,12 @@ export const IconExternal = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 );
 
+export const IconPlus = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p} width="15" height="15" strokeWidth="2.2">
+    <path d="M12 5v14M5 12h14" />
+  </Icon>
+);
+
 export const IconInbox = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p} width="28" height="28" strokeWidth="1.5">
     <path d="M3 13l3-8h12l3 8v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6z" />

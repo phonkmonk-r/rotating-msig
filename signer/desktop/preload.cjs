@@ -20,4 +20,6 @@ contextBridge.exposeInMainWorld("signer", {
   confirm: call("signer:confirm"),
   execute: call("signer:execute"),
   execution: call("signer:execution"),
+  propose: call("signer:propose"),
+  token: call("signer:token"),
 });

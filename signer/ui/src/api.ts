@@ -1,6 +1,8 @@
-import type { Execution, QueueItem, SignerView, StatusView } from "../../src/session.js";
+import type { ProposalInput } from "@rotating-msig/core";
 
-export type { Execution, QueueItem, SignerView, StatusView };
+import type { Execution, ProposalResult, QueueItem, SignerView, StatusView, TokenInfo } from "../../src/session.js";
+
+export type { Execution, ProposalInput, ProposalResult, QueueItem, SignerView, StatusView, TokenInfo };
 
 export interface TreeSummary {
   safe: string;
@@ -54,6 +56,8 @@ interface DesktopBridge {
   confirm(hash: string): Promise<Result<{ owner: string }>>;
   execute(hash: string): Promise<Result<Execution>>;
   execution(hash: string): Promise<Result<Execution>>;
+  propose(input: ProposalInput, preview: boolean): Promise<Result<ProposalResult>>;
+  token(address: string): Promise<Result<TokenInfo>>;
 }
 
 const bridge = (window as unknown as { signer?: DesktopBridge }).signer;
@@ -108,6 +112,9 @@ export const api = {
   confirm: (hash: string) => (bridge ? unwrap(bridge.confirm(hash)) : http<{ owner: string }>("/api/confirm", post(hash))),
   execute: (hash: string) => (bridge ? unwrap(bridge.execute(hash)) : http<Execution>("/api/execute", post(hash))),
   execution: (hash: string) => (bridge ? unwrap(bridge.execution(hash)) : http<Execution>(`/api/executions/${hash}`)),
+  propose: (input: ProposalInput, preview: boolean) =>
+    bridge ? unwrap(bridge.propose(input, preview)) : http<ProposalResult>("/api/propose", { method: "POST", body: JSON.stringify({ input, preview }) }),
+  token: (address: string) => (bridge ? unwrap(bridge.token(address)) : http<TokenInfo>(`/api/token?address=${encodeURIComponent(address)}`)),
 };
 
 /** Desktop-only calls; never used in browser mode. */

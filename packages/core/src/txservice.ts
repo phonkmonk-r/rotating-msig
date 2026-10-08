@@ -74,6 +74,34 @@ export class TxService {
     return body.results.map((raw) => this.parse(safe, raw));
   }
 
+  /**
+   * Proposes a new transaction. `sender` must be a current owner and `signature` that owner's signature over the
+   * transaction's hash, which the service records as their confirmation.
+   */
+  async propose(safe: Address, tx: SafeTx, sender: Address, signature: Hex, origin = "rotation-signer"): Promise<Hex> {
+    const hash = safeTxHash(this.chainId, safe, tx);
+    await this.request(`${this.baseUrl}/api/v1/safes/${getAddress(safe)}/multisig-transactions/`, {
+      method: "POST",
+      body: JSON.stringify({
+        to: tx.to,
+        value: tx.value.toString(),
+        data: tx.data === "0x" ? null : tx.data,
+        operation: tx.operation,
+        safeTxGas: tx.safeTxGas.toString(),
+        baseGas: tx.baseGas.toString(),
+        gasPrice: tx.gasPrice.toString(),
+        gasToken: tx.gasToken === "0x0000000000000000000000000000000000000000" ? null : tx.gasToken,
+        refundReceiver: tx.refundReceiver === "0x0000000000000000000000000000000000000000" ? null : tx.refundReceiver,
+        nonce: tx.nonce.toString(),
+        contractTransactionHash: hash,
+        sender: getAddress(sender),
+        signature,
+        origin,
+      }),
+    });
+    return hash;
+  }
+
   /** Adds an owner's confirmation (a 65-byte signature over the safeTxHash). */
   async confirm(hash: Hex, signature: Hex): Promise<void> {
     await this.request(`${this.baseUrl}/api/v1/multisig-transactions/${hash}/confirmations/`, {
