@@ -322,7 +322,10 @@ Design:
 
 Open questions to settle on Sepolia before mainnet:
 
-- Does Safe{Wallet} create Safes at 1.5.0, and which MultiSendCallOnly does it use when batching (the guard allows exactly one)?
+- Settled on Sepolia (setup tx `0x7584d52c…9c116799`): Safe{Wallet} creates Safes at 1.5.0 (SafeL2), and batches through MultiSendCallOnly `0xA83c…1836`, the one the guard allows.
+- Settled: when the last owner clicks Execute without confirming first, Safe{Wallet} submits their signature as pre-validated (v = 1, `APPROVED_HASH` in the Transaction Service) next to the other confirmation, exactly `threshold` signatures. This is the form the executor rule requires.
+- Settled: the 2-of-3 setup transaction used 4,367,352 gas on Sepolia.
+- The Transaction Service API has moved to `https://api.safe.global/tx-service/<network>/api/v1/...` (for Sepolia, `sep`); the per-network domains now redirect.
 - When more owners confirm than the threshold needs, does Safe{Wallet} include the extra signatures (which the guard rejects)?
 - Does Rabby's Safe integration execute with the owner's own pre-validated signature, like Safe{Wallet}?
 - Do registered proposers survive after the owner that registered them rotates out?
