@@ -45,6 +45,9 @@ export interface Me {
 export interface StatusView {
   safe: Address;
   chainId: number;
+  chainName: string;
+  /** Host of the execution RPC only: full URLs often carry API keys. */
+  executionHost: string;
   threshold: number;
   owners: Address[];
   nonce: string;
@@ -109,6 +112,8 @@ export class SignerSession {
     return {
       safe: state.safe,
       chainId: state.chainId,
+      chainName: this.options.chain.name,
+      executionHost: new URL(this.options.executionRpcUrl).host,
       threshold: state.threshold,
       owners: state.owners,
       nonce: state.nonce.toString(),
