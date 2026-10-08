@@ -59,6 +59,14 @@ contract RotationGuardTest is RotationFixture {
         assertEq(currentOwner(0), treeAddress(0, 1));
         assertEq(currentOwner(1), treeAddress(1, 1));
         assertEq(currentOwner(2), bystander);
+        (bool found, ) = guard.slotOf(address(safe), signer);
+        assertFalse(found);
+        (found, ) = guard.slotOf(address(safe), executor);
+        assertFalse(found);
+        uint256 slotId;
+        (found, slotId) = guard.slotOf(address(safe), treeAddress(0, 1));
+        assertTrue(found);
+        assertEq(slotId, 0);
         assertEq(guard.getSlot(address(safe), 0).staged.length, 4);
         assertEq(guard.getSlot(address(safe), 2).staged.length, 5);
     }
@@ -213,6 +221,40 @@ contract RotationGuardTest is RotationFixture {
         assertTrue(execBySlots(call(address(safe), 0, abi.encodeCall(safe.enableModule, (address(rogue)))), 0, 1));
         vm.expectRevert(abi.encodeWithSelector(IRotationGuard.ModuleTransactionNotAllowed.selector, address(rogue)));
         rogue.drain(ISafe(payable(address(safe))), recipient);
+    }
+
+    function test_revert_rogueModuleOwnerCall() public {
+        RogueModule rogue = new RogueModule();
+        assertTrue(execBySlots(call(address(safe), 0, abi.encodeCall(safe.enableModule, (address(rogue)))), 0, 1));
+        address victim = currentOwner(0);
+        bytes memory data = abi.encodeCall(safe.swapOwner, (_prev(victim), victim, makeAddr("attacker")));
+        vm.expectRevert(abi.encodeWithSelector(IRotationGuard.ModuleTransactionNotAllowed.selector, address(rogue)));
+        rogue.call(ISafe(payable(address(safe))), data);
+    }
+
+    function test_revert_moduleGuardRejectsNonOwnerCallFromGuard() public {
+        bytes memory data = abi.encodeCall(safe.enableModule, (makeAddr("module")));
+        vm.prank(address(safe));
+        vm.expectRevert(abi.encodeWithSelector(IRotationGuard.ModuleTransactionNotAllowed.selector, address(guard)));
+        guard.checkModuleTransaction(address(safe), 0, data, Enum.Operation.Call, address(guard));
+    }
+
+    function test_moduleGuardAllowsOwnerCallsFromGuard() public {
+        bytes[3] memory calls = [
+            abi.encodeCall(safe.swapOwner, (address(0x1), address(0x2), address(0x3))),
+            abi.encodeCall(safe.addOwnerWithThreshold, (address(0x2), 1)),
+            abi.encodeCall(safe.removeOwner, (address(0x1), address(0x2), 1))
+        ];
+        for (uint256 i = 0; i < calls.length; ++i) {
+            vm.prank(address(safe));
+            guard.checkModuleTransaction(address(safe), 0, calls[i], Enum.Operation.Call, address(guard));
+        }
+    }
+
+    function _prev(address owner) private view returns (address) {
+        address[] memory owners = safe.getOwners();
+        for (uint256 i = 1; i < owners.length; ++i) if (owners[i] == owner) return owners[i - 1];
+        return address(0x1);
     }
 
     function test_revert_nestedExecution() public {
@@ -460,6 +502,77 @@ contract RotationGuardTest is RotationFixture {
         assertTrue(execBySlots(call(recipient, 1, ""), 2, 1));
         assertTrue(execBySlots(call(address(guard), 0, abi.encodeCall(guard.removeSlot, (2, 2))), 0, 1));
         assertEq(guard.consumedUpTo(address(safe), rootOf[2]), 2);
+    }
+
+    function test_setGuardCalldataToOtherTargetIsGuarded() public {
+        address signer = currentOwner(0);
+        address executor = currentOwner(1);
+        assertTrue(exec(call(recipient, 0, abi.encodeCall(safe.setGuard, (address(0)))), signer, executor));
+        assertFalse(safe.isOwner(signer));
+        assertFalse(safe.isOwner(executor));
+        bytes32 guardSlot = 0x4a204f620c8c5ccdca3fd54d003badd85ba500436a431f0cbda4f558c93c34c8;
+        assertEq(address(uint160(uint256(vm.load(address(safe), guardSlot)))), address(guard));
+    }
+
+    function test_revert_stage_beyondCommittedSize() public {
+        bytes memory data = abi.encodeCall(guard.setRoot, (2, rootOf[2], 7, 6, "cid"));
+        assertTrue(execBySlots(call(address(guard), 0, data), 0, 1));
+        guard.stage(address(safe), 2, entries(2, 6, 1));
+        IRotationGuard.StageEntry[] memory list = entries(2, 7, 1);
+        vm.expectRevert(abi.encodeWithSelector(IRotationGuard.IndexOutOfRange.selector, 7));
+        guard.stage(address(safe), 2, list);
+    }
+
+    function test_revert_stage_duplicateAddressInTree() public {
+        uint256 newSlot = SLOTS;
+        address dup = vm.addr(0xD0D0);
+        bytes32[] memory leaves = new bytes32[](4);
+        leaves[0] = guard.leaf(address(safe), newSlot, 0, vm.addr(0xA0A0));
+        leaves[1] = guard.leaf(address(safe), newSlot, 1, dup);
+        leaves[2] = guard.leaf(address(safe), newSlot, 2, dup);
+        leaves[3] = guard.leaf(address(safe), newSlot, 3, vm.addr(0xB0B0));
+        IRotationGuard.SlotConfig memory config =
+            IRotationGuard.SlotConfig(_root(leaves), 4, 0, vm.addr(0xA0A0), _proof(leaves, 0), "cid");
+        assertTrue(execBySlots(call(address(guard), 0, abi.encodeCall(guard.addSlot, (config, 2))), 0, 1));
+
+        IRotationGuard.StageEntry[] memory list = new IRotationGuard.StageEntry[](2);
+        list[0] = IRotationGuard.StageEntry(1, dup, _proof(leaves, 1));
+        list[1] = IRotationGuard.StageEntry(2, dup, _proof(leaves, 2));
+        vm.expectRevert(abi.encodeWithSelector(IRotationGuard.InvalidOwner.selector, dup));
+        guard.stage(address(safe), newSlot, list);
+    }
+
+    function test_revert_addSlot_invalidProof() public {
+        IRotationGuard.SlotConfig memory config = slotConfig(0, 9);
+        config.proof = proofOf(0, 10);
+        bytes memory data = abi.encodeCall(guard.addSlot, (config, 2));
+        (bytes memory sigs, address executor) = prepareBySlots(call(address(guard), 0, data), 0, 1);
+        vm.expectRevert(IRotationGuard.InvalidProof.selector);
+        execRaw(call(address(guard), 0, data), sigs, executor);
+    }
+
+    function test_revert_initialize_invalidProof() public {
+        IRotationGuard.SlotConfig[] memory configs = new IRotationGuard.SlotConfig[](SLOTS);
+        address[] memory oldOwners = new address[](SLOTS);
+        for (uint256 slot = 0; slot < SLOTS; ++slot) {
+            configs[slot] = slotConfig(slot, 10);
+            oldOwners[slot] = currentOwner(slot);
+        }
+        configs[1].owner = makeAddr("attacker");
+        bytes memory data = abi.encodeCall(guard.initialize, (oldOwners, configs));
+        (bytes memory sigs, address executor) = prepareBySlots(call(address(guard), 0, data), 0, 1);
+        vm.expectRevert(IRotationGuard.InvalidProof.selector);
+        execRaw(call(address(guard), 0, data), sigs, executor);
+    }
+
+    function test_revert_addSlot_existingOwner() public {
+        address existing = currentOwner(2);
+        IRotationGuard.SlotConfig memory config = slotConfig(0, 9);
+        config.owner = existing;
+        bytes memory data = abi.encodeCall(guard.addSlot, (config, 2));
+        (bytes memory sigs, address executor) = prepareBySlots(call(address(guard), 0, data), 0, 1);
+        vm.expectRevert(abi.encodeWithSelector(IRotationGuard.InvalidOwner.selector, existing));
+        execRaw(call(address(guard), 0, data), sigs, executor);
     }
 
     function _root(bytes32[] memory leaves) private pure returns (bytes32) {

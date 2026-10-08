@@ -199,4 +199,10 @@ contract RotationGuardFuzzTest is RotationFixture {
         vm.expectRevert();
         guard.stage(address(safe), 0, list);
     }
+
+    /// @dev Leaves are bound to the Safe: the same signer tree yields different leaves under different Safes.
+    function testFuzz_leavesBoundToSafe(address otherSafe, uint256 slotId, uint256 index, address owner) public view {
+        vm.assume(otherSafe != address(safe));
+        assertNotEq(guard.leaf(address(safe), slotId, index, owner), guard.leaf(otherSafe, slotId, index, owner));
+    }
 }

@@ -123,6 +123,8 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
             bytes32 r = bytes32(signatures[offset:offset + 32]);
             bytes32 s = bytes32(signatures[offset + 32:offset + 64]);
             uint8 v = uint8(signatures[offset + 64]);
+            // Unreachable while the exact-length check holds (a contract signature needs dynamic data after the
+            // static part); kept as defense in depth.
             if (v == 0) {
                 revert ContractSignatureNotAllowed(address(uint160(uint256(r))));
             } else if (v == 1) {
