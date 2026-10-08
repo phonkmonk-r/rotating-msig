@@ -306,7 +306,9 @@ Options considered:
 
 Design:
 
-- A separate workspace package (`signer/`), CLI first, with a desktop or web front end later. It is not part of the generator, which stays offline-only; the signer needs network access.
+- Interface (decided): a local web UI. `rotation-signer` starts a process on the signer's machine that holds the key (seed file or Ledger over USB) and serves a browser UI on `127.0.0.1`. Keys never enter the browser. The session is protected by a random token in the URL fragment, a Host-header check against DNS rebinding, and no cross-origin access.
+- Scope of v1 (decided): confirm and execute. Transactions are still created in Safe{Wallet}; proposing (including through a non-owner proposer account) is v2, after proposer behaviour across rotation is tested.
+- Layers: browser-safe logic in `packages/core` (Transaction Service client, local EIP-712 SafeTx hashing, action decoding, and a rules engine that decides per transaction and per signer whether Confirm or Execute is allowed and why not); key handling in a Node-only `packages/keys` (seed and Ledger sources moved out of the generator); the server and UI in `signer/`. It is not part of the generator, which stays offline-only; the signer needs network access.
 - Key source: the signer's seed file or Ledger, with the same derivation and code as the generator. The signer's tree file identifies their slot; the tool reads the slot's current owner index on-chain and derives exactly that key. The signer never picks an account.
 - Safe{Wallet} stays the place where transactions are created and the queue is viewed. Only confirming and executing move into the tool.
 - Commands:
@@ -375,7 +377,12 @@ Still to do:
    - 4f. Exposure tracker: Transaction Service confirmations, `ApproveHash` events, owner nonces, escape-hatch signers; one-click `forceRotate`.
    - 4g. Executor pre-flight: simulate the next transaction with the executor's signature, check buffers and gas, warn on prior confirmation, point to a private RPC.
    - 4h. Admin: add or remove a slot, replace a root, skip indexes, escape hatch.
-   - 4i. Rotation signer: CLI that confirms and executes with the signer's current owner key (section 10). Planned next after the Sepolia test.
+   - 4i. Rotation signer: local web UI that confirms and executes with the signer's current owner key (section 10). In progress:
+     - 4i-1. Core: Transaction Service client, SafeTx hashing checked against the contract, action decoding, rules engine.
+     - 4i-2. `packages/keys`: seed and Ledger sources shared with the generator; resolve the current owner key from tree file and chain.
+     - 4i-3. Local server and JSON API (status, queue, confirm, execute) with token, Host check and private-RPC execution.
+     - 4i-4. React UI: identity header, decoded queue, one action per transaction with blocking reasons, pre-flight checklist.
+     - 4i-5. End-to-end tests on the Anvil demo with two signer instances, then a Sepolia run.
    - Sepolia validation: deploy the guard, create a 2-of-3 Safe in Safe{Wallet} with three independent test signers, install through the app, and settle the open questions in section 10. Test seeds live in `.sepolia/` (gitignored, testnet only).
 5. Keeper: buffer refills and gas top-ups.
 6. Audit, then mainnet canary.
