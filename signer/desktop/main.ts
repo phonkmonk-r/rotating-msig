@@ -169,7 +169,7 @@ interface Creating {
 }
 
 /** Rough gas for deploying a Safe and installing the guard, per the Sepolia runs (install grows with slots). */
-const CREATE_GAS = 600_000n;
+const CREATE_GAS = 1_500_000n;
 const INSTALL_GAS_PER_SLOT = 1_600_000n;
 
 function readCreating(): Creating | undefined {
