@@ -401,30 +401,161 @@ Still to do:
 6. Audit, then mainnet canary.
 7. Hash-based EIP-1271 co-signer (path out of bunker mode).
 8. Optional hardening: private signature collection through a standalone signing app (option B), which removes the Transaction Service exposure window entirely.
-9. v2 proposal: rotating approvals module (section 13). Not scheduled.
+9. v2: RotatingWallet, our own multisig where every approval is on-chain and rotates its key (section 13). Planned, not scheduled.
 
-## 13. v2 proposal: on-chain approvals that rotate (for later)
+## 13. v2: RotatingWallet (planned, not scheduled)
 
-Proposed 2026-10-08 and parked; v1 stays on the guard with off-chain Safe signatures. Recorded here so it can be picked up after the v1 audit.
+Planned 2026-10-08. v1 (Safe 1.5.0 plus RotationGuard) stays the production path until v2 is built, tested, audited and has run as a mainnet canary. This section replaces the earlier "rotating approvals module" proposal; the module on Safe is kept as the fallback in 13.11.
 
-**Idea.** Every use of a key rotates it in the same transaction. Instead of off-chain confirmations that wait in the Transaction Service, each signer approves on-chain from their current key, and that call swaps their owner to the next committed address. A key is never exposed while still an owner, so there is no exposure window at all.
+### 13.1 Goal
 
-**Shape: a Safe module, not a new wallet.** The Safe stays the account (funds, address, audited account code, token receive hooks, fallback handler, Safe{Wallet} as a viewer). A `RotatingApprovals` module becomes the only way to act:
+Our own multisig wallet in which a signer key is used exactly once, and the call that uses it also replaces it. There are no off-chain confirmations waiting anywhere, so a key is never exposed while it is still an owner. Every new Ledger or seed can join, and signers can be added later.
 
-- `propose(tx)` stores the transaction's hash on-chain (calldata in an event).
-- `approve(hash, slotId, nextIndex, nextOwner, proof)` is sent by the slot's current owner. It records the approval against the slot ID (so it survives rotation) and swaps the owner to `nextOwner`, proven against the slot's Merkle root, in the same call.
-- The approval that reaches the threshold executes through `execTransactionFromModule`.
-- The Safe's own owners become unusable placeholders and the guard blocks `execTransaction`, so the module is the only path. An existing Safe migrates in one transaction, with no address change and no fund movement.
+v1 needs the threshold−1 confirmation rule, the last-signer-executes rule with a pre-validated signature, exact signature lengths, nonce-ordering checks, staging with a ring buffer and a keeper, Merkle proofs, the Transaction Service, and just-in-time gas funding with sweeps. v2 needs none of them.
 
-**Rule: the next owner is always proven against the committed root, never chosen in the call.** An approval in the mempool reveals the public key; an attacker who derives the key could replace the transaction (same nonce, higher fee) and, if the next owner were free, take the slot permanently. With the commitment they can at most redirect that one approval to another proposal, never reach the threshold alone. Approvals still go through a private relay.
+### 13.2 Decisions
 
-**What it removes from v1.** Off-chain signature storage and the Transaction Service; the threshold−1 confirmation rule and queue-wide exposure check; the last-signer-executes rule, pre-validated signatures and the exact signature length; nonce-ordering coordination; staging, the ring buffer and the staging keeper, since each approval carries its own proof. The Merkle trees, key derivation, Ledger support, the signer app and the dApp browser carry over.
+- Standalone wallet, not a Safe module. The module design (13.11) stays the fallback if leaving Safe's audited vault and ecosystem turns out too costly.
+- Approvals are on-chain. Each approval is an EIP-712 signature by the slot's current owner key, submitted and verified on-chain in the same call that rotates the slot to its next owner.
+- Approvals are relayed. A per-app gas account submits them, so owner keys never hold ETH and never become on-chain accounts (no account creation, no funding, no sweeps).
+- The next owner is committed one step ahead (13.4), not by a Merkle tree. The app derives keys from the seed by index as in v1, but no tree file exists.
+- No message signing (EIP-1271) at first. dApps that need it are refused, as in the v1 dApp browser. Open question in 13.12.
+- Immutable implementation, one minimal proxy (ERC-1167) per wallet, created through our factory with CREATE2.
 
-**Costs and open points.**
+### 13.3 Threat model recap
 
-- Gas: one on-chain transaction per approval (2 for a 2-of-3), each with a proof check and an owner swap. Measure against v1's ~650k gas for a 2-of-3 rotating transfer on Sepolia before deciding.
-- Gas for fresh addresses: each new key starts empty. Preferred: the module tops up `nextOwner` from the Safe in the same call (leaves dust on retired keys). Relayed signatures would bring back an exposure window.
-- Ledger clear signing needs an ERC-7730 descriptor for the module; until then the app's review screen is what the signer reads.
-- Safe{Wallet} does not understand module approvals; the signer app is the interface.
-- Audit scope: the module, its interaction with `execTransactionFromModule`, and the migration transaction.
-- Alternative kept open: a standalone wallet without Safe, only if the Safe dependency itself becomes the problem.
+The adversary can derive a private key from an exposed public key, possibly fast. A key is exposed by any signature it makes, including one sitting in a mempool or a failed transaction. Addresses alone reveal nothing. So:
+
+- a key may sign only in a call that also rotates it away;
+- the replacement must already be fixed before the key signs, so an attacker who derives the key in flight cannot choose the next owner;
+- anything that can make a signed approval land without rotating (a revert, a dropped transaction) must be prevented or recoverable.
+
+### 13.4 Next-owner commitment
+
+Each slot stores `owner` and `nextCommitment = keccak256(abi.encode(wallet, chainId, slotId, index + 1, nextOwner))`. An approval by the owner at `index`:
+
+- reveals `nextOwner`, which must hash to `nextCommitment`;
+- supplies the commitment for `index + 2`.
+
+The contract sets `owner = nextOwner`, stores the new commitment and increments `index`, all in the approval call.
+
+If an attacker derives the key in flight and front-runs the approval, they must still reveal the committed next owner. They can only plant a wrong commitment for the step after, which freezes the slot: the legitimate next owner cannot match it. They cannot take the slot, and their approval is one vote at most. A frozen slot is reset by the other signers (`resetSlot`, 13.5). Private submission makes a front-run unlikely in the first place.
+
+Compared with v1's Merkle tree: no tree to generate or store, no proofs in calldata, one storage write per rotation. The cost is that a front-run freezes the slot rather than being harmless. If audit or review prefers the stronger guarantee, the slot can commit to a Merkle root of its key sequence instead, with the same interface plus a proof argument.
+
+### 13.5 Contract
+
+State per wallet:
+
+- slots, each with `owner`, `index` and `nextCommitment`;
+- `threshold` and `slotCount`;
+- proposals, each with the hash of its call list, deadline, approval bitmap by slot ID, and status (open, executed, failed, cancelled);
+- a sequential proposal ID.
+
+Functions:
+
+- `propose(calls, deadline, approval) → id`: only a signer can propose, and proposing counts as their approval, so it rotates them. Calls are stored as a hash; the full calls go in an event for the app to read.
+- `approve(id, approval)`: checks the signature against the slot's current owner and index, checks the commitment, records the slot's bit, and rotates.
+- When an approval reaches the threshold, it executes the calls. The execution runs through a self-call whose failure is caught: a reverting payload marks the proposal failed but never undoes the rotation. `execute(id)` lets anyone retry a failed or deferred execution once the threshold is met.
+- `revoke(id, approval)`: withdraws an approval; it is itself a key use, so it rotates.
+- Self-administration, only through proposals the wallet makes on itself:
+  - `addSlot(owner, commitment, newThreshold)`, `removeSlot(slotId, newThreshold)`, `changeThreshold(n)`;
+  - `resetSlot(slotId, owner, commitment)` for a frozen, lost or leaked slot (the v1 force-rotate case).
+- Receiving: plain ETH, ERC-721 and ERC-1155 receiver hooks, ERC-165.
+
+Approval payload (EIP-712, domain = wallet and chain): `Approve(uint256 proposalId, bytes32 callsHash, uint256 slotId, uint32 index, address nextOwner, bytes32 nextNextCommitment)`, and `Revoke` likewise. Binding to `index` makes every signature single-use even before the owner changes.
+
+Rules the contract enforces:
+
+- one approval per slot per proposal;
+- approvals are recorded by slot ID, so they survive the rotations they cause;
+- proposals are immutable, and an expired proposal cannot be approved or executed;
+- execution is a CALL per entry, with no delegatecall;
+- the wallet's own admin functions are reachable only as calls from the wallet to itself.
+
+Creation:
+
+- `factory.create(salt, slots, threshold)` deploys a clone at a CREATE2 address derived from the creator and their salt, and initializes it in the same transaction. The address is predictable before creation, and nobody else can front-run initialization at that address. This is one transaction, against v1's two.
+- Initial slots are each signer's index-0 address and the commitment to index 1.
+
+### 13.6 App
+
+- **Keys:** as in v1, slot keys are at `m/44'/60'/{base+i}'/0/0` with a base per wallet. To approve, the app derives key `i` to sign, `i+1` to reveal, and `i+2` to commit. Nothing else is stored.
+- **Gas account:** a per-app account (the seed's first account as in v1, or a separate seed in the vault). It submits every proposal and approval through a private RPC, and is never an owner. It holds only gas money; anyone can top it up. Any signer's gas account can relay anyone's approval, so no single relayer is needed.
+- **Signing discipline:** sign only immediately before submitting, never store signatures, and simulate first. If a submission is dropped or reorged out, resubmit the same signature: the state it checks is unchanged. Never sign a fresh one with the same key.
+- **Queue:** pending proposals come from the wallet's events, with no Transaction Service. The New transaction screen and the dApp browser propose in the same way as today.
+- **Setup:** each signer sends the creator their index-0 address and their index-1 commitment. This is far smaller than v1's slot package, since it carries no proofs. The creator creates the wallet in one transaction.
+- **Ledger:** approvals are EIP-712, which the device can show field by field. A clear-signing descriptor (ERC-7730) is needed for the call list itself.
+
+### 13.7 Gas (to measure before committing to v2)
+
+- Expected per approval on mainnet: about 21k base, plus calldata, the approval bit, one owner write and one commitment write. That is roughly 50 to 80k.
+- The proposal adds its event data.
+- The final approval adds the calls themselves.
+- Compare against v1's single rotating execution (about 650k gas for a 2-of-3 transfer on repriced Sepolia) plus v1's staging transactions and execution funding.
+- Since owner keys never hold ETH, the repriced account creation (about 205k gas per fresh account on Sepolia) never applies.
+- Measure on a mainnet fork and on Sepolia for 1-of-1, 2-of-3 and 3-of-5.
+
+### 13.8 Caveats and mitigations
+
+- **Signed but not rotated:** a reverted, out-of-gas or dropped submission publishes a signature without rotating. Mitigations:
+  - simulate before submitting, with a generous gas limit;
+  - use a private relay that does not include reverting transactions;
+  - make the payload's failure unable to revert the rotation (13.5);
+  - resubmit the same signature after a drop;
+  - `resetSlot` by the others as the last resort.
+- **Front-running by a fast attacker:** the outcome is a frozen slot and one stray vote, never a takeover (13.4). Private submission makes it unlikely.
+- **Concurrency:** two approvals by the same slot in one block. The second one fails its index check, and its signature is then exposed for a key that already rotated away, which is harmless. The app serializes approvals per slot.
+- **Relayer liveness:** if the gas account is empty, any other signer's app or any account can relay, since signatures do not depend on who submits.
+- **Visibility:** proposals and their calls are public on-chain, as they are in the Transaction Service today.
+- **Ecosystem:** no Safe{Wallet}, Transaction Service, Safe modules or Safe-specific dApp support. Our app is the interface; the dApp browser presents the wallet as the account.
+- **Audit scope:** the whole wallet, factory and clone pattern, instead of a guard on top of an audited Safe.
+- **No message signing:** some dApp flows (permits, off-chain orders, sign-in) will not work until EIP-1271 is decided.
+
+### 13.9 Testing
+
+Same bar as v1: unit tests, invariant and fuzz suites, and mutation testing. Invariants include:
+
+- every executed proposal had at least `threshold` distinct slot approvals;
+- every slot owner changes exactly when it approves, revokes or proposes;
+- no owner address ever repeats across a slot's history;
+- a revealed next owner always matches the stored commitment;
+- a payload revert never undoes a rotation;
+- admin functions are reachable only by the wallet itself.
+
+### 13.10 Migration from v1
+
+1. Create the v2 wallet with the same signers, each on a fresh index range.
+2. Move assets from the Safe with ordinary v1 transfers, one rotating execution per batch.
+3. Point the app at the new wallet.
+
+The Safe can remain as an empty, guarded vault or be retired.
+
+### 13.11 Fallback: rotating approvals as a Safe module
+
+The same approval and commitment logic implemented as a module on Safe:
+
+- the Safe keeps the funds and its address;
+- Safe's own owners become unusable placeholders;
+- the guard blocks `execTransaction`;
+- the module executes through `execTransactionFromModule`.
+
+This keeps the audited vault and Safe{Wallet} as a viewer, at the cost of Safe's gas overhead and a more complex migration.
+
+### 13.12 Open questions
+
+- EIP-1271 message signing: support it with an on-chain approval per message (each one rotating), or keep refusing.
+- Commitment or Merkle root per slot (13.4).
+- Auto-execution on the final approval, or always a separate `execute`.
+- A separate gas seed or the seed's first account as the gas account.
+- Optional spending limits or timelocks for large transfers.
+
+### 13.13 Milestones
+
+1. v2-1. Specification and invariants (this section turned into a spec).
+2. v2-2. Contract, factory and clone, with unit, invariant, fuzz and mutation tests.
+3. v2-3. Gas measurements against v1 on a mainnet fork and on Sepolia. Go or no-go.
+4. v2-4. App: approvals, gas account relay, wallet creation, event-based queue, dApp browser.
+5. v2-5. Sepolia with independent test signers.
+6. v2-6. Audit.
+7. v2-7. Migration tooling and mainnet canary.
