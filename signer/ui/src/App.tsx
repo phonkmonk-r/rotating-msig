@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, canConnect, desktop, type DesktopState, type Execution, type QueueItem, type SignerView, type StatusView } from "./api";
 import { eth, explorer, short } from "./format";
 import { Setup } from "./Setup";
+import { ImportWallet, UnlockWallet } from "./Wallet";
 
 const REFRESH_MS = 10_000;
 const EXECUTION_POLL_MS = 3_000;
@@ -22,6 +23,17 @@ export function App() {
 
   if (desktop) {
     if (!desktopState) return <main className="app" />;
+    const reload = () => void loadDesktopState();
+    if (!desktopState.vault.exists || !desktopState.vault.unlocked) {
+      return (
+        <main className="app">
+          <header className="header">
+            <h1>Rotation Signer</h1>
+          </header>
+          {desktopState.vault.exists ? <UnlockWallet operator={desktopState.vault.operator} onDone={reload} /> : <ImportWallet onDone={reload} />}
+        </main>
+      );
+    }
     if (!desktopState.configured || editing) {
       return (
         <main className="app">
@@ -40,10 +52,21 @@ export function App() {
       );
     }
   }
-  return <Dashboard onSettings={desktop ? () => setEditing(true) : undefined} />;
+  return (
+    <Dashboard
+      onSettings={desktop ? () => setEditing(true) : undefined}
+      onLock={
+        desktop
+          ? () => {
+              void desktop!.lock().then(() => loadDesktopState());
+            }
+          : undefined
+      }
+    />
+  );
 }
 
-function Dashboard({ onSettings }: { onSettings?: () => void }) {
+function Dashboard({ onSettings, onLock }: { onSettings?: () => void; onLock?: () => void }) {
   const [status, setStatus] = useState<StatusView>();
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [error, setError] = useState<string>();
@@ -103,6 +126,11 @@ function Dashboard({ onSettings }: { onSettings?: () => void }) {
           {onSettings && (
             <button type="button" onClick={onSettings}>
               Settings
+            </button>
+          )}
+          {onLock && (
+            <button type="button" onClick={onLock}>
+              Lock
             </button>
           )}
         </div>

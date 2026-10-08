@@ -8,11 +8,11 @@ import { isHex, type Hex } from "viem";
 
 import { createSession } from "../src/create.js";
 import type { SignerSession } from "../src/session.js";
+import { createVault, readVault, unlockVault } from "./vault.js";
 
-/** Saved between launches. Paths only: the seed itself is never written anywhere by this app. */
+/** Saved between launches. The seed lives only in the encrypted vault (`vault.json`). */
 interface Settings {
   treePath: string;
-  seedPath: string;
   rpc: string;
   executionRpc?: string;
   txServiceUrl?: string;
@@ -32,8 +32,10 @@ const appRoot = () => app.getAppPath();
 
 if (process.env.ROTATION_SIGNER_USER_DATA) app.setPath("userData", process.env.ROTATION_SIGNER_USER_DATA);
 const settingsPath = () => join(app.getPath("userData"), "settings.json");
+const vaultPath = () => join(app.getPath("userData"), "vault.json");
 
 let session: SignerSession | undefined;
+/** Present only while the wallet is unlocked: the decrypted seed never leaves this process. */
 let source: AddressSource | undefined;
 let sessionError: string | undefined;
 
@@ -49,31 +51,36 @@ function summarize(tree: TreeFile): TreeSummary {
   return { safe: tree.safe, chainId: tree.chainId, slotId: tree.slotId, size: tree.size, base: tree.base };
 }
 
-/** Builds a session from settings and proves it works by resolving the signer's current owner key. */
+/** Builds a session from settings with the unlocked wallet, and proves it works by resolving the current owner key. */
 async function start(settings: Settings): Promise<void> {
-  await stop();
+  if (!source) throw new Error("unlock your wallet first");
+  session = undefined;
   const tree = loadTreeFile(readFileSync(settings.treePath, "utf8")).file;
-  const nextSource = seedSource(readFileSync(settings.seedPath, "utf8"));
-  try {
-    const { session: next } = createSession(
-      { tree, rpc: settings.rpc, executionRpc: settings.executionRpc || undefined, txServiceUrl: settings.txServiceUrl, safeApiKey: process.env.SAFE_API_KEY },
-      nextSource,
-    );
-    const status = await next.status();
-    if (!status.me) throw new Error(status.meError ?? "your current owner key could not be resolved");
-    session = next;
-    source = nextSource;
-    sessionError = undefined;
-  } catch (error) {
-    await nextSource.close();
-    throw error;
-  }
+  const { session: next } = createSession(
+    { tree, rpc: settings.rpc, executionRpc: settings.executionRpc || undefined, txServiceUrl: settings.txServiceUrl, safeApiKey: process.env.SAFE_API_KEY },
+    source,
+  );
+  const status = await next.status();
+  if (!status.me) throw new Error(status.meError ?? "your current owner key could not be resolved");
+  session = next;
+  sessionError = undefined;
 }
 
-async function stop() {
+async function lock() {
   session = undefined;
   await source?.close();
   source = undefined;
+}
+
+/** After unlocking, resumes the saved configuration if there is one; problems are shown on the setup screen. */
+async function resume() {
+  const settings = readSettings();
+  if (!settings || !existsSync(settings.treePath)) return;
+  try {
+    await start(settings);
+  } catch (error) {
+    sessionError = (error as Error).message;
+  }
 }
 
 /** Every handler returns a Result so error messages reach the UI unchanged. */
@@ -105,12 +112,40 @@ handle("app:state", () => {
   } catch {
     // Reported through sessionError.
   }
+  let vault: { exists: boolean; unlocked: boolean; operator?: string } = { exists: false, unlocked: false };
+  try {
+    const file = readVault(vaultPath());
+    vault = { exists: file !== undefined, unlocked: source !== undefined, operator: file?.operator };
+  } catch (error) {
+    sessionError = (error as Error).message;
+  }
   return {
+    vault,
     configured: session !== undefined,
-    settings: settings ? { treePath: settings.treePath, seedPath: settings.seedPath, rpc: settings.rpc, executionRpc: settings.executionRpc ?? "" } : undefined,
+    settings: settings ? { treePath: settings.treePath, rpc: settings.rpc, executionRpc: settings.executionRpc ?? "" } : undefined,
     tree,
     error: sessionError,
   };
+});
+
+handle("vault:create", async (mnemonic: string, password: string) => {
+  createVault(vaultPath(), String(mnemonic), String(password));
+  source = seedSource(unlockVault(vaultPath(), String(password)));
+  await resume();
+  return true;
+});
+
+handle("vault:unlock", async (password: string) => {
+  const phrase = unlockVault(vaultPath(), String(password));
+  await lock();
+  source = seedSource(phrase);
+  await resume();
+  return true;
+});
+
+handle("vault:lock", async () => {
+  await lock();
+  return true;
 });
 
 handle("app:pickTree", async () => {
@@ -120,15 +155,9 @@ handle("app:pickTree", async () => {
   return { path, tree: summarize(loadTreeFile(readFileSync(path, "utf8")).file) };
 });
 
-handle("app:pickSeed", async () => {
-  const picked = await dialog.showOpenDialog({ title: "Choose your seed phrase file", properties: ["openFile"] });
-  const path = picked.filePaths[0];
-  return picked.canceled || !path ? undefined : { path };
-});
-
 handle("app:configure", async (input: Settings) => {
-  if (!input?.treePath || !input.seedPath || !input.rpc) throw new Error("tree file, seed file and RPC URL are all required");
-  const settings: Settings = { treePath: input.treePath, seedPath: input.seedPath, rpc: input.rpc.trim(), executionRpc: input.executionRpc?.trim() || undefined };
+  if (!input?.treePath || !input.rpc) throw new Error("tree file and RPC URL are both required");
+  const settings: Settings = { treePath: input.treePath, rpc: input.rpc.trim(), executionRpc: input.executionRpc?.trim() || undefined };
   const existing = readSettings();
   if (existing?.txServiceUrl) settings.txServiceUrl = existing.txServiceUrl;
   await start(settings);
@@ -138,7 +167,7 @@ handle("app:configure", async (input: Settings) => {
 });
 
 handle("app:reset", async () => {
-  await stop();
+  session = undefined;
   return true;
 });
 
@@ -177,10 +206,11 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  const settings = readSettings();
-  if (settings && existsSync(settings.treePath) && existsSync(settings.seedPath)) {
+  // Test hook only: unlocks without the UI so smoke tests can reach the dashboard.
+  if (process.env.ROTATION_SIGNER_TEST_PASSWORD && readVault(vaultPath())) {
     try {
-      await start(settings);
+      source = seedSource(unlockVault(vaultPath(), process.env.ROTATION_SIGNER_TEST_PASSWORD));
+      await resume();
     } catch (error) {
       sessionError = (error as Error).message;
     }
@@ -189,5 +219,5 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  void stop().then(() => app.quit());
+  void lock().then(() => app.quit());
 });

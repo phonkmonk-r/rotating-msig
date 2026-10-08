@@ -10,7 +10,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && vite build ui",
     "typecheck": "tsc --noEmit && tsc --noEmit -p ui/tsconfig.json && tsc --noEmit -p desktop/tsconfig.json",
-    "test": "node --conditions=source --import tsx --test test/*.test.ts",
+    "test": "node --conditions=source --import tsx --test test/*.test.ts desktop/*.test.ts",
     "start": "tsx --conditions=source src/cli.ts",
     "ui": "vite ui",
     "demo": "tsx --conditions=source scripts/local-demo.ts",
@@ -20,6 +20,7 @@
   "dependencies": {
     "@rotating-msig/core": "0.1.0",
     "@rotating-msig/keys": "0.1.0",
+    "@scure/bip39": "2.4.0",
     "viem": "2.56.8"
   },
   "devDependencies": {

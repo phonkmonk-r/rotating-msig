@@ -13,9 +13,11 @@ npm run build
 npm run desktop -w signer
 ```
 
-On first launch, choose your tree file and your seed phrase file and enter an RPC URL. The app checks your key against the chain before saving. It remembers the file paths and RPC, never the seed itself; Settings changes them later.
+On first launch, import your seed phrase and choose a password: the seed is encrypted (scrypt and AES-256-GCM) into the app's data folder and never stored in plain text. Each later launch asks for the password. Then choose your tree file and an RPC; the app checks your key against the chain before saving. Settings changes them later, and Lock clears the key from memory.
 
-The window runs the same UI as the command-line version, but talks to the signing process directly instead of through a local web server, so there is no port and no session token. It is isolated from Node, sandboxed, and opens explorer links in your browser. Ledger signing is available in the command-line version; the desktop app supports seed files for now (the Ledger USB library has to be rebuilt for Electron first).
+Your seed's first account is your operator account (the wallet you were an initial owner with); your rotation keys are derived from the same seed on their own paths.
+
+The window runs the same UI as the command-line version, but talks to the signing process directly instead of through a local web server, so there is no port and no session token. It is isolated from Node, sandboxed, and opens explorer links in your browser. Ledger signing is available in the command-line version; in the desktop app it needs the Ledger USB library rebuilt for Electron, which is not done yet.
 
 ## Command line
 

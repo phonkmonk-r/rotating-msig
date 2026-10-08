@@ -487,3 +487,24 @@ input {
   display: flex;
   gap: 8px;
 }
+
+textarea {
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+}
+
+.error-text {
+  color: var(--critical);
+}
+
+.unlock {
+  max-width: 460px;
+  margin: 40px auto 0;
+}

@@ -9,7 +9,6 @@ const CHAIN_NAMES: Record<number, string> = { 1: "Ethereum", 11155111: "Sepolia"
 export function Setup({ initial, onDone, onCancel }: { initial?: DesktopState; onDone: () => void; onCancel?: () => void }) {
   const [treePath, setTreePath] = useState(initial?.settings?.treePath ?? "");
   const [tree, setTree] = useState<TreeSummary | undefined>(initial?.tree);
-  const [seedPath, setSeedPath] = useState(initial?.settings?.seedPath ?? "");
   const [rpc, setRpc] = useState(initial?.settings?.rpc ?? "");
   const [executionRpc, setExecutionRpc] = useState(initial?.settings?.executionRpc ?? "");
   const [error, setError] = useState<string | undefined>(initial?.error);
@@ -28,16 +27,11 @@ export function Setup({ initial, onDone, onCancel }: { initial?: DesktopState; o
     }
   }
 
-  async function pickSeed() {
-    const picked = await desktop!.pickSeed();
-    if (picked) setSeedPath(picked.path);
-  }
-
   async function start() {
     setWorking(true);
     setError(undefined);
     try {
-      const settings: DesktopSettings = { treePath, seedPath, rpc, executionRpc };
+      const settings: DesktopSettings = { treePath, rpc, executionRpc };
       await desktop!.configure(settings);
       onDone();
     } catch (caught) {
@@ -47,13 +41,13 @@ export function Setup({ initial, onDone, onCancel }: { initial?: DesktopState; o
     }
   }
 
-  const ready = treePath !== "" && seedPath !== "" && rpc.trim() !== "" && !working;
+  const ready = treePath !== "" && rpc.trim() !== "" && !working;
   return (
     <section className="panel setup">
       <h2>Set up your signer</h2>
       <p className="muted">
-        Point the signer at your tree file and your seed phrase file. It reads which tree index owns your slot on-chain and
-        always signs with that key. The seed stays in a file on this computer: the app remembers only where it is.
+        Choose your tree file and an RPC. The signer reads which tree index owns your slot on-chain and always signs with that
+        key from your wallet.
       </p>
 
       <div className="field">
@@ -70,16 +64,6 @@ export function Setup({ initial, onDone, onCancel }: { initial?: DesktopState; o
             {tree.size.toLocaleString()} keys from account {tree.base.toLocaleString()}
           </p>
         )}
-      </div>
-
-      <div className="field">
-        <label>Seed phrase file</label>
-        <div className="row">
-          <button type="button" onClick={() => void pickSeed()}>
-            Choose…
-          </button>
-          <span className="path">{seedPath || "No file chosen"}</span>
-        </div>
       </div>
 
       <div className="field">

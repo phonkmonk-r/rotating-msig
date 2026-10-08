@@ -12,12 +12,12 @@ export interface TreeSummary {
 
 export interface DesktopSettings {
   treePath: string;
-  seedPath: string;
   rpc: string;
   executionRpc: string;
 }
 
 export interface DesktopState {
+  vault: { exists: boolean; unlocked: boolean; operator?: string };
   configured: boolean;
   settings?: DesktopSettings;
   tree?: TreeSummary;
@@ -30,7 +30,9 @@ type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 interface DesktopBridge {
   state(): Promise<Result<DesktopState>>;
   pickTree(): Promise<Result<{ path: string; tree: TreeSummary } | undefined>>;
-  pickSeed(): Promise<Result<{ path: string } | undefined>>;
+  createVault(mnemonic: string, password: string): Promise<Result<true>>;
+  unlock(password: string): Promise<Result<true>>;
+  lock(): Promise<Result<true>>;
   configure(settings: DesktopSettings): Promise<Result<true>>;
   reset(): Promise<Result<true>>;
   status(): Promise<Result<StatusView>>;
@@ -99,7 +101,9 @@ export const desktop = bridge
   ? {
       state: () => unwrap(bridge.state()),
       pickTree: () => unwrap(bridge.pickTree()),
-      pickSeed: () => unwrap(bridge.pickSeed()),
+      createVault: (mnemonic: string, password: string) => unwrap(bridge.createVault(mnemonic, password)),
+      unlock: (password: string) => unwrap(bridge.unlock(password)),
+      lock: () => unwrap(bridge.lock()),
       configure: (settings: DesktopSettings) => unwrap(bridge.configure(settings)),
       reset: () => unwrap(bridge.reset()),
     }

@@ -5,5 +5,8 @@
     "outDir": "../dist-desktop",
     "noEmit": false
   },
-  "include": ["main.ts"]
+  "include": [
+    "main.ts",
+    "vault.ts"
+  ]
 }

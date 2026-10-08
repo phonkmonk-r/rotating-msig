@@ -389,7 +389,7 @@ Still to do:
    - 4j. One app for each signer, from onboarding to daily use (decided 2026-10-08). The desktop app becomes the main interface; Safe{Wallet} is an optional viewer. Each signer runs their own copy holding only their own keys; signers share only public data (chain, Transaction Service queue, slot packages).
      - Decisions: seeds live in an encrypted vault in the app's data folder (scrypt + AES-256-GCM, password unlock each launch), with Ledger as the hardware alternative; slot packages travel by copy-paste or file; external wallets are limited to seed and Ledger (tree keys need one of them); v1 proposals cover ETH and ERC-20 transfers plus guard admin actions.
      - Accounts: the seed's standard first account is the signer's operator account (their initial owner, which stops being an owner at install) and pays for staging and gas top-ups; tree accounts are only ever used as owners.
-     - 4j-1. Wallet vault: import or unlock, replacing seed files in the desktop app.
+     - 4j-1. Wallet vault: import or unlock, replacing seed files in the desktop app. Done (`signer/desktop/vault.ts`).
      - 4j-2. Join a Safe: paste its address, check it, find the signer's slot from their operator account, generate the tree in the app (account range chosen automatically) and export a slot package.
      - 4j-3. Coordinator install: import every slot package, check roots and bindings, propose and execute the setup from the app.
      - 4j-4. Self-staging and gas: the app stages its own slot's next keys and tops up its current owner from the operator account, automatically when low.
