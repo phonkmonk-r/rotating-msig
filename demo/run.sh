@@ -68,6 +68,7 @@ if [ -n "${KEEP:-}" ]; then
   cat <<MSG
 
 Anvil is still running on $RPC (pid $ANVIL_PID). Try:
+  npm run dev -w app    then open http://localhost:5173/?rpc=$RPC&safe=$SAFE
   cast call $SAFE "getOwners()(address[])" --rpc-url $RPC
   DEMO_BASE_0=${BASES[0]} DEMO_BASE_1=${BASES[1]} DEMO_BASE_2=${BASES[2]} forge script script/Demo.s.sol:Demo --sig "rotate(uint256)" 1 --rpc-url $RPC --broadcast
 Stop it with: kill $ANVIL_PID

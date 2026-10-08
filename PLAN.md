@@ -10,7 +10,7 @@ Status: phases 1-3 done, phase 4 (Safe App) in progress. Last updated 2026-10-08
 | 2. Contracts | Done, pending external audit | `src/`, `test/` (127 Solidity tests: unit, mainnet fork, fuzz, invariants, gas budgets; mutation-tested) |
 | 3. Generator CLI | Done; Ledger mode still needs one run on a real device | `generator/` (26 TypeScript tests), cross-checked by `test/GeneratorVector.t.sol` |
 | Demo | Done | `demo/run.sh`: Anvil mainnet fork, real Safe 1.5.0 contracts, 2-of-3 Safe rotating through generated trees |
-| 4. Safe App | In progress | `app/`, `packages/core/` (see section 12) |
+| 4. Safe App | In progress: 4a-4c done (shared core, app shell, read-only dashboard) | `app/`, `packages/core/` (see section 12) |
 | 5-8 | Not started | |
 
 How to run everything:
@@ -18,6 +18,8 @@ How to run everything:
 - `forge test`: Solidity suite. Fork tests read `MAINNET_RPC_URL` from `.env` (gitignored) and skip without it.
 - `cd generator && npm test`: TypeScript suite.
 - `./demo/run.sh` (`KEEP=1` to leave Anvil running): end-to-end rotation on a local mainnet fork.
+- `npm test` at the root: TypeScript suites for `packages/core` (including an integration test on a throwaway Anvil) and `generator/`.
+- `npm run dev -w app`, then `http://localhost:5173/?rpc=http://127.0.0.1:8545&safe=<demo Safe>`: the Safe App dashboard against the demo.
 
 Findings that changed the design during implementation:
 
@@ -318,9 +320,9 @@ Still to do:
 2. Contracts: RotationGuard, Foundry tests, fuzz and invariant suite. Done, pending audit.
 3. Generator CLI (TypeScript): both modes, tree file format, shared leaf and proof library. Done in `generator/`, cross-checked against the contract.
 4. Safe App: setup, dashboard, staging, exposure tracker, executor flow, admin. In progress, in milestones:
-   - 4a. `packages/core`: shared tree code, guard ABI, read helpers and calldata builders, tested against the Anvil demo.
-   - 4b. App shell: Vite + React + TypeScript, Safe Apps SDK connection, standalone read-only mode.
-   - 4c. Dashboard: slots, owners, tree progress, buffers, owner gas, keeper balance, warnings.
+   - 4a. `packages/core`: shared tree code, guard ABI, read helpers, calldata builders and revert decoding. Done; 24 tests including an integration run on a local chain.
+   - 4b. App shell: Vite + React + TypeScript, Safe Apps SDK connection, standalone read-only mode. Done.
+   - 4c. Dashboard: slots, owners, tree progress, buffers, owner gas, warnings. Done (keeper balance waits for phase 5, when the keeper has an address).
    - 4d. Setup wizard: load tree files, check roots, propose the install batch.
    - 4e. Staging: refill buffers from tree files, from a non-owner wallet or inside a batch.
    - 4f. Exposure tracker: Transaction Service confirmations, `ApproveHash` events, owner nonces, escape-hatch signers; one-click `forceRotate`.

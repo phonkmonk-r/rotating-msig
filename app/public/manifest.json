@@ -1,0 +1,5 @@
+{
+  "name": "Rotation Guard",
+  "description": "Rotates every Safe owner out after they sign, using pre-committed fresh addresses.",
+  "iconPath": "icon.svg"
+}

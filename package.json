@@ -3,7 +3,8 @@
   "private": true,
   "workspaces": [
     "packages/core",
-    "generator"
+    "generator",
+    "app"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
