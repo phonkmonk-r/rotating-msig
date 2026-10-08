@@ -10,7 +10,7 @@ Status: phases 1-3 done, phase 4 (Safe App) in progress. Last updated 2026-10-08
 | 2. Contracts | Done, pending external audit | `src/`, `test/` (127 Solidity tests: unit, mainnet fork, fuzz, invariants, gas budgets; mutation-tested) |
 | 3. Generator CLI | Done; Ledger mode still needs one run on a real device | `generator/` (26 TypeScript tests), cross-checked by `test/GeneratorVector.t.sol` |
 | Demo | Done | `demo/run.sh`: Anvil mainnet fork, real Safe 1.5.0 contracts, 2-of-3 Safe rotating through generated trees |
-| 4. Safe App | In progress: 4a-4c done (shared core, app shell, read-only dashboard) | `app/`, `packages/core/` (see section 12) |
+| 4. Safe App and rotation signer | In progress: 4a-4d done (shared core, app shell, dashboard, setup wizard); Sepolia validation next, then 4i rotation signer | `app/`, `packages/core/` (see section 12) |
 | 5-8 | Not started | |
 
 How to run everything:
@@ -77,6 +77,7 @@ Core rule: an owner whose pubkey has been exposed must stop being an owner as qu
 | RotationGuard (one singleton contract, enabled as Guard, Module and Module Guard) | On-chain | Stores a Merkle root per signer slot, records who signed each tx, swaps out exactly those signers after execution, enforces the executor rule, reverts if anything is missing |
 | Offline generator (CLI, TypeScript) | Each signer's own air-gapped machine or hardware wallet | Derives N fresh addresses from hardened paths and builds the signer's Merkle tree. Outputs the root and a tree file (addresses and proofs only, never pubkeys or xpubs) |
 | Rotation Safe App | Inside Safe{Wallet} (iframe, Safe Apps SDK) | Setup wizard, slot dashboard, staging, exposure tracker, admin actions. Never touches seeds |
+| Rotation signer (CLI first) | Each signer's machine, with their seed or Ledger | Confirms and executes queued Safe transactions with the signer's current owner key, so signers never manage per-rotation wallet accounts; enforces the executor rule, simulation and private RPC (section 10) |
 | Keeper (TypeScript service we run; a Gelato Web3 Function is an alternative) | VPS or Gelato, non-owner EOA | Refills each slot's staging buffer from the IPFS tree file and tops up incoming owners with gas |
 | Hash-based EIP-1271 co-signer (later phase) | On-chain | A second, non-ECDSA required owner |
 
@@ -267,7 +268,9 @@ Having the Guard pull the gas top-up from the Safe automatically during rotation
 - The root is the trust anchor. Before setup is signed, each signer compares their slot's on-chain root with their own CLI output. A wrong root committed at setup hands future ownership of that slot to an attacker.
 - Lost tree file: regenerate from the seed with the same parameters, which reproduces the same root.
 
-## 10. Safe App features
+## 10. Safe App and rotation signer
+
+### Safe App features
 
 1. Setup wizard: point to the singleton, register each signer's slot (root, size, CID), then one batch that enables the module, sets the guard and module guard, swaps all current owners to index 0 and stages indexes 1-5 for every slot. Existing owners have almost certainly signed before, so they are treated as exposed.
 2. Dashboard: per slot, current owner, index, addresses remaining, buffer depth, gas balance of the current owner, exposure status; keeper balance. Warns below about 10% of the tree remaining, on an empty or low buffer, and on a low keeper balance.
@@ -285,6 +288,44 @@ Having the Guard pull the gas top-up from the Safe automatically during rotation
 - Tree files come from an upload or from IPFS, using the CID in the `SlotConfigured` event. They are verified on load (root rebuilt from addresses) and against the on-chain root.
 - Pending transactions and confirmations come from the Safe Transaction Service API.
 - The executor flow cannot choose the RPC Safe{Wallet} broadcasts through. It runs the pre-flight checks and tells the executor to point their wallet at a private, revert-protected RPC (for example Flashbots Protect) before executing.
+
+### Rotation signer (milestone 4i)
+
+The problem: after every signature, a signer's owner address moves to the next address in their tree. Ordinary wallets (Rabby, MetaMask, Ledger Live) are built around a few stable accounts, so every rotation means adding or switching to a new account before the next signature. This is the largest day-to-day cost of the design.
+
+Options considered:
+
+| Option | Verdict |
+|---|---|
+| Pre-load the next 10-20 tree accounts into the wallet | Stopgap for testing: still a manual switch per signature, wallet clutter, periodic refresh |
+| Derive trees on the standard wallet path `m/44'/60'/0'/0/i` from a dedicated seed (or Ledger passphrase wallet), so "Add account" yields the next owner | Not adopted: needs a separate seed per signer per Safe, still a click per rotation, and non-hardened children mean a leaked account xpub would expose every future public key |
+| A dedicated signing tool that always signs with the right key | **Chosen** |
+| Hash-based co-signer (phase 7) | The long-term exit: owners that do not rely on ECDSA need no rotation |
+
+Design:
+
+- A separate workspace package (`signer/`), CLI first, with a desktop or web front end later. It is not part of the generator, which stays offline-only; the signer needs network access.
+- Key source: the signer's seed file or Ledger, with the same derivation and code as the generator. The signer's tree file identifies their slot; the tool reads the slot's current owner index on-chain and derives exactly that key. The signer never picks an account.
+- Safe{Wallet} stays the place where transactions are created and the queue is viewed. Only confirming and executing move into the tool.
+- Commands:
+  - `status`: my slot, my current owner address and tree index, buffer depth, owner gas, pending transactions and how many confirmations each has.
+  - `confirm <safeTxHash>`: fetch the transaction from the Safe Transaction Service, recompute its hash locally from the fields (never trust the service's hash), show a decoded summary, sign the EIP-712 SafeTx hash (on the Ledger, clear-signed where the app supports it) and post the confirmation.
+  - `execute <safeTxHash>`: for the last signer. Collect the confirmations, add the executor's pre-validated signature, sort, simulate with `eth_call` from the executor, then broadcast through a private, revert-protected RPC and report the new owners.
+- Rules the tool enforces instead of leaving them to memory:
+  - never post a confirmation that would exceed `threshold - 1` off-chain confirmations; the last signer must execute;
+  - refuse to confirm or execute when any involved slot has an empty buffer, when the transaction's nonce is not next, or when simulation reverts;
+  - execute only through the configured private RPC;
+  - warn when the exposure tracker's findings (section 8) say exposed-but-not-rotated owners would reach the threshold;
+  - never send any other transaction from a tree key.
+- Proposing: creating a transaction in Safe{Wallet} needs a current owner or a registered proposer, and an owner's proposal counts as their confirmation. The tool should support proposing from a non-owner proposer account once the Sepolia test shows how proposers behave across rotation (open questions below).
+
+Open questions to settle on Sepolia before mainnet:
+
+- Does Safe{Wallet} create Safes at 1.5.0, and which MultiSendCallOnly does it use when batching (the guard allows exactly one)?
+- When more owners confirm than the threshold needs, does Safe{Wallet} include the extra signatures (which the guard rejects)?
+- Does Rabby's Safe integration execute with the owner's own pre-validated signature, like Safe{Wallet}?
+- Do registered proposers survive after the owner that registered them rotates out?
+- How quickly does the Transaction Service accept confirmations from a newly rotated-in owner?
 
 ## 11. Testing and assurance
 
@@ -323,11 +364,13 @@ Still to do:
    - 4a. `packages/core`: shared tree code, guard ABI, read helpers, calldata builders and revert decoding. Done; 24 tests including an integration run on a local chain.
    - 4b. App shell: Vite + React + TypeScript, Safe Apps SDK connection, standalone read-only mode. Done.
    - 4c. Dashboard: slots, owners, tree progress, buffers, owner gas, warnings. Done (keeper balance waits for phase 5, when the keeper has an address).
-   - 4d. Setup wizard: load tree files, check roots, propose the install batch.
+   - 4d. Setup wizard: load tree files, check roots, propose the install batch. Done (validation in `packages/core/src/setup.ts`).
    - 4e. Staging: refill buffers from tree files, from a non-owner wallet or inside a batch.
    - 4f. Exposure tracker: Transaction Service confirmations, `ApproveHash` events, owner nonces, escape-hatch signers; one-click `forceRotate`.
    - 4g. Executor pre-flight: simulate the next transaction with the executor's signature, check buffers and gas, warn on prior confirmation, point to a private RPC.
    - 4h. Admin: add or remove a slot, replace a root, skip indexes, escape hatch.
+   - 4i. Rotation signer: CLI that confirms and executes with the signer's current owner key (section 10). Planned next after the Sepolia test.
+   - Sepolia validation: deploy the guard, create a 2-of-3 Safe in Safe{Wallet} with three independent test signers, install through the app, and settle the open questions in section 10. Test seeds live in `.sepolia/` (gitignored, testnet only).
 5. Keeper: buffer refills and gas top-ups.
 6. Audit, then mainnet canary.
 7. Hash-based EIP-1271 co-signer (path out of bunker mode).
