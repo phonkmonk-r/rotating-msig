@@ -284,7 +284,7 @@ Still to do:
 
 1. Spec and threat model (this document).
 2. Contracts: RotationGuard, Foundry tests, fuzz and invariant suite. Done, pending audit.
-3. Generator CLI (TypeScript): both modes, tree file format, shared leaf and proof library.
+3. Generator CLI (TypeScript): both modes, tree file format, shared leaf and proof library. Done in `generator/`, cross-checked against the contract.
 4. Safe App: setup, dashboard, staging, exposure tracker, executor flow, admin.
 5. Keeper: buffer refills and gas top-ups.
 6. Audit, then mainnet canary.
