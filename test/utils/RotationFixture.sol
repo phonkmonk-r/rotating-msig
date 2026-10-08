@@ -32,9 +32,7 @@ abstract contract RotationFixture is Test {
     address internal recipient = makeAddr("recipient");
 
     function setUp() public virtual {
-        singleton = new Safe();
-        factory = new SafeProxyFactory();
-        multiSend = new MultiSendCallOnly();
+        _deployInfrastructure();
         guard = new RotationGuard(address(multiSend));
 
         for (uint256 i = 0; i < SLOTS; ++i) {
@@ -54,6 +52,13 @@ abstract contract RotationFixture is Test {
         }
 
         _installGuard();
+    }
+
+    /// @dev Deploys local Safe contracts. Fork tests override this to use the canonical mainnet deployments.
+    function _deployInfrastructure() internal virtual {
+        singleton = new Safe();
+        factory = new SafeProxyFactory();
+        multiSend = new MultiSendCallOnly();
     }
 
     /*//////////////////////////////////////////////////////////////
