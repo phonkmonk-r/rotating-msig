@@ -7,7 +7,7 @@ evm_version = "prague"
 optimizer = true
 optimizer_runs = 200
 via_ir = true
-fs_permissions = [{ access = "read", path = "./test/vectors" }]
+fs_permissions = [{ access = "read", path = "./test/vectors" }, { access = "read-write", path = "./demo/out" }]
 remappings = [
     "@safe/=lib/safe-smart-account/contracts/",
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
