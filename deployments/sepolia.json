@@ -1,0 +1,8 @@
+{
+  "chainId": 11155111,
+  "rotationGuard": "0xbE621d916B9a75Ace3ff47Cc8b24aF22c0c05E36",
+  "deployTx": "0x6551d72151d6ab1e9958c7c5ce55f2bcbfe30e416add46206f195da9ebc609fa",
+  "multiSendCallOnly": "0xA83c336B20401Af773B6219BA5027174338D1836",
+  "testSafe": "0x7aC0Ac669d32Bd739eAA892bcFD2C6dF9946Ed02",
+  "note": "Test deployment. The guard serves any Safe 1.5.0 on Sepolia."
+}

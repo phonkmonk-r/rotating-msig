@@ -10,7 +10,7 @@ Status: phases 1-3 done, phase 4 (Safe App) in progress. Last updated 2026-10-08
 | 2. Contracts | Done, pending external audit | `src/`, `test/` (127 Solidity tests: unit, mainnet fork, fuzz, invariants, gas budgets; mutation-tested) |
 | 3. Generator CLI | Done; Ledger mode still needs one run on a real device | `generator/` (26 TypeScript tests), cross-checked by `test/GeneratorVector.t.sol` |
 | Demo | Done | `demo/run.sh`: Anvil mainnet fork, real Safe 1.5.0 contracts, 2-of-3 Safe rotating through generated trees |
-| 4. Safe App and rotation signer | In progress: 4a-4d done (shared core, app shell, dashboard, setup wizard); Sepolia validation next, then 4i rotation signer | `app/`, `packages/core/` (see section 12) |
+| 4. Safe App and rotation signer | In progress: 4a-4d done (shared core, app shell, dashboard, setup wizard); Sepolia validation under way (guard deployed, Safe and trees ready), then 4i rotation signer | `app/`, `packages/core/`, `deployments/sepolia.json` (see section 12) |
 | 5-8 | Not started | |
 
 How to run everything:
@@ -27,6 +27,7 @@ Findings that changed the design during implementation:
 - Without `to == safe`, any transaction carrying `setGuard(0)` calldata would bypass rotation. The check was already present; mutation testing showed no test pinned it, now one does.
 - Measured rotation overhead is 65-82k gas per signer, not the 40-50k first estimated (section 6).
 - Addresses depend only on the seed and account index, not on the Safe, so every Safe needs its own unused `--base` range (`generator/README.md`).
+- Sepolia's hardfork of early October 2026 reprices contract and state creation. Deploying the guard costs 16,697,418 gas there (2.38M on mainnet today), 99.5% of the 2^24 per-transaction cap. Mainnet is likely to adopt the same rules, so the guard must not grow; any new on-chain feature (including the phase 7 co-signer) needs a size budget, and rotation gas must be re-measured under the new rules. The setup transaction for a 2-of-3 estimates at 4.4M gas on Sepolia.
 
 ## 1. Background and threat model
 
