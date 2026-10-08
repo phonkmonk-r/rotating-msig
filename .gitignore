@@ -23,3 +23,6 @@ docs/
 demo/out/
 node_modules/
 /broadcast/Demo.s.sol/
+
+# Sepolia test seed and accounts (testnet only)
+.sepolia/
