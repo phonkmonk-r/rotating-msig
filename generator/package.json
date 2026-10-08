@@ -1,0 +1,35 @@
+{
+  "name": "@rotating-msig/generator",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offline generator for RotationGuard signer trees: derives fresh owner addresses and builds the Merkle tree, root and proofs.",
+  "type": "module",
+  "bin": {
+    "rotation-tree": "./dist/cli.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "cli": "tsx src/cli.ts",
+    "vectors": "tsx scripts/vectors.ts"
+  },
+  "dependencies": {
+    "@openzeppelin/merkle-tree": "1.0.8",
+    "@scure/bip32": "2.4.0",
+    "@scure/bip39": "2.4.0",
+    "viem": "2.56.8"
+  },
+  "optionalDependencies": {
+    "@ledgerhq/hw-app-eth": "7.8.19",
+    "@ledgerhq/hw-transport-node-hid": "6.33.5"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}
