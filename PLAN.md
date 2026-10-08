@@ -1,0 +1,257 @@
+# Rotating Multisig: Plan
+
+Status: planning. Last updated 2026-10-07.
+
+## 1. Background and threat model
+
+The concern is that ECDSA over secp256k1 may break before Q-day, possibly within months, in the sense of fast private key recovery (for example one week on a large GPU cluster) from a public key. The defensive response proposed publicly is "bunker mode": keep funds behind addresses whose pubkeys have never been revealed, and move to a fresh address as soon as a key signs.
+
+Key facts this design rests on:
+
+- An Ethereum address is a hash of the pubkey. While a key has never signed anything, only the hash is public and the key is safe as long as the hash holds.
+- The pubkey becomes public the first time the key signs anything: an on-chain tx, a Safe confirmation, an off-chain message (EIP-712, Permit, SIWE, Snapshot), or an on-chain `approveHash`.
+- Exposure is binary. One signature reveals the full pubkey; further signatures give an attacker nothing more (deterministic RFC 6979 nonces rule out nonce-bias attacks). So "leaving more footprint" is not the issue, any footprint is.
+- Consequently rotating keys on a timer (for example daily) adds nothing. A key that has not signed has nothing exposed. Rotation must happen per signature, not per day.
+
+Why a multisig is the right container:
+
+- The Safe address holds the funds and never moves. Only its owner set changes.
+- An attacker needs a threshold of exposed keys, and must break each one inside the short window before it is rotated out.
+
+Core rule: an owner whose pubkey has been exposed must stop being an owner as quickly as possible, and the system must make it impossible to forget.
+
+## 2. Evolution of the design
+
+1. Owner queue. Commit a list of future addresses on-chain (harmless, they are only hashes) and swap in a new one per tx. Lessons kept from this stage:
+   - Swap, don't remove. Keep a normal owner set (for example 2-of-3) and swap, rather than starting with 100 owners at threshold 1.
+   - Rotate exactly the owners who signed, not "one signer". Otherwise the exposed key stays live.
+   - Enforce with a Guard, not just a multicall, so a forgotten swap reverts instead of silently leaving a key exposed.
+   - One queue per signer slot, so each human's custody stays separate.
+   - Avoid bricking: a Guard that wrongly reverts locks the Safe, so there must be an escape hatch.
+   - Signatures the Guard cannot see (off-chain EIP-1271 messages, `approveHash`) burn the owner, who must be rotated in the next tx.
+   - Cost: about 20k gas per stored address, so about 2M gas for 100.
+2. Merkle root per signer (chosen). Each signer generates 10,000 addresses offline and only a 32-byte root is stored. Each rotation supplies the next address and its Merkle proof. Effectively unlimited rotations, a one-off setup cost of about 20k gas per slot, and the tree file can be regenerated from the seed.
+3. Long term: a hash-based EIP-1271 co-signer (Winternitz/XMSS or SPHINCS+) so that breaking ECDSA alone gets an attacker nothing.
+
+## 3. Decisions
+
+| # | Topic | Decision |
+|---|---|---|
+| 1 | Safe version | 1.5.0 only |
+| 2 | Chains | Ethereum mainnet only |
+| 3 | Tree size | 10,000 addresses per signer (14 proof levels) |
+| 4 | Language for generator and app | TypeScript, sharing one leaf and proof implementation |
+| 5 | Staging model | Pre-staged on-chain: a per-slot ring buffer of 5 proven next owners, filled by a permissionless, strictly sequential `stage()`. A keeper we run refills it and tops up gas, funded from the Safe (section 7) |
+| 6 | Signature collection | Option A: the public Safe Transaction Service, hardened by the executor rule in section 5 |
+
+## 4. Components
+
+| Component | Runs where | Responsibility |
+|---|---|---|
+| RotationGuard (one singleton contract, enabled as Guard, Module and Module Guard) | On-chain | Stores a Merkle root per signer slot, records who signed each tx, swaps out exactly those signers after execution, enforces the executor rule, reverts if anything is missing |
+| Offline generator (CLI, TypeScript) | Each signer's own air-gapped machine or hardware wallet | Derives N fresh addresses from hardened paths and builds the signer's Merkle tree. Outputs the root and a tree file (addresses and proofs only, never pubkeys or xpubs) |
+| Rotation Safe App | Inside Safe{Wallet} (iframe, Safe Apps SDK) | Setup wizard, slot dashboard, staging, exposure tracker, admin actions. Never touches seeds |
+| Keeper (TypeScript service we run; a Gelato Web3 Function is an alternative) | VPS or Gelato, non-owner EOA | Refills each slot's staging buffer from the IPFS tree file and tops up incoming owners with gas |
+| Hash-based EIP-1271 co-signer (later phase) | On-chain | A second, non-ECDSA required owner |
+
+## 5. Executor rule: the last signer must execute
+
+### Rule
+
+`execTransaction` may only be called by an owner whose signature in the tx is the pre-validated kind (v = 1 with r = `msgSender`). The other threshold-1 signers confirm through the Transaction Service as usual. No relayer, no third-party executor, no arbitrary address.
+
+### Why it helps
+
+- The executor never posts a confirmation. Their pubkey first appears when they broadcast the tx, and the same tx rotates them out.
+- So at any time, the public confirmations for a single pending tx reveal at most threshold-1 pubkeys. An attacker who breaks every confirmed key still lacks one, and cannot execute because only an owner can execute and the remaining owner's key is still hidden.
+- Every executed tx rotates all of its signers, including the executor.
+
+### Limits and the hardening each needs
+
+1. It does not stop an attacker who already holds threshold exposed keys. Such an attacker controls an owner EOA, can fund it with gas, and can execute from it. Exposure accumulates across:
+   - concurrent pending txs (in 2-of-3, tx1 confirmed by A and tx2 confirmed by B means A and B are both exposed, which is a full threshold),
+   - abandoned or replaced txs whose confirmers were never rotated,
+   - off-chain messages and other signatures.
+
+   The invariant that actually matters is: the number of exposed-but-not-rotated owners must always stay below the threshold. The Guard cannot see off-chain confirmations, so the app enforces it:
+   - Policy: one pending tx at a time.
+   - The exposure tracker computes the union of all pending confirmers and burned owners, warns at threshold-2 and blocks new confirmations through the app at threshold-1.
+   - Abandoned txs trigger an immediate `forceRotate` of their confirmers.
+2. The executor must not also have confirmed off-chain. If they did, their key was exposed early and the benefit is lost. The Guard can only see that the executor used v = 1. The app warns if the executor's confirmation exists in the Transaction Service.
+3. A top-level revert is the most dangerous failure. If `execTransaction` reverts (for example the Guard reverts because a stage is missing) but the tx is still mined, all threshold pubkeys are now public in calldata and nothing was rotated. Requirements:
+   - Always simulate (`eth_call`) before broadcasting.
+   - The executor must broadcast through a private, revert-protected RPC (for example Flashbots Protect), which does not include reverting txs and also removes the few seconds of public mempool exposure.
+   - If a reverted tx is ever mined anyway, every signer in it is burned and must be force-rotated at once.
+4. Gas logistics. The executor's address needs ETH, but freshly rotated-in addresses hold none. Receiving ETH does not expose a pubkey, so:
+   - The keeper (or the rotation tx itself, via a transfer appended by the app) tops up each staged next owner with a small gas amount.
+   - Optionally use Safe's built-in refund (`gasPrice`, `refundReceiver`) to reimburse the executor.
+   - Dust left in rotated-out EOAs is low value and can be swept later.
+5. Lost liveness options. Relayers and automation services cannot execute; an owner must be online. Contract owners (the future 1271 co-signer) cannot be `msg.sender`, so the executor must always be an ECDSA owner.
+6. On-chain `approveHash` is disallowed. A v = 1 signature from anyone other than `msgSender` relies on an earlier on-chain `approveHash` tx, which exposed that owner before this tx. The Guard rejects it.
+
+## 6. On-chain design (RotationGuard)
+
+### Storage, keyed by Safe address
+
+- `slot -> { root, size, nextIndex, currentOwner, treeCID }`
+- `ownerToSlot[owner]`
+- `buffer[slot]`: a ring buffer of up to 5 next owners, each already proven against the root, with `head`, `count` and `lastStagedIndex`. Storage slots are never zeroed, so refills after the first fill are non-zero to non-zero writes (about 5k gas each)
+
+### Leaf format
+
+`keccak256(keccak256(abi.encode(chainId, safe, slot, index, address)))`
+
+- The double hash prevents second-preimage tricks on internal nodes.
+- Binding `chainId` and `safe` prevents a proof from being reused under another Safe.
+
+### Staging
+
+Why stage at all: to rotate a signer, the Guard needs that slot's next address and its Merkle proof, but it only stores the root. The proof cannot be built into each proposal because the proposer does not know who will sign, and the signed Safe tx cannot be changed after confirmations start. Supplying proofs for every slot inside every tx was rejected because it forces every tx through our app and breaks the Safe UI's normal send, WalletConnect dapps and other Safe Apps. Pre-staging keeps the signed tx unchanged, so txs from any interface work.
+
+`stage(safe, slot, entries[])`, with each entry `(index, address, proof)`, is permissionless. For each entry it checks:
+
+- the proof against the slot's root,
+- `index == lastStagedIndex + 1` (strictly sequential; a permissionless call that could skip would let a griefer stage index 9,999 and burn the tree; only the Safe itself may skip, through an admin function),
+- `address` is not already an owner and is not the sentinel,
+- the buffer is not full (capacity 5).
+
+On rotation the Guard pops the head of each signer's buffer and swaps it in; no proof or external data is needed at execution time.
+
+A stager cannot inject an address (it would fail the proof) or skip indexes, so the worst a malicious or broken stager can do is waste its own gas or fail to stage, which only delays txs until someone else stages. Anyone with the public tree file can stage.
+
+`setRoot` clears the slot's buffer and resets `lastStagedIndex`.
+
+### `checkTransaction` (receives `msgSender`)
+
+1. Recompute the safeTxHash using `nonce - 1`, since Safe has already incremented the nonce.
+2. Recover every signer in `signatures`, mirroring Safe's `checkNSignatures`:
+   - ECDSA,
+   - eth_sign (v > 30, prefixed hash),
+   - pre-validated (v = 1): allowed only when r = `msgSender`,
+   - contract signature (v = 0): allowed only for owners flagged as non-rotating contract signers (the future 1271 co-signer).
+3. Treat any additional parseable signatures beyond the threshold as exposed too, since they are public in calldata.
+4. Executor rule: `msgSender` must be an owner and must be among the signers through v = 1.
+5. Delegatecall is allowed only to an allowlisted MultiSendCallOnly.
+6. Store the signer set in transient storage (EIP-1153).
+
+### `checkAfterExecution`
+
+1. Rotate every recorded signer regardless of `success`. A failed inner call still consumed the nonce and exposed the signatures.
+2. Each rotation pops the head of the slot's buffer and calls `execTransactionFromModule(safe, swapOwner(prev, old, next))`, then updates `nextIndex`, `currentOwner` and `ownerToSlot`, and emits `Rotated(safe, slot, oldOwner, newOwner, index)`.
+3. Revert if any signer's buffer is empty. (The executor's pre-flight simulation must catch this before broadcast; see section 5, limit 3.)
+4. Invariant: `getOwners()` equals exactly the set of current slot owners.
+
+### Module guard (Safe 1.5.0)
+
+Set RotationGuard as the module guard as well. It rejects module txs from any module other than itself, which closes the "other modules bypass the guard" hole on-chain. It must allow, and be tested for, its own `execTransactionFromModule` call made from inside `checkAfterExecution` (reentrancy into the Safe during the guard hook).
+
+### Admin functions (callable only by the Safe itself, so they need the threshold)
+
+- `addSlot(owner0, root, size, cid)` and `removeSlot(slot)`, which add or remove the owner through the module.
+- `setRoot(slot, root, size, cid)`, for an exhausted tree or a signer re-keying.
+- `forceRotate(slots[])`, for owners exposed outside the Guard's view. Uses the slot's buffer like a normal rotation.
+- `skipTo(slot, index)`, the only way to skip indexes (for example after an address is known to be burned before use). Clears the slot's buffer.
+
+### Restrictions
+
+- Direct `addOwnerWithThreshold`, `removeOwner` and `swapOwner` calls outside the Guard's flow break the owner-set invariant and revert. `changeThreshold` is allowed.
+- No other modules (enforced by the module guard).
+
+### Escape hatch
+
+If the tx is exactly `setGuard(address(0))` to the Safe itself, both hooks return immediately. This must be explicit: Safe caches the guard address before execution, so `checkAfterExecution` still runs on the old guard after `setGuard(0)`. The executor rule still applies to the escape tx.
+
+### Gas estimates
+
+- Setup: about 20k per slot root.
+- Per rotated signer: about 40-50k (`swapOwner`, bookkeeping).
+- A 2-of-3 tx adds roughly 100k.
+- Staging: after the first fill, about 15-20k per address (non-zero SSTORE plus proof calldata and verification). A batch of 5 is roughly 100-120k gas, about 0.0002-0.0005 ETH at 2-4 gwei.
+
+## 7. Keeper and funding
+
+### What the keeper does
+
+A small TypeScript service that we run (on a VPS, or as a Gelato Web3 Function if we prefer not to host it), using a plain non-owner EOA.
+
+1. Watches the Guard's `Rotated(safe, slot, oldOwner, newOwner, index)` events.
+2. When a slot's buffer drops below the low-water mark (2 of 5), fetches the slot's tree file from IPFS by its on-chain CID, builds the next proofs and calls `stage` with a batch that refills the buffer.
+3. Tops up gas: each slot's current owner must hold enough ETH to execute one rotation tx, so the keeper sends a small amount (for example 0.003 ETH) to each newly rotated-in owner. Receiving ETH does not expose a pubkey.
+
+With a buffer of 5 and a refill at 2, the keeper refills about once every 3 rotations per slot and is not time-critical.
+
+### Who pays
+
+The Safe pays, through the keeper. The keeper EOA is funded from the Safe with a normal tx (for example 0.05 ETH, enough for many rotations). The dashboard shows its balance and warns when low. The keeper's own pubkey being exposed is irrelevant: it has no power over the Safe and holds only a small balance.
+
+Hard rule: an owner must never send stage or top-up txs from an owner address, since that exposes the pubkey outside the rotation flow.
+
+### Keeper down
+
+`stage` is permissionless, so anyone with any non-owner wallet can press "Stage" in the Safe App (which reads the tree from IPFS), and a backup machine can run the same keeper script. The executor's pre-flight check blocks broadcast if any slot's buffer is empty or the executor lacks gas, so the worst case is a delay, never a mined revert that exposes keys.
+
+### Trust model
+
+A compromised keeper can waste its own ETH or stop staging (a delay until someone else stages). It cannot inject owners, skip indexes or move funds.
+
+### Rejected alternative
+
+Having the Guard pull the gas top-up from the Safe automatically during rotation. It adds external calls and failure modes inside the Guard hooks, against the rule of keeping the Guard small so it cannot brick the Safe.
+
+## 8. Exposure paths the Guard cannot see
+
+| Leak | Handling |
+|---|---|
+| Confirmations posted to the Safe Transaction Service are public before execution | Executor rule keeps a single pending tx below threshold; one pending tx at a time; tracker monitors the union of confirmers |
+| Signed but never executed (replaced or rejected nonce) | Signers marked burned; `forceRotate` in the next tx |
+| Off-chain messages (EIP-1271 via SignMessageLib, Permit, SIWE, Snapshot) | Burned. Operational rule: owner keys sign Safe txs only |
+| An owner EOA that has ever sent a tx (`nonce > 0`) other than as the executor of a rotating tx | Burned |
+| A reverted `execTransaction` that was mined | All its signers burned; immediate `forceRotate`; prevented by simulation and a revert-protected private RPC |
+| Same owner address used on another chain | Mainnet only for now. Never reuse an owner address elsewhere |
+
+## 9. Off-chain key management
+
+- Hardened derivation only, for example Ledger Live style `m/44'/60'/{base+i}'/0/0`, with a distinct `base` per Safe. Never share an xpub; a non-hardened xpub reveals every child pubkey. Share addresses only.
+- Generator modes:
+  - Seed on an air-gapped machine: fast, but the seed sits in software.
+  - Hardware wallet `getAddress` loop: about 100 ms per address, so roughly 17 minutes for 10,000, and the seed never leaves the device.
+  - In both modes the CLI discards pubkeys immediately and outputs addresses only.
+- The tree file is not secret and not trusted. It holds only hashes, and a tampered proof fails against the on-chain root. It is pinned to IPFS and its CID is emitted on-chain so anyone can stage.
+- The root is the trust anchor. Before setup is signed, each signer compares their slot's on-chain root with their own CLI output. A wrong root committed at setup hands future ownership of that slot to an attacker.
+- Lost tree file: regenerate from the seed with the same parameters, which reproduces the same root.
+
+## 10. Safe App features
+
+1. Setup wizard: point to the singleton, register each signer's slot (root, size, CID), then one batch that enables the module, sets the guard and module guard, swaps all current owners to index 0 and stages indexes 1-5 for every slot. Existing owners have almost certainly signed before, so they are treated as exposed.
+2. Dashboard: per slot, current owner, index, addresses remaining, buffer depth, gas balance of the current owner, exposure status; keeper balance. Warns below about 10% of the tree remaining, on an empty or low buffer, and on a low keeper balance.
+3. Signing helper: tells each signer which derivation index and path to connect for the next signature, and who the designated executor is.
+4. Staging: manual "Stage" button that refills buffers from the IPFS tree file using any non-owner wallet (fallback when the keeper is down), and can also add a `stage` call to batches the app builds.
+5. Exposure tracker: scans Transaction Service confirmations, message signatures, `ApproveHash` events and owner EOA nonces; computes exposed-but-not-rotated owners; warns at threshold-2, blocks at threshold-1; offers one-click `forceRotate`.
+6. Executor flow: simulate, check that every signer has a staged next owner with gas, warn if the executor already confirmed off-chain, then broadcast through a private revert-protected RPC.
+7. Admin: add or remove a signer, replace a root, force-rotate all, remove the guard (escape hatch).
+
+## 11. Testing and assurance
+
+- Signature parsing: differential fuzz against Safe 1.5.0's `checkNSignatures` across all signature types, plus malformed and oversized inputs.
+- Fork tests against the deployed Safe 1.5.0 singleton, including the module guard interaction and the reentrant `execTransactionFromModule` call from `checkAfterExecution`.
+- Invariants (Echidna/Medusa):
+  - after any executed tx, no address that signed it is an owner,
+  - the owner set equals the set of slot owners,
+  - `nextIndex` never decreases,
+  - only an owner signing via v = 1 can execute,
+  - the escape hatch always works,
+  - an invalid proof can never be staged,
+  - permissionless staging is strictly sequential and never exceeds buffer capacity.
+- Brick tests: missing stage, exhausted tree, failed inner tx, all leave the Safe recoverable.
+- External audit before any mainnet value, then a low-value mainnet canary.
+
+## 12. Phases
+
+1. Spec and threat model (this document).
+2. Contracts: RotationGuard, Foundry tests, fuzz and invariant suite.
+3. Generator CLI (TypeScript): both modes, tree file format, shared leaf and proof library.
+4. Safe App: setup, dashboard, staging, exposure tracker, executor flow, admin.
+5. Keeper: buffer refills and gas top-ups.
+6. Audit, then mainnet canary.
+7. Hash-based EIP-1271 co-signer (path out of bunker mode).
+8. Optional hardening: private signature collection through a standalone signing app (option B), which removes the Transaction Service exposure window entirely.
