@@ -13,12 +13,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test test/*.test.ts",
-    "cli": "tsx src/cli.ts",
-    "vectors": "tsx scripts/vectors.ts"
+    "test": "node --conditions=source --import tsx --test test/*.test.ts",
+    "cli": "tsx --conditions=source src/cli.ts",
+    "vectors": "tsx --conditions=source scripts/vectors.ts"
   },
   "dependencies": {
-    "@openzeppelin/merkle-tree": "1.0.8",
+    "@rotating-msig/core": "0.1.0",
     "@scure/bip32": "2.4.0",
     "@scure/bip39": "2.4.0",
     "viem": "2.56.8"

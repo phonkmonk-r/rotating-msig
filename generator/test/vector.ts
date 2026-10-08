@@ -1,6 +1,8 @@
+import type { Address } from "viem";
+
 import { seedSource } from "../src/sources/seed.js";
 import { PATH_TEMPLATE } from "../src/sources/source.js";
-import { createTreeFile, leafHash, loadTreeFile, proofFor, slotConfig, stageEntries, type TreeMeta } from "../src/tree.js";
+import { createTreeFile, leafHash, loadTreeFile, proofFor, slotConfig, stageEntries, type TreeMeta } from "@rotating-msig/core";
 
 /** Public test mnemonic. Never use it for real funds. */
 export const VECTOR_MNEMONIC = "test test test test test test test test test test test junk";
@@ -18,7 +20,7 @@ export const VECTOR_SIZE = 37;
 /** Shared with the Solidity cross-check in `test/GeneratorVector.t.sol`. */
 export async function buildVector() {
   const source = seedSource(VECTOR_MNEMONIC);
-  const addresses = [];
+  const addresses: Address[] = [];
   for (let i = 0; i < VECTOR_SIZE; i++) addresses.push(await source.address(VECTOR_META.base + i));
   await source.close();
 

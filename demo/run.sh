@@ -27,8 +27,8 @@ fi
 rm -rf "$OUT" && mkdir -p "$OUT"
 echo "test test test test test test test test test test test junk" > "$OUT/mnemonic.txt"
 
-step "Building generator"
-(cd generator && npm install --silent --no-audit --no-fund && npm run build --silent)
+step "Building core and generator"
+npm install --silent --no-audit --no-fund && npm run build --silent
 
 step "Starting Anvil (mainnet fork)"
 anvil --fork-url "$MAINNET_RPC_URL" --port 8545 --silent &

@@ -1,0 +1,13 @@
+{
+  "name": "rotating-msig",
+  "private": true,
+  "workspaces": [
+    "packages/core",
+    "generator"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "name": "@rotating-msig/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared RotationGuard logic: tree format, leaves and proofs, contract ABIs, state readers and calldata builders.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "source": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --conditions=source --import tsx --test test/*.test.ts",
+    "abi": "node scripts/abi.mjs"
+  },
+  "dependencies": {
+    "@openzeppelin/merkle-tree": "1.0.8",
+    "viem": "2.56.8"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}

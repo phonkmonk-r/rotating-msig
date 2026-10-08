@@ -6,13 +6,15 @@ Offline generator for RotationGuard signer trees. Each signer runs it on their o
 
 A tree file (JSON) holding only addresses, which are hashes of public keys. It never contains public keys, xpubs, private keys or the mnemonic, so it is not secret and does not need to be trusted: every load rebuilds the root from the addresses and rejects any file whose stored root does not match. Pin it to IPFS so anyone (the keeper, the Safe App, another signer) can stage your next addresses.
 
-Leaves are `keccak256(keccak256(abi.encode(chainId, safe, slotId, index, owner)))`, identical to `RotationGuard.leaf`, built with OpenZeppelin's `StandardMerkleTree`. `test/GeneratorVector.t.sol` checks this against the contract.
+Leaves are `keccak256(keccak256(abi.encode(chainId, safe, slotId, index, owner)))`, identical to `RotationGuard.leaf`, built with OpenZeppelin's `StandardMerkleTree`. The tree code lives in `packages/core`, shared with the Safe App. `test/GeneratorVector.t.sol` checks this against the contract.
 
 ## Usage
 
 ```sh
+# From the repository root (npm workspace: builds packages/core, then the generator)
 npm install
 npm run build
+cd generator
 
 # Derive 10,000 addresses at m/44'/60'/{base+i}'/0/0 and write the tree file.
 node dist/cli.js generate --safe 0xYourSafe --slot 0 --base 100000 --out slot0.json

@@ -8,7 +8,7 @@ import { readSecret } from "./prompt.js";
 import { openLedgerSource } from "./sources/ledger.js";
 import { seedSource } from "./sources/seed.js";
 import { PATH_TEMPLATE, type AddressSource } from "./sources/source.js";
-import { createTreeFile, loadTreeFile, proofFor, slotConfig, stageEntries, validateMeta, type TreeMeta } from "./tree.js";
+import { createTreeFile, loadTreeFile, proofFor, slotConfig, stageEntries, validateMeta, type TreeMeta } from "@rotating-msig/core";
 
 /** Account indexes below this are where wallets put everyday accounts, whose keys may already be exposed. */
 export const MIN_BASE = 1000;

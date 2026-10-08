@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 
 import { run, sampleIndexes, type Io } from "../src/cli.js";
 import { seedSource } from "../src/sources/seed.js";
-import type { TreeFile } from "../src/tree.js";
+import type { TreeFile } from "@rotating-msig/core";
 
 const TEST_MNEMONIC = "test test test test test test test test test test test junk";
 const SAFE = "0x1234567890123456789012345678901234567890";
