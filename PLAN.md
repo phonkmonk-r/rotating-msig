@@ -401,3 +401,30 @@ Still to do:
 6. Audit, then mainnet canary.
 7. Hash-based EIP-1271 co-signer (path out of bunker mode).
 8. Optional hardening: private signature collection through a standalone signing app (option B), which removes the Transaction Service exposure window entirely.
+9. v2 proposal: rotating approvals module (section 13). Not scheduled.
+
+## 13. v2 proposal: on-chain approvals that rotate (for later)
+
+Proposed 2026-10-08 and parked; v1 stays on the guard with off-chain Safe signatures. Recorded here so it can be picked up after the v1 audit.
+
+**Idea.** Every use of a key rotates it in the same transaction. Instead of off-chain confirmations that wait in the Transaction Service, each signer approves on-chain from their current key, and that call swaps their owner to the next committed address. A key is never exposed while still an owner, so there is no exposure window at all.
+
+**Shape: a Safe module, not a new wallet.** The Safe stays the account (funds, address, audited account code, token receive hooks, fallback handler, Safe{Wallet} as a viewer). A `RotatingApprovals` module becomes the only way to act:
+
+- `propose(tx)` stores the transaction's hash on-chain (calldata in an event).
+- `approve(hash, slotId, nextIndex, nextOwner, proof)` is sent by the slot's current owner. It records the approval against the slot ID (so it survives rotation) and swaps the owner to `nextOwner`, proven against the slot's Merkle root, in the same call.
+- The approval that reaches the threshold executes through `execTransactionFromModule`.
+- The Safe's own owners become unusable placeholders and the guard blocks `execTransaction`, so the module is the only path. An existing Safe migrates in one transaction, with no address change and no fund movement.
+
+**Rule: the next owner is always proven against the committed root, never chosen in the call.** An approval in the mempool reveals the public key; an attacker who derives the key could replace the transaction (same nonce, higher fee) and, if the next owner were free, take the slot permanently. With the commitment they can at most redirect that one approval to another proposal, never reach the threshold alone. Approvals still go through a private relay.
+
+**What it removes from v1.** Off-chain signature storage and the Transaction Service; the threshold−1 confirmation rule and queue-wide exposure check; the last-signer-executes rule, pre-validated signatures and the exact signature length; nonce-ordering coordination; staging, the ring buffer and the staging keeper, since each approval carries its own proof. The Merkle trees, key derivation, Ledger support, the signer app and the dApp browser carry over.
+
+**Costs and open points.**
+
+- Gas: one on-chain transaction per approval (2 for a 2-of-3), each with a proof check and an owner swap. Measure against v1's ~650k gas for a 2-of-3 rotating transfer on Sepolia before deciding.
+- Gas for fresh addresses: each new key starts empty. Preferred: the module tops up `nextOwner` from the Safe in the same call (leaves dust on retired keys). Relayed signatures would bring back an exposure window.
+- Ledger clear signing needs an ERC-7730 descriptor for the module; until then the app's review screen is what the signer reads.
+- Safe{Wallet} does not understand module approvals; the signer app is the interface.
+- Audit scope: the module, its interaction with `execTransactionFromModule`, and the migration transaction.
+- Alternative kept open: a standalone wallet without Safe, only if the Safe dependency itself becomes the problem.
