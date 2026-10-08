@@ -31,6 +31,7 @@ export function createSession(config: SessionConfig, source: AddressSource): { s
     source,
     tree: config.tree,
     safe: config.tree.safe,
+    gasFunding: true,
   });
   return { session, chain, executionRpc };
 }

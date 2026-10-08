@@ -20,10 +20,12 @@ import {
   type TxService,
   type Verdict,
 } from "@rotating-msig/core";
-import { resolveCurrentOwner, type AddressSource, type CurrentOwner } from "@rotating-msig/keys";
+import { OPERATOR_ACCOUNT, resolveCurrentOwner, type AddressSource, type CurrentOwner } from "@rotating-msig/keys";
 import {
   createWalletClient,
+  custom,
   erc20Abi,
+  formatEther,
   getAddress,
   http,
   isAddress,
@@ -32,6 +34,7 @@ import {
   type Address,
   type Chain,
   type Hex,
+  type LocalAccount,
   type PublicClient,
 } from "viem";
 
@@ -48,9 +51,23 @@ export interface SessionOptions {
   multiSendCallOnly?: Address;
   /** How long to wait for an execution to be included before reporting it as stuck. */
   executionTimeoutMs?: number;
+  /**
+   * Pays executions from the operator account (the seed's first account) just in time: before executing, it sends the
+   * current owner key exactly the gas it needs; once the execution is mined, the key's remainder is swept back. Rotation
+   * keys then hold no ETH between uses, so nothing is stranded when they rotate out.
+   */
+  gasFunding?: boolean;
 }
 
 export const DEFAULT_EXECUTION_TIMEOUT_MS = 180_000;
+
+/** Gas for a plain ETH transfer, used by the sweep. */
+const TRANSFER_GAS = 21_000n;
+/** An execution's gas allowance for warning when the operator account runs low. */
+const EXECUTION_GAS_ALLOWANCE = 1_000_000n;
+/** How long the sweep keeps waiting for an execution that is not mined yet. */
+const SWEEP_WATCH_MS = 30 * 60_000;
+const SWEEP_POLL_MS = 3_000;
 
 export interface Me {
   slotId: number;
@@ -60,6 +77,8 @@ export interface Me {
   staged: number;
   bufferSize: number;
   treeSize: number;
+  /** With gas funding: the account that pays for executions. */
+  operator?: { address: Address; balance: string };
 }
 
 /** One slot as every signer sees it. */
@@ -88,6 +107,8 @@ export interface StatusView {
   nonce: string;
   balance: string;
   installed: boolean;
+  /** Executions are funded from the operator account, so rotation keys normally hold no ETH. */
+  gasFunding: boolean;
   me?: Me;
   meError?: string;
   findings: Finding[];
@@ -133,6 +154,10 @@ export interface Execution {
   gasUsed?: string;
   rotated?: { slotId: number; from: Address; to: Address }[];
   message?: string;
+  /** The operator's transfer to the executing key, when it needed gas. */
+  funding?: { transactionHash: Hex; amount: string };
+  /** Returning the executing key's remainder to the operator account once the execution is mined. */
+  sweep?: { status: "waiting" | "sent" | "nothing" | "failed"; transactionHash?: Hex; amount?: string; message?: string };
 }
 
 /** Where a proposal stands, read from the Safe's nonce and its execution events. */
@@ -156,7 +181,7 @@ const wei = (value: bigint) => value.toString();
  */
 export class SignerSession {
   private busy: Promise<unknown> = Promise.resolve();
-  private readonly executions = new Map<string, { record: Execution; before: SafeState; sentAtMs: number }>();
+  private readonly executions = new Map<string, { record: Execution; before: SafeState; sentAtMs: number; account: LocalAccount }>();
 
   constructor(private readonly options: SessionOptions) {}
 
@@ -213,9 +238,20 @@ export class SignerSession {
       queueError = (error as Error).message;
     }
     let me: Me | undefined;
+    const findings = assess(state, this.options.gasFunding ? { minOwnerGas: 0n } : {});
     if (owner) {
       const balance = await this.options.publicClient.getBalance({ address: owner.account.address });
+      let operator: Me["operator"];
+      if (this.options.gasFunding) {
+        const address = await this.options.source.address(OPERATOR_ACCOUNT);
+        const [operatorBalance, gasPrice] = await Promise.all([this.options.publicClient.getBalance({ address }), this.options.publicClient.getGasPrice()]);
+        operator = { address, balance: wei(operatorBalance) };
+        if (operatorBalance < EXECUTION_GAS_ALLOWANCE * gasPrice * 2n) {
+          findings.push({ severity: "warning", slotId: owner.slot.slotId, message: "Your gas account is low: executions are paid from it" });
+        }
+      }
       me = {
+        operator,
         slotId: owner.slot.slotId,
         index: owner.index,
         address: owner.account.address,
@@ -235,9 +271,10 @@ export class SignerSession {
       nonce: state.nonce.toString(),
       balance: wei(state.balance),
       installed: state.installed,
+      gasFunding: this.options.gasFunding === true,
       me,
       meError: ownerError,
-      findings: assess(state),
+      findings,
       signers: state.slots.map((slot) => ({
           slotId: slot.slotId,
           owner: slot.owner,
@@ -378,18 +415,95 @@ export class SignerSession {
         throw new Error(`simulation failed, nothing was sent: ${describeRevert(error) ?? (error as Error).message}`);
       }
 
+      const gasLimit = (gas * 12n) / 10n;
+      const fees = await publicClient.estimateFeesPerGas();
+      const funding = this.options.gasFunding ? await this.fund(from, (gasLimit + TRANSFER_GAS) * fees.maxFeePerGas) : undefined;
+
       const wallet = createWalletClient({ account: owner.account, chain, transport: http(executionRpcUrl) });
-      const transactionHash = await wallet.sendTransaction({ to: state.safe, data, gas: (gas * 12n) / 10n, chain });
+      const transactionHash = await wallet.sendTransaction({
+        to: state.safe,
+        data,
+        gas: gasLimit,
+        maxFeePerGas: fees.maxFeePerGas,
+        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+        chain,
+      });
       const record: Execution = {
         safeTxHash: tx.safeTxHash,
         transactionHash,
         sentThrough: new URL(executionRpcUrl).host,
         sentAt: new Date().toISOString(),
         status: "pending",
+        funding,
+        sweep: this.options.gasFunding ? { status: "waiting" } : undefined,
       };
-      this.executions.set(transactionHash.toLowerCase(), { record, before: state, sentAtMs: Date.now() });
+      this.executions.set(transactionHash.toLowerCase(), { record, before: state, sentAtMs: Date.now(), account: owner.account });
+      if (this.options.gasFunding) void this.sweepWhenMined(transactionHash);
       return record;
     });
+  }
+
+  /** Tops `key` up from the operator account to `needed` wei, waiting until the transfer is mined. */
+  private async fund(key: Address, needed: bigint): Promise<Execution["funding"]> {
+    const { publicClient, chain, source } = this.options;
+    const balance = await publicClient.getBalance({ address: key });
+    if (balance >= needed) return undefined;
+    const amount = needed - balance;
+    const operator = await source.signer(OPERATOR_ACCOUNT);
+    const [operatorBalance, gasPrice] = await Promise.all([publicClient.getBalance({ address: operator.address }), publicClient.getGasPrice()]);
+    const required = amount + TRANSFER_GAS * gasPrice * 2n;
+    if (operatorBalance < required) {
+      throw new Error(`your gas account ${operator.address} needs about ${formatEther(required)} ETH for this execution and holds ${formatEther(operatorBalance)}; nothing was sent`);
+    }
+    const wallet = createWalletClient({ account: operator, chain, transport: custom(publicClient) });
+    const transactionHash = await wallet.sendTransaction({ to: key, value: amount, chain });
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: transactionHash });
+    if (receipt.status !== "success") throw new Error(`funding the execution failed (${transactionHash}); nothing else was sent`);
+    return { transactionHash, amount: amount.toString() };
+  }
+
+  /** Waits until the execution is mined (or given up on), then returns the key's remaining ETH to the operator. */
+  private async sweepWhenMined(transactionHash: Hex): Promise<void> {
+    const entry = this.executions.get(transactionHash.toLowerCase())!;
+    const sweep = entry.record.sweep!;
+    try {
+      for (;;) {
+        const record = await this.execution(transactionHash);
+        if (record.status === "success" || record.status === "reverted") break;
+        if (Date.now() - entry.sentAtMs > SWEEP_WATCH_MS) {
+          sweep.status = "failed";
+          sweep.message = "The execution was not mined; the key keeps its gas for the next attempt.";
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, SWEEP_POLL_MS));
+      }
+      await this.sweep(entry.account, sweep);
+    } catch (error) {
+      sweep.status = "failed";
+      sweep.message = (error as Error).message;
+    }
+  }
+
+  /**
+   * Sends everything `key` holds to the operator account. A legacy transaction at a fixed gas price costs exactly
+   * 21,000 × price, so the key is left at zero.
+   */
+  private async sweep(key: LocalAccount, sweep: NonNullable<Execution["sweep"]>): Promise<void> {
+    const { publicClient, chain, source } = this.options;
+    const [balance, gasPrice, operator] = await Promise.all([
+      publicClient.getBalance({ address: key.address }),
+      publicClient.getGasPrice().then((price) => (price * 12n) / 10n),
+      source.address(OPERATOR_ACCOUNT),
+    ]);
+    const cost = TRANSFER_GAS * gasPrice;
+    if (balance <= cost) {
+      sweep.status = "nothing";
+      return;
+    }
+    const wallet = createWalletClient({ account: key, chain, transport: custom(publicClient) });
+    const amount = balance - cost;
+    const hash = await wallet.sendTransaction({ to: operator, value: amount, gas: TRANSFER_GAS, gasPrice, type: "legacy", chain });
+    Object.assign(sweep, { status: "sent", transactionHash: hash, amount: amount.toString() });
   }
 
   /** Current status of an execution this signer sent. */

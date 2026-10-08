@@ -40,7 +40,7 @@ export function Signers({ status }: { status: StatusView }) {
                 </td>
                 <td>{eth(signer.balance)}</td>
                 <td>
-                  <SignerState signer={signer} />
+                  <SignerState signer={signer} gasFunding={status.gasFunding} />
                 </td>
               </tr>
             ))}
@@ -51,11 +51,11 @@ export function Signers({ status }: { status: StatusView }) {
   );
 }
 
-function SignerState({ signer }: { signer: SignerView }) {
+function SignerState({ signer, gasFunding }: { signer: SignerView; gasFunding: boolean }) {
   if (signer.staged === 0) return <Badge tone="critical">Out of keys</Badge>;
   if (signer.confirmedNonces.length > 0) return <Badge tone="warning">Signed #{signer.confirmedNonces.join(", #")}</Badge>;
   if (signer.unused + signer.staged < signer.treeSize * 0.1) return <Badge tone="warning">Tree low</Badge>;
-  if (BigInt(signer.balance) < LOW_GAS_WEI) return <Badge tone="warning">Needs gas</Badge>;
+  if (!gasFunding && BigInt(signer.balance) < LOW_GAS_WEI) return <Badge tone="warning">Needs gas</Badge>;
   if (signer.staged < 2) return <Badge tone="warning">Refill soon</Badge>;
   return <Badge tone="ok">Ready</Badge>;
 }

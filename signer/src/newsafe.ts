@@ -19,11 +19,10 @@ import {
   type SlotPackage,
   type TreeFile,
 } from "@rotating-msig/core";
-import { generateTree, type AddressSource } from "@rotating-msig/keys";
+import { generateTree, OPERATOR_ACCOUNT, type AddressSource } from "@rotating-msig/keys";
 import { createWalletClient, custom, isAddressEqual, type Address, type Chain, type Hex, type PublicClient } from "viem";
 
-/** The account index of the seed's operator account (`m/44'/60'/0'/0/0`). */
-export const OPERATOR_ACCOUNT = 0;
+export { OPERATOR_ACCOUNT };
 
 export interface NewSafeContext {
   client: PublicClient;

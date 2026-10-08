@@ -7,7 +7,8 @@ import { Address, Avatar, Badge, Dots, PageHeader } from "../ui";
 export function Overview({ status, queue, onOpenTransactions }: { status: StatusView; queue: QueueItem[]; onOpenTransactions: () => void }) {
   const me = status.me;
   const waiting = queue.filter((item) => item.verdict.action !== "none").length;
-  const lowGas = me ? BigInt(me.balance) < LOW_GAS_WEI : false;
+  const gasAccount = status.gasFunding ? me?.operator : undefined;
+  const lowGas = gasAccount ? status.findings.some((f) => f.message.startsWith("Your gas account")) : me ? BigInt(me.balance) < LOW_GAS_WEI : false;
 
   return (
     <>
@@ -31,9 +32,9 @@ export function Overview({ status, queue, onOpenTransactions }: { status: Status
                 {me.index.toLocaleString()} <span className="muted">/ {me.treeSize.toLocaleString()}</span>
               </span>
             </div>
-            <div className={`metric ${lowGas ? "warning" : ""}`}>
-              <span className="metric-label">Gas</span>
-              <span className="metric-value">{eth(me.balance)}</span>
+            <div className={`metric ${lowGas ? "warning" : ""}`} title={gasAccount ? `Paid from ${gasAccount.address}, your seed's first account` : undefined}>
+              <span className="metric-label">{gasAccount ? "Gas account" : "Gas"}</span>
+              <span className="metric-value">{eth(gasAccount ? gasAccount.balance : me.balance)}</span>
             </div>
             <div className={`metric ${me.staged === 0 ? "critical" : me.staged < 2 ? "warning" : ""}`}>
               <span className="metric-label">Next keys</span>
