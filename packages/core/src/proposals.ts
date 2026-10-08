@@ -1,4 +1,7 @@
-import { encodeFunctionData, erc20Abi, getAddress, isAddress, isHex, type Address, type Hex } from "viem";
+import { decodeFunctionData, encodeFunctionData, erc20Abi, getAddress, isAddress, isAddressEqual, isHex, type Address, type Hex } from "viem";
+
+import { multiSendCallOnlyAbi } from "./abi/multiSendCallOnly.js";
+import { unpackMultiSend } from "./decode.js";
 
 import { batch, guardCalls, safeCalls, type MetaTx } from "./calls.js";
 import { decodePackage } from "./create.js";
@@ -22,7 +25,11 @@ export type ProposalInput =
   | { kind: "threshold"; threshold: number }
   | { kind: "add-signer"; package: string; threshold: number }
   | { kind: "remove-signer"; slotId: number; threshold: number }
-  | { kind: "escape" };
+  | { kind: "escape" }
+  | { kind: "batch"; items: ProposalInput[] };
+
+/** Most actions one queued batch may hold. */
+export const MAX_BATCH_ITEMS = 30;
 
 /** Most calls one dApp request may batch. */
 export const MAX_DAPP_CALLS = 20;
@@ -90,6 +97,8 @@ export function buildProposal(input: ProposalInput, context: { safe: Address; gu
     }
     case "escape":
       return safeCalls.escape(context.safe);
+    case "batch":
+      return batch(batchCalls(input.items, context), context.multiSendCallOnly);
     case "calls": {
       if (input.calls.length === 0) throw new Error("the dApp sent no calls");
       if (input.calls.length > MAX_DAPP_CALLS) throw new Error(`at most ${MAX_DAPP_CALLS} calls per request`);
@@ -99,4 +108,22 @@ export function buildProposal(input: ProposalInput, context: { safe: Address; gu
       );
     }
   }
+}
+
+/**
+ * The plain calls a queued batch makes, in order: each item is built on its own and nested MultiSend batches are
+ * flattened, since MultiSendCallOnly cannot delegatecall into itself. The escape hatch must stay a transaction of its
+ * own (the guard recognizes it only as the whole transaction).
+ */
+export function batchCalls(items: readonly ProposalInput[], context: { safe: Address; guard: Address; multiSendCallOnly?: Address }): MetaTx[] {
+  if (items.length === 0) throw new Error("the queue is empty");
+  if (items.length > MAX_BATCH_ITEMS) throw new Error(`at most ${MAX_BATCH_ITEMS} actions per batch`);
+  return items.flatMap((item) => {
+    if (item.kind === "batch") throw new Error("batches cannot be nested");
+    if (item.kind === "escape") throw new Error("the escape hatch cannot be batched");
+    const tx = buildProposal(item, context);
+    if (tx.operation === 0) return [tx];
+    if (!context.multiSendCallOnly || !isAddressEqual(tx.to, context.multiSendCallOnly)) throw new Error("unexpected delegatecall in a batch item");
+    return unpackMultiSend(decodeFunctionData({ abi: multiSendCallOnlyAbi, data: tx.data }).args[0]);
+  });
 }

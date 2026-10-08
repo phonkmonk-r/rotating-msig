@@ -1,6 +1,8 @@
 import {
   assess,
+  batchCalls,
   buildProposal,
+  decodeActions,
   checkPackage,
   decodePackage,
   packageKeys,
@@ -27,6 +29,7 @@ import {
   type TxService,
   type Verdict,
 } from "@rotating-msig/core";
+import { readAfter, simulateCalls, type ReadCall, type Simulation } from "./simulate.js";
 import { OPERATOR_ACCOUNT, resolveCurrentOwner, type AddressSource, type CurrentOwner } from "@rotating-msig/keys";
 import {
   createWalletClient,
@@ -189,6 +192,29 @@ export interface ProposalStatus {
 const EXECUTION_SUCCESS = toEventSelector("ExecutionSuccess(bytes32,uint256)");
 const EXECUTION_FAILURE = toEventSelector("ExecutionFailure(bytes32,uint256)");
 
+/** One action waiting in the local queue; nothing is signed until the whole queue is proposed. */
+export interface DraftItem {
+  id: string;
+  input: ProposalInput;
+  /** "app" for actions made in the app, or the dApp's origin. */
+  origin: string;
+  actions: Action[];
+  addedAt: string;
+}
+
+/** The queue as the app shows it. */
+export interface DraftView {
+  enabled: boolean;
+  items: DraftItem[];
+}
+
+/** Where queued items went once the queue was proposed, so a dApp can follow them. */
+export interface DraftProposal {
+  safeTxHash: Hex;
+  nonce: bigint;
+  fromBlock: bigint;
+}
+
 /** A staging transaction this signer's gas account sent for its own slot. */
 export interface Refill {
   transactionHash: Hex;
@@ -214,6 +240,10 @@ const wei = (value: bigint) => value.toString();
 export class SignerSession {
   private busy: Promise<unknown> = Promise.resolve();
   private loadedTree?: ReturnType<typeof loadTreeFile>;
+  private draftItems: DraftItem[] = [];
+  private queueMode = false;
+  private nextDraftId = 0;
+  private readonly proposedDrafts = new Map<string, DraftProposal>();
   private lastRefill?: RefillStatus;
   private readonly executions = new Map<string, { record: Execution; before: SafeState; sentAtMs: number; account: LocalAccount }>();
 
@@ -363,45 +393,8 @@ export class SignerSession {
       const queue = await this.options.txService.pending(this.options.safe, state.nonce);
       if (queue.length > 0) throw new Error(`transaction #${queue[0]!.tx.nonce} is still pending: execute it or replace it in Safe{Wallet} first`);
 
-      const multiSendCallOnly = this.options.multiSendCallOnly ?? deploymentsFor(state.chainId).multiSendCallOnly;
-      const call = buildProposal(input, { safe: state.safe, guard: state.guard, multiSendCallOnly });
-      if (input.kind === "eth" && state.balance < call.value) throw new Error("the Safe does not hold that much ETH");
-      if (input.kind === "calls") {
-        const total = input.calls.reduce((sum, item) => sum + (item.value && item.value !== "0x" ? BigInt(item.value) : 0n), 0n);
-        if (state.balance < total) throw new Error("the Safe does not hold enough ETH for this request");
-      }
-      if (input.kind === "erc20") {
-        const balance = await this.options.publicClient.readContract({ address: call.to, abi: erc20Abi, functionName: "balanceOf", args: [state.safe] });
-        if (balance < BigInt(input.amount)) throw new Error("the Safe does not hold that many tokens");
-      }
-      const owners = state.owners.length;
-      const checkThreshold = (threshold: number, signers: number) => {
-        if (!Number.isInteger(threshold) || threshold < 1 || threshold > signers) throw new Error(`the threshold must be between 1 and ${signers}`);
-      };
-      if (input.kind === "threshold") {
-        checkThreshold(input.threshold, owners);
-        if (input.threshold === state.threshold) throw new Error(`the Safe already requires ${input.threshold}`);
-      }
-      if (input.kind === "remove-signer") {
-        if (!state.slots.some((slot) => slot.slotId === input.slotId)) throw new Error(`slot ${input.slotId} has no signer`);
-        if (owners < 2) throw new Error("the last signer cannot be removed");
-        checkThreshold(input.threshold, owners - 1);
-      }
-      if (input.kind === "add-signer") {
-        const pkg = decodePackage(input.package);
-        const errors = checkPackage(pkg, { chainId: state.chainId, safe: state.safe, slotId: state.slotCount });
-        const known = new Set([...state.owners, ...state.slots.flatMap((slot) => slot.staged)].map((address) => address.toLowerCase()));
-        if (packageKeys(pkg).some((entry) => known.has(entry.owner.toLowerCase()))) errors.push("the package reuses an address of a current signer");
-        if (errors.length > 0) throw new Error(`the new signer's package does not fit: ${errors.join("; ")}`);
-        checkThreshold(input.threshold, owners + 1);
-      }
-      if (input.kind === "force-rotate") {
-        for (const slotId of input.slotIds) {
-          const slot = state.slots.find((candidate) => candidate.slotId === slotId);
-          if (!slot) throw new Error(`slot ${slotId} has no owner`);
-          if (slot.staged.length === 0) throw new Error(`slot ${slotId} has no staged key to rotate to`);
-        }
-      }
+      const call = buildProposal(input, this.context(state));
+      await this.check(input, state, call);
 
       const tx = plainSafeTx({ ...call, nonce: state.nonce });
       const hash = safeTxHash(state.chainId, state.safe, tx);
@@ -415,6 +408,140 @@ export class SignerSession {
       return { ...result, proposed: true };
     };
     return preview ? run() : this.exclusive(run);
+  }
+
+  private context(state: SafeState) {
+    return { safe: state.safe, guard: state.guard, multiSendCallOnly: this.options.multiSendCallOnly ?? deploymentsFor(state.chainId).multiSendCallOnly };
+  }
+
+  /** Everything that can be checked against chain state before signing. A batch checks each item, and ETH in total. */
+  private async check(input: ProposalInput, state: SafeState, call: { to: Address }, checkEth = true): Promise<void> {
+    if (input.kind === "batch") {
+      for (const item of input.items) await this.check(item, state, buildProposal(item, this.context(state)), false);
+    }
+    if (checkEth && input.kind !== "escape") {
+      const total = batchCalls(input.kind === "batch" ? input.items : [input], this.context(state)).reduce((sum, item) => sum + item.value, 0n);
+      if (state.balance < total) throw new Error(input.kind === "eth" ? "the Safe does not hold that much ETH" : "the Safe does not hold enough ETH for this");
+    }
+    if (input.kind === "erc20") {
+      const balance = await this.options.publicClient.readContract({ address: call.to, abi: erc20Abi, functionName: "balanceOf", args: [state.safe] });
+      if (balance < BigInt(input.amount)) throw new Error("the Safe does not hold that many tokens");
+    }
+    const owners = state.owners.length;
+    const checkThreshold = (threshold: number, signers: number) => {
+      if (!Number.isInteger(threshold) || threshold < 1 || threshold > signers) throw new Error(`the threshold must be between 1 and ${signers}`);
+    };
+    if (input.kind === "threshold") {
+      checkThreshold(input.threshold, owners);
+      if (input.threshold === state.threshold) throw new Error(`the Safe already requires ${input.threshold}`);
+    }
+    if (input.kind === "remove-signer") {
+      if (!state.slots.some((slot) => slot.slotId === input.slotId)) throw new Error(`slot ${input.slotId} has no signer`);
+      if (owners < 2) throw new Error("the last signer cannot be removed");
+      checkThreshold(input.threshold, owners - 1);
+    }
+    if (input.kind === "add-signer") {
+      const pkg = decodePackage(input.package);
+      const errors = checkPackage(pkg, { chainId: state.chainId, safe: state.safe, slotId: state.slotCount });
+      const known = new Set([...state.owners, ...state.slots.flatMap((slot) => slot.staged)].map((address) => address.toLowerCase()));
+      if (packageKeys(pkg).some((entry) => known.has(entry.owner.toLowerCase()))) errors.push("the package reuses an address of a current signer");
+      if (errors.length > 0) throw new Error(`the new signer's package does not fit: ${errors.join("; ")}`);
+      checkThreshold(input.threshold, owners + 1);
+    }
+    if (input.kind === "force-rotate") {
+      for (const slotId of input.slotIds) {
+        const slot = state.slots.find((candidate) => candidate.slotId === slotId);
+        if (!slot) throw new Error(`slot ${slotId} has no owner`);
+        if (slot.staged.length === 0) throw new Error(`slot ${slotId} has no staged key to rotate to`);
+      }
+    }
+  }
+
+  /** The local queue: when enabled, new actions default to being queued instead of proposed one by one. */
+  draft(): DraftView {
+    return { enabled: this.queueMode, items: [...this.draftItems] };
+  }
+
+  setQueueMode(enabled: boolean): DraftView {
+    this.queueMode = enabled;
+    return this.draft();
+  }
+
+  /** Checks an action against chain state and queues it. Nothing is signed. */
+  async addToDraft(input: ProposalInput, origin = "app"): Promise<DraftItem> {
+    if (input.kind === "batch") throw new Error("batches cannot be queued");
+    if (input.kind === "escape") throw new Error("the escape hatch cannot be queued; propose it on its own");
+    const state = await readSafeState(this.options.publicClient, this.options.safe);
+    const context = this.context(state);
+    const call = buildProposal(input, context);
+    await this.check(input, state, call);
+    const item: DraftItem = { id: String(++this.nextDraftId), input, origin, actions: decodeActions(call, context), addedAt: new Date().toISOString() };
+    this.draftItems.push(item);
+    return item;
+  }
+
+  removeFromDraft(id: string): DraftView {
+    this.draftItems = this.draftItems.filter((item) => item.id !== id);
+    return this.draft();
+  }
+
+  /** Moves an item up (-1) or down (+1). */
+  moveInDraft(id: string, offset: number): DraftView {
+    const from = this.draftItems.findIndex((item) => item.id === id);
+    const to = from + Math.sign(offset);
+    if (from < 0 || to < 0 || to >= this.draftItems.length) return this.draft();
+    const items = [...this.draftItems];
+    [items[from], items[to]] = [items[to]!, items[from]!];
+    this.draftItems = items;
+    return this.draft();
+  }
+
+  clearDraft(): DraftView {
+    this.draftItems = [];
+    return this.draft();
+  }
+
+  /** The queued actions as the plain calls the Safe would make, in order. */
+  async draftCalls() {
+    if (this.draftItems.length === 0) return [];
+    const state = await readSafeState(this.options.publicClient, this.options.safe);
+    return batchCalls(
+      this.draftItems.map((item) => item.input),
+      this.context(state),
+    );
+  }
+
+  /** Runs the queued calls as the Safe, without signatures, and reports outcomes and balance changes. */
+  async simulateDraft(): Promise<Simulation> {
+    return simulateCalls(this.options.publicClient, this.options.safe, await this.draftCalls());
+  }
+
+  /** A read run after the queued calls, so dApps see the state the queue would leave. */
+  async readAfterDraft(read: ReadCall) {
+    return readAfter(this.options.publicClient, this.options.safe, await this.draftCalls(), read);
+  }
+
+  /** Proposes the whole queue as one transaction; on success the queue is emptied. */
+  async proposeDraft(preview = false): Promise<ProposalResult> {
+    const items = [...this.draftItems];
+    if (items.length === 0) throw new Error("the queue is empty");
+    const fromBlock = preview ? 0n : await this.blockNumber();
+    const result = await this.propose({ kind: "batch", items: items.map((item) => item.input) }, preview);
+    if (!preview) {
+      for (const item of items) this.proposedDrafts.set(item.id, { safeTxHash: result.safeTxHash, nonce: BigInt(result.nonce), fromBlock });
+      const sent = new Set(items.map((item) => item.id));
+      this.draftItems = this.draftItems.filter((item) => !sent.has(item.id));
+    }
+    return result;
+  }
+
+  /** Where a queued item went: undefined while it is still queued (or was removed). */
+  draftProposal(id: string): DraftProposal | undefined {
+    return this.proposedDrafts.get(id);
+  }
+
+  isQueued(id: string): boolean {
+    return this.draftItems.some((item) => item.id === id);
   }
 
   /** Symbol, decimals and the Safe's balance for an ERC-20 token, so amounts can be entered in whole tokens. */

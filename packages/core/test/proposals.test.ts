@@ -53,6 +53,33 @@ describe("buildProposal", () => {
     assert.throws(() => buildProposal({ kind: "calls", origin: "x", calls: [] }, ctx), /no calls/);
   });
 
+  it("flattens a queued batch into one MultiSendCallOnly call, in order", () => {
+    const tx = buildProposal(
+      {
+        kind: "batch",
+        items: [
+          { kind: "eth", to: TO, amount: "5" },
+          { kind: "calls", origin: "https://app.example", calls: [{ to: TO, data: "0x01" }, { to: TO, data: "0x02" }] },
+          { kind: "force-rotate", slotIds: [1] },
+        ],
+      },
+      { ...ctx, multiSendCallOnly: MULTISEND },
+    );
+    assert.equal(tx.to, MULTISEND);
+    const calls = unpackMultiSend(decodeFunctionData({ abi: multiSendCallOnlyAbi, data: tx.data }).args[0]);
+    assert.deepEqual(
+      calls.map((call) => [call.to, call.data]),
+      [
+        [getAddress(TO), "0x"],
+        [getAddress(TO), "0x01"],
+        [getAddress(TO), "0x02"],
+        [GUARD, calls[3]!.data],
+      ],
+    );
+    assert.throws(() => buildProposal({ kind: "batch", items: [{ kind: "escape" }] }, { ...ctx, multiSendCallOnly: MULTISEND }), /escape hatch cannot be batched/);
+    assert.throws(() => buildProposal({ kind: "batch", items: [] }, ctx), /queue is empty/);
+  });
+
   it("rejects bad input", () => {
     assert.throws(() => buildProposal({ kind: "eth", to: "0x12", amount: "1" }, ctx), /recipient is not a valid address/);
     assert.throws(() => buildProposal({ kind: "eth", to: TO, amount: "0" }, ctx), /greater than zero/);
