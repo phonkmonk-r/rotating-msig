@@ -427,6 +427,41 @@ contract RotationGuardTest is RotationFixture {
         assertEq(currentOwner(0), treeAddress(0, 11));
     }
 
+    function test_revert_setRoot_reusesConsumedIndex() public {
+        assertTrue(execBySlots(call(recipient, 1, ""), 2, 1));
+        bytes memory data = abi.encodeCall(guard.setRoot, (2, rootOf[2], TREE_SIZE, 0, "cid"));
+        (bytes memory sigs, address executor) = prepareBySlots(call(address(guard), 0, data), 0, 1);
+        vm.expectRevert(abi.encodeWithSelector(IRotationGuard.RootIndexConsumed.selector, rootOf[2], 0, 2));
+        execRaw(call(address(guard), 0, data), sigs, executor);
+    }
+
+    function test_setRoot_sameRootFromNextIndex() public {
+        assertTrue(execBySlots(call(address(guard), 0, abi.encodeCall(guard.setRoot, (2, rootOf[2], TREE_SIZE, 1, "cid"))), 0, 1));
+        assertEq(guard.consumedUpTo(address(safe), rootOf[2]), 1);
+        guard.stage(address(safe), 2, entries(2, 1, 1));
+        assertTrue(execBySlots(call(recipient, 1, ""), 2, 0));
+        assertEq(currentOwner(2), treeAddress(2, 1));
+    }
+
+    function test_revert_reinitialize_reusesConsumedIndex() public {
+        IRotationGuard.SlotConfig[] memory configs = new IRotationGuard.SlotConfig[](SLOTS);
+        address[] memory oldOwners = new address[](SLOTS);
+        for (uint256 slot = 0; slot < SLOTS; ++slot) {
+            configs[slot] = slotConfig(slot, 0);
+            oldOwners[slot] = currentOwner(slot);
+        }
+        bytes memory data = abi.encodeCall(guard.initialize, (oldOwners, configs));
+        (bytes memory sigs, address executor) = prepareBySlots(call(address(guard), 0, data), 0, 1);
+        vm.expectRevert(abi.encodeWithSelector(IRotationGuard.RootIndexConsumed.selector, rootOf[0], 0, 1));
+        execRaw(call(address(guard), 0, data), sigs, executor);
+    }
+
+    function test_removeSlot_recordsConsumed() public {
+        assertTrue(execBySlots(call(recipient, 1, ""), 2, 1));
+        assertTrue(execBySlots(call(address(guard), 0, abi.encodeCall(guard.removeSlot, (2, 2))), 0, 1));
+        assertEq(guard.consumedUpTo(address(safe), rootOf[2]), 2);
+    }
+
     function _root(bytes32[] memory leaves) private pure returns (bytes32) {
         return MerkleBuilder.root(leaves);
     }

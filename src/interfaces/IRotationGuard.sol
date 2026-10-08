@@ -149,6 +149,8 @@ interface IRotationGuard {
     error InvalidProof();
     /// @notice The slot does not exist.
     error UnknownSlot(uint256 slotId);
+    /// @notice A root is re-committed at an index already consumed under it.
+    error RootIndexConsumed(bytes32 root, uint32 startIndex, uint32 consumedUpTo);
     /// @notice A configuration parameter is invalid.
     error InvalidConfig();
     /// @notice A Safe call made through the module failed.
@@ -159,7 +161,8 @@ interface IRotationGuard {
     /**
      * @notice Configures the calling Safe, replacing every current owner with the first address of its slot's tree.
      * @dev Called by the Safe itself in the setup batch, after enabling this contract as a module. Starts a new epoch, so
-     *      calling it again discards all existing slots. `oldOwners[i]` is swapped for `configs[i].owner`.
+     *      calling it again discards all existing slots, after recording their consumed indexes so their roots can
+     *      never be re-committed below them. `oldOwners[i]` is swapped for `configs[i].owner`.
      * @param oldOwners Current owners, one per slot, all of which must be covered.
      * @param configs Slot configurations, in slot id order.
      */
@@ -181,6 +184,8 @@ interface IRotationGuard {
 
     /**
      * @notice Replaces a slot's Merkle root, for an exhausted tree or a re-keyed signer. Clears the staging buffer.
+     * @dev Records the outgoing root's consumed indexes first, so the same root can be re-committed only from an
+     *      index that never held an owner.
      * @param slotId The slot.
      * @param root New Merkle root.
      * @param size Number of leaves in the new tree.
@@ -236,6 +241,15 @@ interface IRotationGuard {
      * @return activeSlots Number of slots currently holding an owner.
      */
     function getConfig(address safe) external view returns (uint64 epoch, uint32 slotCount, uint32 activeSlots);
+
+    /**
+     * @notice Returns the first index of a root that has never held an owner, as recorded when the root last left a
+     *         slot. Any later commitment of the root must start at or above it.
+     * @param safe The Safe.
+     * @param root The Merkle root.
+     * @return The first unconsumed index recorded for the root.
+     */
+    function consumedUpTo(address safe, bytes32 root) external view returns (uint32);
 
     /**
      * @notice Returns the slot of an owner in a Safe's current epoch.

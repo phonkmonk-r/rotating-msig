@@ -62,6 +62,7 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
     mapping(address safe => mapping(uint64 epoch => mapping(uint256 slotId => Slot))) internal _slots;
     /// @dev Stores `slotId + 1` so that zero means "no slot".
     mapping(address safe => mapping(uint64 epoch => mapping(address owner => uint256))) internal _slotOf;
+    mapping(address safe => mapping(bytes32 root => uint32)) internal _consumedUpTo;
 
     /**
      * @param multiSendCallOnly The MultiSendCallOnly deployment allowed as a delegatecall target.
@@ -222,6 +223,11 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
         if (configs.length == 0 || oldOwners.length != configs.length) revert InvalidConfig();
 
         SafeConfig storage config = _configs[safe];
+        uint64 oldEpoch = config.epoch;
+        for (uint256 id = 0; id < config.slotCount; ++id) {
+            Slot storage old = _slots[safe][oldEpoch][id];
+            if (old.root != bytes32(0)) _recordConsumed(safe, old);
+        }
         uint64 epoch = ++config.epoch;
         config.slotCount = 0;
         config.activeSlots = 0;
@@ -253,6 +259,7 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
         Slot storage slot = _existingSlot(safe, epoch, slotId);
 
         address owner = slot.owner;
+        _recordConsumed(safe, slot);
         delete _slotOf[safe][epoch][owner];
         delete _slots[safe][epoch][slotId];
         --config.activeSlots;
@@ -272,6 +279,8 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
         address safe = msg.sender;
         if (root == bytes32(0) || startIndex >= size) revert InvalidConfig();
         Slot storage slot = _existingSlot(safe, _configs[safe].epoch, slotId);
+        _recordConsumed(safe, slot);
+        _requireUnconsumed(safe, root, startIndex);
         slot.root = root;
         slot.size = size;
         slot.nextStageIndex = startIndex;
@@ -368,6 +377,11 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
     }
 
     /// @inheritdoc IRotationGuard
+    function consumedUpTo(address safe, bytes32 root) external view override returns (uint32) {
+        return _consumedUpTo[safe][root];
+    }
+
+    /// @inheritdoc IRotationGuard
     function slotOf(address safe, address owner) external view override returns (bool found, uint256 slotId) {
         uint256 slotIdPlusOne = _slotOf[safe][_configs[safe].epoch][owner];
         if (slotIdPlusOne == 0) return (false, 0);
@@ -380,6 +394,7 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
 
     function _createSlot(address safe, uint64 epoch, SlotConfig calldata config) internal returns (address) {
         if (config.root == bytes32(0) || config.startIndex >= config.size) revert InvalidConfig();
+        _requireUnconsumed(safe, config.root, config.startIndex);
         if (!_isValidNewOwner(safe, config.owner) || _slotOf[safe][epoch][config.owner] != 0) {
             revert InvalidOwner(config.owner);
         }
@@ -424,6 +439,17 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
             abi.encodeCall(IOwnerManager.swapOwner, (_prevOwner(safe, oldOwner), oldOwner, newOwner))
         );
         emit OwnerRotated(safe, slotId, oldOwner, newOwner, index);
+    }
+
+    /// @dev Indexes below the slot's next index have held an owner; staged-but-unused ones never did.
+    function _recordConsumed(address safe, Slot storage slot) internal {
+        uint32 nextIndex = slot.nextStageIndex - slot.count;
+        if (nextIndex > _consumedUpTo[safe][slot.root]) _consumedUpTo[safe][slot.root] = nextIndex;
+    }
+
+    function _requireUnconsumed(address safe, bytes32 root, uint32 startIndex) internal view {
+        uint32 consumed = _consumedUpTo[safe][root];
+        if (startIndex < consumed) revert RootIndexConsumed(root, startIndex, consumed);
     }
 
     function _existingSlot(address safe, uint64 epoch, uint256 slotId) internal view returns (Slot storage slot) {
