@@ -73,7 +73,12 @@ const CALLS_STATUS = { pending: 100, executed: 200, replaced: 400, failed: 500 }
 interface Tracked {
   nonce: bigint;
   fromBlock: bigint;
+  /** The request's first call, for the stand-in transaction ethers-based dApps wait for. */
+  call?: DappCall;
 }
+
+/** Above any real nonce of the Safe, so ethers never takes a stand-in transaction for a replaced one. */
+const STAND_IN_NONCE = "0xffffffff";
 
 /**
  * The wallet a dApp sees in the built-in browser. The account is the Safe: reads go to the RPC, and transactions
@@ -85,6 +90,8 @@ export class DappProvider {
   private readonly proposals = new Map<string, Tracked>();
   /** Placeholder hashes handed out for queued requests, by draft item ID. */
   private readonly queued = new Map<string, string>();
+  /** First call of each queued request, by placeholder hash. */
+  private readonly queuedCalls = new Map<string, DappCall>();
   private reviewing = false;
   private nextId = 0;
 
@@ -151,11 +158,15 @@ export class DappProvider {
       case "eth_getTransactionReceipt":
       case "eth_getTransactionByHash": {
         const placeholder = typeof args[0] === "string" ? this.placeholder(session, args[0]) : undefined;
-        if (placeholder) return method === "eth_getTransactionReceipt" ? this.queuedReceipt(session, args[0] as Hex) : null;
+        if (placeholder) {
+          if (method === "eth_getTransactionReceipt") return this.queuedReceipt(session, args[0] as Hex);
+          return this.standIn(session, args[0] as Hex, this.queuedCalls.get((args[0] as string).toLowerCase()), true);
+        }
         const tracked = typeof args[0] === "string" ? this.proposals.get(args[0].toLowerCase()) : undefined;
         if (!tracked) return session.rpc(method, args);
         const status = await session.proposalStatus(args[0] as Hex, tracked.nonce, tracked.fromBlock);
-        if (!status.transactionHash) return null;
+        // Until a signer executes it, ethers-based dApps need to see the transaction exist (pending) to keep waiting.
+        if (!status.transactionHash) return method === "eth_getTransactionByHash" ? this.standIn(session, args[0] as Hex, tracked.call, false) : null;
         if (method === "eth_getTransactionByHash") return session.rpc(method, [status.transactionHash]);
         // ExecutionFailure: the outer transaction succeeded but the Safe's call reverted.
         return status.status === "failed" ? { ...status.receipt, status: "0x0" } : status.receipt;
@@ -184,9 +195,10 @@ export class DappProvider {
       if ("queued" in result) {
         const hash = keccak256(stringToHex(`keyturn-queued:${result.queued.id}:${result.queued.addedAt}`));
         this.queued.set(hash.toLowerCase(), result.queued.id);
+        if (request.calls[0]) this.queuedCalls.set(hash.toLowerCase(), request.calls[0]);
         return { hash };
       }
-      this.proposals.set(result.safeTxHash.toLowerCase(), { nonce: BigInt(result.nonce), fromBlock });
+      this.proposals.set(result.safeTxHash.toLowerCase(), { nonce: BigInt(result.nonce), fromBlock, call: request.calls[0] });
       return { hash: result.safeTxHash };
     } finally {
       this.reviewing = false;
@@ -205,6 +217,39 @@ export class DappProvider {
       this.proposals.set(proposal.safeTxHash.toLowerCase(), { nonce: proposal.nonce, fromBlock: proposal.fromBlock });
     }
     return id;
+  }
+
+  /**
+   * A transaction object for a hash that is not a real transaction yet: mined in the latest block for a queued request
+   * (so the dApp moves on), or pending for a proposal waiting for its executor. ethers' BrowserProvider polls
+   * `eth_getTransactionByHash` until it gets one before it ever asks for the receipt.
+   */
+  private async standIn(session: SignerSession, hash: Hex, call: DappCall | undefined, mined: boolean) {
+    const block = mined ? ((await session.rpc("eth_getBlockByNumber", ["latest", false])) as { hash: Hex; number: Hex }) : undefined;
+    const zero32 = `0x${"0".repeat(64)}`;
+    const value = call?.value && call.value !== "0x" ? numberToHex(BigInt(call.value)) : "0x0";
+    return {
+      hash,
+      type: "0x2",
+      chainId: numberToHex(session.chainId),
+      from: session.safe,
+      to: call?.to ?? session.safe,
+      input: call?.data || "0x",
+      value,
+      nonce: STAND_IN_NONCE,
+      gas: "0x0",
+      maxFeePerGas: "0x0",
+      maxPriorityFeePerGas: "0x0",
+      gasPrice: "0x0",
+      accessList: [],
+      r: zero32,
+      s: zero32,
+      v: "0x0",
+      yParity: "0x0",
+      blockHash: block?.hash ?? null,
+      blockNumber: block?.number ?? null,
+      transactionIndex: block ? "0x0" : null,
+    };
   }
 
   /**

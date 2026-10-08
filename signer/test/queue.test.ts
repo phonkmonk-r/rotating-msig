@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { after, before, describe, it } from "node:test";
-import { createWalletClient, decodeFunctionResult, encodeFunctionData, getAddress, http, type Abi, type Address, type Hex } from "viem";
+import { createPublicClient, createWalletClient, custom, decodeFunctionResult, encodeFunctionData, getAddress, http, type Abi, type Address, type Hex } from "viem";
 import { foundry } from "viem/chains";
+import { BrowserProvider, Contract } from "ethers";
 
 import { TxService } from "@rotating-msig/core";
 import { seedSource } from "@rotating-msig/keys";
@@ -77,8 +78,10 @@ describe("queueing actions and proposing them together", { skip }, () => {
     await assert.rejects(call("eth_estimateGas", [{ from: chain.safe, to: vault, data: deposit(100n) }]), "without the approval, the deposit fails");
 
     const approveHash = (await call("eth_sendTransaction", [{ from: chain.safe, to: token, data: approve(100n) }])) as Hex;
-    const receipt = (await call("eth_getTransactionReceipt", [approveHash])) as { status: Hex };
-    assert.equal(receipt.status, "0x1", "the dApp sees the queued approval as done and moves on");
+    // How wagmi dApps wait: viem looks the transaction up first (to detect replacements), then reads the receipt.
+    const dappClient = createPublicClient({ chain: foundry, transport: custom({ request: ({ method, params }) => call(method, params as unknown[]) }), pollingInterval: 50 });
+    const receipt = await dappClient.waitForTransactionReceipt({ hash: approveHash, timeout: 5_000 });
+    assert.equal(receipt.status, "success", "the dApp sees the queued approval as done and moves on");
     assert.equal(await allowanceSeenByDapp(), 100n, "reads run on top of the queue");
     assert.ok(BigInt((await call("eth_estimateGas", [{ from: chain.safe, to: vault, data: deposit(100n) }])) as string) > 21_000n);
     await call("eth_sendTransaction", [{ from: chain.safe, to: vault, data: deposit(100n) }]);
@@ -90,7 +93,29 @@ describe("queueing actions and proposing them together", { skip }, () => {
     assert.equal(sessions[0]!.draft().items.length, 2);
   });
 
+  it("lets an ethers dApp (like testnet.raac.io) finish waiting for a queued approval", async () => {
+    sessions[0]!.clearDraft();
+    // ethers polls eth_getTransactionByHash until the transaction exists, then waits for its receipt.
+    const ethersProvider = new BrowserProvider({ request: ({ method, params }) => call(method, (params ?? []) as unknown[]) }, foundry.id, { polling: true, pollingInterval: 50 } as never);
+    const signer = await ethersProvider.getSigner(chain.safe);
+    const erc20 = new Contract(token, ["function approve(address,uint256) returns (bool)"], signer);
+    const sent = await Promise.race([
+      erc20.getFunction("approve")(vault, 100n),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("ethers never saw the transaction")), 5_000)),
+    ]);
+    const receipt = await Promise.race([
+      (sent as { wait(): Promise<{ status: number }> }).wait(),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("ethers never saw the receipt")), 5_000)),
+    ]);
+    assert.equal(receipt.status, 1);
+    assert.equal(await allowanceSeenByDapp(), 100n);
+    sessions[0]!.clearDraft();
+    ethersProvider.destroy();
+  });
+
   it("proposes the whole queue as one transaction; one execution does both", async () => {
+    await call("eth_sendTransaction", [{ from: chain.safe, to: token, data: approve(100n) }]);
+    await call("eth_sendTransaction", [{ from: chain.safe, to: vault, data: deposit(100n) }]);
     const proposal = await sessions[0]!.proposeDraft();
     assert.equal(proposal.actions.length, 2);
     assert.equal(sessions[0]!.draft().items.length, 0, "the queue empties once proposed");
