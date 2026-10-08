@@ -15,7 +15,17 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 /** Form to propose a transaction from the app; the proposer's signature is their confirmation. */
-export function NewTransaction({ status, onClose, onProposed }: { status: StatusView; onClose: () => void; onProposed: () => void }) {
+export function NewTransaction({
+  status,
+  queueMode,
+  onClose,
+  onProposed,
+}: {
+  status: StatusView;
+  queueMode: boolean;
+  onClose: () => void;
+  onProposed: () => void;
+}) {
   const [tab, setTab] = useState<Tab>("eth");
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
@@ -25,6 +35,7 @@ export function NewTransaction({ status, onClose, onProposed }: { status: Status
   const [slots, setSlots] = useState<number[]>([]);
   const [review, setReview] = useState<ProposalResult>();
   const [done, setDone] = useState<ProposalResult>();
+  const [queued, setQueued] = useState<number>(0);
   const [error, setError] = useState<string>();
   const [working, setWorking] = useState(false);
 
@@ -61,6 +72,24 @@ export function NewTransaction({ status, onClose, onProposed }: { status: Status
         setDone(result);
         onProposed();
       }
+    } catch (caught) {
+      setError((caught as Error).message);
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function addToQueue() {
+    setWorking(true);
+    setError(undefined);
+    try {
+      await api.draftAdd(input());
+      setQueued(queued + 1);
+      setReview(undefined);
+      setTo("");
+      setAmount("");
+      setSlots([]);
+      onProposed();
     } catch (caught) {
       setError((caught as Error).message);
     } finally {
@@ -195,6 +224,12 @@ export function NewTransaction({ status, onClose, onProposed }: { status: Status
         </div>
       )}
 
+      {queued > 0 && (
+        <div className="note ok">
+          <IconCheck width="15" height="15" />
+          <span>Added to the queue. Add more, or review the queue below and propose it.</span>
+        </div>
+      )}
       {error && (
         <div className="note critical">
           <IconAlert width="15" height="15" />
@@ -213,9 +248,21 @@ export function NewTransaction({ status, onClose, onProposed }: { status: Status
             </button>
           </>
         ) : (
-          <button type="button" className="primary" onClick={() => void submit(true)} disabled={working || (tab === "force-rotate" && slots.length === 0)}>
-            {working ? "Checking…" : "Review"}
-          </button>
+          <>
+            <button
+              type="button"
+              className={queueMode ? "primary" : ""}
+              onClick={() => void addToQueue()}
+              disabled={working || (tab === "force-rotate" && slots.length === 0)}
+            >
+              Add to queue
+            </button>
+            {!queueMode && (
+              <button type="button" className="primary" onClick={() => void submit(true)} disabled={working || (tab === "force-rotate" && slots.length === 0)}>
+                {working ? "Checking…" : "Review"}
+              </button>
+            )}
+          </>
         )}
       </div>
     </section>

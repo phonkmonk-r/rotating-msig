@@ -85,6 +85,32 @@ export async function serve(session: SignerSession, options: ServeOptions): Prom
         return send(res, 409, { error: (error as Error).message });
       }
     }
+    if (req.method === "GET" && url.pathname === "/api/draft") return send(res, 200, session.draft());
+    if (req.method === "POST" && url.pathname === "/api/draft") {
+      const body = (await readJson(req)) as { action?: string; input?: unknown; id?: string; offset?: number; enabled?: boolean; preview?: boolean };
+      try {
+        switch (body.action) {
+          case "mode":
+            return send(res, 200, session.setQueueMode(body.enabled === true));
+          case "add":
+            return send(res, 200, await session.addToDraft(body.input as never));
+          case "remove":
+            return send(res, 200, session.removeFromDraft(String(body.id)));
+          case "move":
+            return send(res, 200, session.moveInDraft(String(body.id), Number(body.offset)));
+          case "clear":
+            return send(res, 200, session.clearDraft());
+          case "simulate":
+            return send(res, 200, await session.simulateDraft());
+          case "propose":
+            return send(res, 200, await session.proposeDraft(body.preview === true));
+          default:
+            return send(res, 400, { error: "unknown queue action" });
+        }
+      } catch (error) {
+        return send(res, 409, { error: (error as Error).message });
+      }
+    }
     if (req.method === "POST" && url.pathname === "/api/refill") {
       try {
         return send(res, 200, (await session.refill()) ?? null);

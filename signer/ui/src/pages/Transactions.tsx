@@ -1,21 +1,24 @@
 import { useState } from "react";
 
-import { api, type Execution, type QueueItem, type StatusView } from "../api";
+import { api, type DraftView, type Execution, type QueueItem, type StatusView } from "../api";
 import { eth, explorer, short } from "../format";
 import { IconAlert, IconCheck, IconExternal, IconInbox, IconPlus } from "../icons";
 import { Avatar, Badge, PageHeader } from "../ui";
 import { NewTransaction } from "./NewTransaction";
+import { QueueCard } from "./QueueCard";
 
 const EXECUTION_POLL_MS = 3_000;
 
 export function Transactions({
   status,
   queue,
+  draft,
   onBusy,
   onRefresh,
 }: {
   status: StatusView;
   queue: QueueItem[];
+  draft: DraftView;
   onBusy: (busy: boolean) => void;
   onRefresh: () => void;
 }) {
@@ -31,16 +34,17 @@ export function Transactions({
               type="button"
               className="primary"
               onClick={() => setComposing(true)}
-              disabled={queue.length > 0}
-              title={queue.length > 0 ? "Finish the pending transaction first" : undefined}
+              disabled={queue.length > 0 && !draft.enabled}
+              title={queue.length > 0 && !draft.enabled ? "Finish the pending transaction first, or turn on the queue" : undefined}
             >
               <IconPlus /> New transaction
             </button>
           )
         }
       />
-      {composing && <NewTransaction status={status} onClose={() => setComposing(false)} onProposed={onRefresh} />}
-      {queue.length === 0 && !composing ? (
+      {composing && <NewTransaction status={status} queueMode={draft.enabled} onClose={() => setComposing(false)} onProposed={onRefresh} />}
+      <QueueCard draft={draft} pending={queue.length} onChanged={onRefresh} />
+      {queue.length === 0 && !composing && draft.items.length === 0 ? (
         <div className="empty-state">
           <IconInbox />
           <p>No pending transactions</p>

@@ -1,9 +1,10 @@
 import type { ProposalInput } from "@rotating-msig/core";
 
 import type { DappRequest } from "../../src/dapp.js";
-import type { Execution, ProposalResult, QueueItem, Refill, SignerView, StatusView, TokenInfo } from "../../src/session.js";
+import type { DraftItem, DraftView, Execution, ProposalResult, QueueItem, Refill, SignerView, StatusView, TokenInfo } from "../../src/session.js";
+import type { Simulation } from "../../src/simulate.js";
 
-export type { DappRequest, Execution, ProposalInput, ProposalResult, QueueItem, Refill, SignerView, StatusView, TokenInfo };
+export type { DappRequest, DraftItem, DraftView, Execution, ProposalInput, ProposalResult, QueueItem, Refill, Simulation, SignerView, StatusView, TokenInfo };
 
 /** The dApp browser's page, as the main process reports it. */
 export interface BrowserState {
@@ -131,6 +132,15 @@ interface DesktopBridge {
   propose(input: ProposalInput, preview: boolean): Promise<Result<ProposalResult>>;
   token(address: string): Promise<Result<TokenInfo>>;
   refill(): Promise<Result<Refill | null>>;
+  browserQueue(id: string): Promise<Result<DraftItem>>;
+  draft(): Promise<Result<DraftView>>;
+  draftMode(enabled: boolean): Promise<Result<DraftView>>;
+  draftAdd(input: ProposalInput): Promise<Result<DraftItem>>;
+  draftRemove(id: string): Promise<Result<DraftView>>;
+  draftMove(id: string, offset: number): Promise<Result<DraftView>>;
+  draftClear(): Promise<Result<DraftView>>;
+  draftSimulate(): Promise<Result<Simulation>>;
+  draftPropose(preview: boolean): Promise<Result<ProposalResult>>;
   browserOpen(url: string): Promise<Result<BrowserState>>;
   browserBounds(bounds: Bounds | null): Promise<Result<null>>;
   browserNavigate(action: "back" | "forward" | "reload" | "stop"): Promise<Result<null>>;
@@ -200,6 +210,8 @@ async function http<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+const draftHttp = <T>(body: object) => http<T>("/api/draft", { method: "POST", body: JSON.stringify(body) });
+
 const post = (safeTxHash: string) => ({ method: "POST", body: JSON.stringify({ safeTxHash }) });
 
 export const api = {
@@ -210,6 +222,14 @@ export const api = {
   execution: (hash: string) => (bridge ? unwrap(bridge.execution(hash)) : http<Execution>(`/api/executions/${hash}`)),
   propose: (input: ProposalInput, preview: boolean) =>
     bridge ? unwrap(bridge.propose(input, preview)) : http<ProposalResult>("/api/propose", { method: "POST", body: JSON.stringify({ input, preview }) }),
+  draft: () => (bridge ? unwrap(bridge.draft()) : http<DraftView>("/api/draft")),
+  draftMode: (enabled: boolean) => (bridge ? unwrap(bridge.draftMode(enabled)) : draftHttp<DraftView>({ action: "mode", enabled })),
+  draftAdd: (input: ProposalInput) => (bridge ? unwrap(bridge.draftAdd(input)) : draftHttp<DraftItem>({ action: "add", input })),
+  draftRemove: (id: string) => (bridge ? unwrap(bridge.draftRemove(id)) : draftHttp<DraftView>({ action: "remove", id })),
+  draftMove: (id: string, offset: number) => (bridge ? unwrap(bridge.draftMove(id, offset)) : draftHttp<DraftView>({ action: "move", id, offset })),
+  draftClear: () => (bridge ? unwrap(bridge.draftClear()) : draftHttp<DraftView>({ action: "clear" })),
+  draftSimulate: () => (bridge ? unwrap(bridge.draftSimulate()) : draftHttp<Simulation>({ action: "simulate" })),
+  draftPropose: (preview: boolean) => (bridge ? unwrap(bridge.draftPropose(preview)) : draftHttp<ProposalResult>({ action: "propose", preview })),
   refill: () => (bridge ? unwrap(bridge.refill()) : http<Refill | null>("/api/refill", { method: "POST", body: "{}" })),
   token: (address: string) => (bridge ? unwrap(bridge.token(address)) : http<TokenInfo>(`/api/token?address=${encodeURIComponent(address)}`)),
 };
@@ -257,6 +277,7 @@ export const browser = bridge
       preview: (id: string) => unwrap(bridge.browserPreview(id)),
       approve: (id: string) => unwrap(bridge.browserApprove(id)),
       reject: (id: string) => unwrap(bridge.browserReject(id)),
+      queue: (id: string) => unwrap(bridge.browserQueue(id)),
       onState: (listener: (state: BrowserState) => void) => bridge.onBrowserState(listener),
       onRequest: (listener: (request: DappRequest | null) => void) => bridge.onBrowserRequest(listener),
     }

@@ -70,6 +70,10 @@ It prints a link like `http://127.0.0.1:7373/#token=…`. Open it; that is your 
 - `--execution-rpc`: where executions are sent. Defaults to Flashbots Protect (`rpc.flashbots.net`, or `rpc-sepolia.flashbots.net`), which keeps the transaction private and does not publish it if it would revert.
 - `SAFE_API_KEY`: sent to the Safe Transaction Service if set.
 
+### Queue
+
+Turn on **Queue transactions** at the bottom of the sidebar to collect actions instead of proposing each one: transfers, signer changes and dApp requests go into a queue on the Transactions page, where they are simulated together (which calls succeed, what the Safe's balances do, which approvals it gives) and then proposed as one transaction, so every signer signs and rotates once. With a dApp that approves and then deposits in two steps, queue the approval: the dApp sees it as done and continues, and both go out together. Queued actions are not on-chain until the queue is proposed and executed, and the queue is cleared when you lock the app.
+
 ### Managing signers
 
 Signers, Manage signers proposes signer changes like any other transaction: add a signer (the newcomer opens the app, chooses "I'm being added to a Safe" with the Safe's address, and sends you the slot package it shows), remove a signer, change the threshold, or remove rotation altogether (escape hatch; everyone who signs it should treat their keys as burned). Another signer executes each one from Transactions.

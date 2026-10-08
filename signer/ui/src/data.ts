@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { api, canConnect, type QueueItem, type StatusView } from "./api";
+import { api, canConnect, type DraftView, type QueueItem, type StatusView } from "./api";
 
 const REFRESH_MS = 10_000;
 
 export interface SignerData {
   status?: StatusView;
   queue: QueueItem[];
+  /** The local queue of actions not yet proposed. */
+  draft: DraftView;
   error?: string;
   updatedAt?: Date;
   refreshing: boolean;
@@ -19,6 +21,7 @@ export interface SignerData {
 export function useSignerData(): SignerData {
   const [status, setStatus] = useState<StatusView>();
   const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [draft, setDraft] = useState<DraftView>({ enabled: false, items: [] });
   const [error, setError] = useState<string>();
   const [updatedAt, setUpdatedAt] = useState<Date>();
   const [refreshing, setRefreshing] = useState(false);
@@ -28,9 +31,10 @@ export function useSignerData(): SignerData {
     if (busy.current) return;
     setRefreshing(true);
     try {
-      const [nextStatus, nextQueue] = await Promise.all([api.status(), api.queue()]);
+      const [nextStatus, nextQueue, nextDraft] = await Promise.all([api.status(), api.queue(), api.draft()]);
       setStatus(nextStatus);
       setQueue(nextQueue);
+      setDraft(nextDraft);
       setError(undefined);
       setUpdatedAt(new Date());
     } catch (caught) {
@@ -55,7 +59,7 @@ export function useSignerData(): SignerData {
     [refresh],
   );
 
-  return { status, queue, error, updatedAt, refreshing, refresh, setBusy };
+  return { status, queue, draft, error, updatedAt, refreshing, refresh, setBusy };
 }
 
 export const LOW_GAS_WEI = 5_000_000_000_000_000n;

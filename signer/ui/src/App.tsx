@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-import { browser, canConnect, desktop, type DappRequest, type DesktopState } from "./api";
+import { api, browser, canConnect, desktop, type DappRequest, type DesktopState } from "./api";
 import { useSignerData } from "./data";
 import { short } from "./format";
 import { IconGlobe, IconLock, IconOverview, IconRefresh, IconSettings, IconSigners, IconTransactions, Logo } from "./icons";
@@ -174,7 +174,7 @@ function Shell({
 
   const nav: { id: Page; label: string; icon: ReactNode; count?: number }[] = [
     { id: "overview", label: "Overview", icon: <IconOverview /> },
-    { id: "transactions", label: "Transactions", icon: <IconTransactions />, count: waiting },
+    { id: "transactions", label: "Transactions", icon: <IconTransactions />, count: waiting + data.draft.items.length },
     ...(browser ? [{ id: "browse" as const, label: "Browse dApps", icon: <IconGlobe />, count: dappRequest ? 1 : 0 }] : []),
     { id: "signers", label: "Signers", icon: <IconSigners /> },
   ];
@@ -209,6 +209,23 @@ function Shell({
         </nav>
 
         <div className="sidebar-bottom">
+          {status && (
+            <label className="queue-toggle" title="When on, new transactions are collected in a queue and proposed together">
+              <span className="queue-toggle-text">
+                Queue transactions
+                {data.draft.items.length > 0 && <span className="count">{data.draft.items.length}</span>}
+              </span>
+              <input
+                type="checkbox"
+                role="switch"
+                checked={data.draft.enabled}
+                onChange={(e) => {
+                  void api.draftMode(e.target.checked).then(() => data.refresh());
+                }}
+              />
+              <span className="switch" aria-hidden="true" />
+            </label>
+          )}
           {desktopState?.profile && onSwitchProfile && (
             <button type="button" className="profile-chip" onClick={onSwitchProfile} title="Lock and switch to another profile">
               <Avatar address={desktopState.profile.operator} size={22} />
@@ -240,9 +257,9 @@ function Shell({
         {status?.queueError && <div className="note warning banner-top">Transaction Service unavailable: pending transactions may be missing.</div>}
         {!status && !data.error && <div className="loading">Loading…</div>}
         {status && page === "overview" && <Overview status={status} queue={queue} onOpenTransactions={() => setPage("transactions")} />}
-        {status && page === "transactions" && <Transactions status={status} queue={queue} onBusy={data.setBusy} onRefresh={() => void data.refresh()} />}
-        {status && page === "browse" && <Browse status={status} request={dappRequest} />}
-        {status && page === "signers" && <Signers status={status} pending={queue.length} />}
+        {status && page === "transactions" && <Transactions status={status} queue={queue} draft={data.draft} onBusy={data.setBusy} onRefresh={() => void data.refresh()} />}
+        {status && page === "browse" && <Browse status={status} request={dappRequest} queueMode={data.draft.enabled} />}
+        {status && page === "signers" && <Signers status={status} pending={queue.length} queueMode={data.draft.enabled} onQueued={() => void data.refresh()} />}
         {status && page === "settings" && desktopState && <Settings status={status} desktopState={desktopState} onChangeSafe={onChangeSafe!} onLock={onLock!} onProfileChanged={onProfileChanged!} onSwitchProfile={onSwitchProfile!} />}
       </main>
     </div>

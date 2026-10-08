@@ -1596,3 +1596,157 @@ button.danger {
   align-items: center;
   gap: 12px;
 }
+
+/* ---------- Queue ---------- */
+
+.queue-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  margin-bottom: 6px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 550;
+  font-size: 13px;
+}
+
+.queue-toggle:hover {
+  background: var(--surface-2);
+}
+
+.queue-toggle-text {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.queue-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.switch {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--border);
+  transition: background 0.15s;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+  transition: transform 0.15s;
+}
+
+.queue-toggle input:checked + .switch {
+  background: var(--accent);
+}
+
+.queue-toggle input:checked + .switch::after {
+  transform: translateX(14px);
+}
+
+.queue-toggle input:focus-visible + .switch {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.queue-card {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.queue-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.queue-items {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.queue-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.queue-index {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.queue-actions {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.queue-controls {
+  display: flex;
+  gap: 2px;
+}
+
+.queue-controls .icon-button:disabled {
+  opacity: 0.3;
+}
+
+.simulation {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.simulation .note {
+  margin-top: 0;
+}
+
+dd.negative {
+  color: var(--critical);
+  font-weight: 600;
+}
+
+dd.positive {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.queue-toggle-text {
+  white-space: nowrap;
+}

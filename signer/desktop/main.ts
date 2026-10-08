@@ -564,6 +564,15 @@ handle("browser:close", () => browser?.close() ?? null);
 handle("browser:pending", () => browser?.pendingRequest() ?? null);
 handle("browser:preview", (id: unknown) => requireBrowser().preview(String(id)));
 handle("browser:approve", (id: unknown) => requireBrowser().approve(String(id)));
+handle("browser:queue", (id: unknown) => requireBrowser().queue(String(id)));
+handle("draft:get", () => requireSession().draft());
+handle("draft:mode", (enabled: unknown) => requireSession().setQueueMode(enabled === true));
+handle("draft:add", (input: unknown) => requireSession().addToDraft(input as never));
+handle("draft:remove", (id: unknown) => requireSession().removeFromDraft(String(id)));
+handle("draft:move", (id: unknown, offset: unknown) => requireSession().moveInDraft(String(id), Number(offset)));
+handle("draft:clear", () => requireSession().clearDraft());
+handle("draft:simulate", () => requireSession().simulateDraft());
+handle("draft:propose", (preview: unknown) => requireSession().proposeDraft(preview === true));
 handle("browser:reject", (id: unknown) => requireBrowser().reject(String(id)) ?? null);
 
 function createWindow() {
@@ -617,6 +626,10 @@ app.whenReady().then(async () => {
     } catch (error) {
       sessionError = (error as Error).message;
     }
+  }
+  if (process.env.ROTATION_SIGNER_TEST_QUEUE && session) {
+    session.setQueueMode(true);
+    for (const input of JSON.parse(process.env.ROTATION_SIGNER_TEST_QUEUE) as never[]) await session.addToDraft(input).catch(() => undefined);
   }
   createWindow();
   if (process.env.ROTATION_SIGNER_TEST_BROWSE && session) browser?.open(process.env.ROTATION_SIGNER_TEST_BROWSE);

@@ -19,12 +19,13 @@ const EMPTY: BrowserState = { url: "", title: "", loading: false, canGoBack: fal
  * The dApp browser. The page itself is a native view the main process lays over the viewport below; it is hidden
  * whenever a request is under review, so the review can never be covered or imitated by the page.
  */
-export function Browse({ status, request }: { status: StatusView; request: DappRequest | null }) {
+export function Browse({ status, request, queueMode }: { status: StatusView; request: DappRequest | null; queueMode: boolean }) {
   const [state, setState] = useState<BrowserState>(EMPTY);
   const [address, setAddress] = useState("");
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string>();
   const [proposed, setProposed] = useState<ProposalResult>();
+  const [queuedNote, setQueuedNote] = useState(false);
   const viewport = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -123,9 +124,31 @@ export function Browse({ status, request }: { status: StatusView; request: DappR
         </div>
       )}
 
+      {queuedNote && request === null && (
+        <div className="note ok browser-note">
+          <IconCheck width="15" height="15" />
+          <span>Queued, not on-chain yet. The dApp sees it as done so you can continue; propose the queue from Transactions.</span>
+          <button type="button" className="link" onClick={() => setQueuedNote(false)}>
+            Dismiss
+          </button>
+        </div>
+      )}
       <div className="browser-viewport" ref={viewport}>
         {request ? (
-          <RequestReview key={request.id} request={request} status={status} onProposed={setProposed} />
+          <RequestReview
+            key={request.id}
+            request={request}
+            status={status}
+            queueMode={queueMode}
+            onProposed={(result) => {
+              setQueuedNote(false);
+              setProposed(result);
+            }}
+            onQueued={() => {
+              setProposed(undefined);
+              setQueuedNote(true);
+            }}
+          />
         ) : (
           !state.url && <StartPage onOpen={(url) => void open(url)} />
         )}
@@ -154,7 +177,19 @@ function StartPage({ onOpen }: { onOpen: (url: string) => void }) {
   );
 }
 
-function RequestReview({ request, status, onProposed }: { request: DappRequest; status: StatusView; onProposed: (result: ProposalResult) => void }) {
+function RequestReview({
+  request,
+  status,
+  queueMode,
+  onProposed,
+  onQueued,
+}: {
+  request: DappRequest;
+  status: StatusView;
+  queueMode: boolean;
+  onProposed: (result: ProposalResult) => void;
+  onQueued: () => void;
+}) {
   const [preview, setPreview] = useState<ProposalResult>();
   const [error, setError] = useState<string>();
   const [working, setWorking] = useState(false);
@@ -175,6 +210,18 @@ function RequestReview({ request, status, onProposed }: { request: DappRequest; 
     setError(undefined);
     try {
       onProposed(await browser!.approve(request.id));
+    } catch (caught) {
+      setError((caught as Error).message);
+      setWorking(false);
+    }
+  }
+
+  async function queue() {
+    setWorking(true);
+    setError(undefined);
+    try {
+      await browser!.queue(request.id);
+      onQueued();
     } catch (caught) {
       setError((caught as Error).message);
       setWorking(false);
@@ -232,7 +279,10 @@ function RequestReview({ request, status, onProposed }: { request: DappRequest; 
         <button type="button" onClick={() => void browser!.reject(request.id)} disabled={working}>
           Reject
         </button>
-        <button type="button" className="primary" onClick={() => void approve()} disabled={working || !preview}>
+        <button type="button" className={queueMode ? "primary" : ""} onClick={() => void queue()} disabled={working}>
+          Add to queue
+        </button>
+        <button type="button" className={queueMode ? "" : "primary"} onClick={() => void approve()} disabled={working || !preview}>
           {working ? "Signing…" : "Sign & propose"}
         </button>
       </div>

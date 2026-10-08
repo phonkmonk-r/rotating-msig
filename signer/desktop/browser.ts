@@ -1,7 +1,7 @@
 import { ipcMain, session as electronSession, shell, WebContentsView, type BrowserWindow } from "electron";
 
 import { DappProvider, ProviderError, USER_REJECTED, type DappRequest } from "../src/dapp.js";
-import type { ProposalResult, SignerSession } from "../src/session.js";
+import type { DraftItem, ProposalResult, SignerSession } from "../src/session.js";
 
 /** Cookies and storage of dApps live in their own partition, apart from the app's UI. */
 const PARTITION = "persist:dapps";
@@ -45,7 +45,7 @@ function navigable(url: string): boolean {
 
 interface Pending {
   request: DappRequest;
-  resolve: (result: ProposalResult) => void;
+  resolve: (result: ProposalResult | { queued: DraftItem }) => void;
   reject: (error: Error) => void;
 }
 
@@ -144,6 +144,15 @@ export class DappBrowser {
     return result;
   }
 
+  /** Queues exactly what the dApp asked for instead of proposing it now. */
+  async queue(id: string): Promise<DraftItem> {
+    const request = this.pending?.request;
+    if (!request || request.id !== id) throw new Error("this request is no longer waiting");
+    const item = await this.requireSession().addToDraft(this.input(id), request.origin);
+    this.settle()?.resolve({ queued: item });
+    return item;
+  }
+
   reject(id: string): void {
     if (this.pending?.request.id !== id) return;
     this.settle()?.reject(new ProviderError(USER_REJECTED, "User rejected the request"));
@@ -159,7 +168,7 @@ export class DappBrowser {
     this.deps.send("browser:state", this.state());
   }
 
-  private review(request: DappRequest): Promise<ProposalResult> {
+  private review(request: DappRequest): Promise<ProposalResult | { queued: DraftItem }> {
     if (!this.deps.window()) return Promise.reject(new ProviderError(4900, "Keyturn is not open"));
     return new Promise((resolve, reject) => {
       this.pending = { request, resolve, reject };

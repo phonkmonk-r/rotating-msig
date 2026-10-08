@@ -4,7 +4,7 @@ import { LOW_GAS_WEI } from "../data";
 import { eth } from "../format";
 import { Address, Avatar, Badge, Dots, PageHeader } from "../ui";
 
-export function Signers({ status, pending }: { status: StatusView; pending: number }) {
+export function Signers({ status, pending, queueMode, onQueued }: { status: StatusView; pending: number; queueMode: boolean; onQueued: () => void }) {
   return (
     <>
       <PageHeader title="Signers" subtitle={`${status.signers.length} slots · ${status.threshold} needed to execute`} />
@@ -48,7 +48,7 @@ export function Signers({ status, pending }: { status: StatusView; pending: numb
           </tbody>
         </table>
       </section>
-      <Manage status={status} pending={pending} />
+      <Manage status={status} pending={pending} queueMode={queueMode} onQueued={onQueued} />
     </>
   );
 }

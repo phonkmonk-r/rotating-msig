@@ -8,10 +8,12 @@ type Action = "add" | "remove" | "threshold" | "escape";
 const ESCAPE_PHRASE = "remove rotation";
 
 /** Signer management, proposed like any other transaction: another signer executes it and both rotate. */
-export function Manage({ status, pending }: { status: StatusView; pending: number }) {
+export function Manage({ status, pending, queueMode, onQueued }: { status: StatusView; pending: number; queueMode: boolean; onQueued: () => void }) {
   const [open, setOpen] = useState<Action>();
   const owners = status.signers.length;
-  const blocked = pending > 0 ? "Finish the pending transaction first" : status.threshold < 2 ? "Proposing needs a threshold of at least 2" : undefined;
+  const blocked =
+    status.threshold < 2 ? "Proposing needs a threshold of at least 2" : pending > 0 && !queueMode ? "Finish the pending transaction first, or turn on the queue" : undefined;
+  const queue = { queueMode, onQueued };
 
   return (
     <section className="card">
@@ -31,9 +33,9 @@ export function Manage({ status, pending }: { status: StatusView; pending: numbe
         ))}
       </div>
 
-      {open === "add" && <AddSigner key="add" owners={owners} threshold={status.threshold} onClose={() => setOpen(undefined)} />}
-      {open === "remove" && <RemoveSigner key="remove" status={status} onClose={() => setOpen(undefined)} />}
-      {open === "threshold" && <ChangeThreshold key="threshold" status={status} onClose={() => setOpen(undefined)} />}
+      {open === "add" && <AddSigner key="add" owners={owners} threshold={status.threshold} queue={queue} onClose={() => setOpen(undefined)} />}
+      {open === "remove" && <RemoveSigner key="remove" status={status} queue={queue} onClose={() => setOpen(undefined)} />}
+      {open === "threshold" && <ChangeThreshold key="threshold" status={status} queue={queue} onClose={() => setOpen(undefined)} />}
 
       <details className="danger-zone" open={open === "escape"} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open ? "escape" : undefined)}>
         <summary>Remove rotation (escape hatch)</summary>
@@ -55,10 +57,29 @@ function ThresholdSelect({ value, max, onChange }: { value: number; max: number;
   );
 }
 
-/** Review, then sign and propose, for one admin action. */
-function Proposal({ input, ready, children, onClose }: { input: () => ProposalInput; ready: boolean; children: ReactNode; onClose: () => void }) {
+interface QueueProps {
+  queueMode: boolean;
+  onQueued: () => void;
+}
+
+/** Review, then sign and propose, for one admin action; or add it to the queue. */
+function Proposal({
+  input,
+  ready,
+  children,
+  queue,
+  onClose,
+}: {
+  input: () => ProposalInput;
+  ready: boolean;
+  children: ReactNode;
+  /** Absent for actions that must be proposed on their own. */
+  queue?: QueueProps;
+  onClose: () => void;
+}) {
   const [review, setReview] = useState<ProposalResult>();
   const [done, setDone] = useState<ProposalResult>();
+  const [queued, setQueued] = useState(false);
   const [error, setError] = useState<string>();
   const [working, setWorking] = useState(false);
 
@@ -75,6 +96,37 @@ function Proposal({ input, ready, children, onClose }: { input: () => ProposalIn
     } finally {
       setWorking(false);
     }
+  }
+
+  async function addToQueue() {
+    setWorking(true);
+    setError(undefined);
+    try {
+      await api.draftAdd(input());
+      setQueued(true);
+      queue?.onQueued();
+    } catch (caught) {
+      const message = (caught as Error).message;
+      setError(message.charAt(0).toUpperCase() + message.slice(1));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  if (queued) {
+    return (
+      <div className="manage-panel">
+        <div className="note ok">
+          <IconCheck width="15" height="15" />
+          <span>Added to the queue. Propose it from Transactions.</span>
+        </div>
+        <div className="tx-footer">
+          <button type="button" onClick={onClose}>
+            Done
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (done) {
@@ -122,20 +174,29 @@ function Proposal({ input, ready, children, onClose }: { input: () => ProposalIn
             {working ? "Signing…" : "Sign & propose"}
           </button>
         ) : (
-          <button type="button" className="primary" disabled={working || !ready} onClick={() => void submit(true)}>
-            {working ? "Checking…" : "Review"}
-          </button>
+          <>
+            {queue && (
+              <button type="button" className={queue.queueMode ? "primary" : ""} disabled={working || !ready} onClick={() => void addToQueue()}>
+                Add to queue
+              </button>
+            )}
+            {!queue?.queueMode && (
+              <button type="button" className="primary" disabled={working || !ready} onClick={() => void submit(true)}>
+                {working ? "Checking…" : "Review"}
+              </button>
+            )}
+          </>
         )}
       </div>
     </div>
   );
 }
 
-function AddSigner({ owners, threshold, onClose }: { owners: number; threshold: number; onClose: () => void }) {
+function AddSigner({ owners, threshold, queue, onClose }: { owners: number; threshold: number; queue: QueueProps; onClose: () => void }) {
   const [code, setCode] = useState("");
   const [next, setNext] = useState(threshold);
   return (
-    <Proposal input={() => ({ kind: "add-signer", package: code.trim(), threshold: next })} ready={code.trim().startsWith("rotation-slot:")} onClose={onClose}>
+    <Proposal input={() => ({ kind: "add-signer", package: code.trim(), threshold: next })} ready={code.trim().startsWith("rotation-slot:")} queue={queue} onClose={onClose}>
       <p className="muted small">
         The new signer opens this app, chooses "I'm being added to a Safe" with this Safe's address, and sends you their slot package.
       </p>
@@ -151,13 +212,13 @@ function AddSigner({ owners, threshold, onClose }: { owners: number; threshold: 
   );
 }
 
-function RemoveSigner({ status, onClose }: { status: StatusView; onClose: () => void }) {
+function RemoveSigner({ status, queue, onClose }: { status: StatusView; queue: QueueProps; onClose: () => void }) {
   const [slotId, setSlotId] = useState<number>();
   const remaining = status.signers.length - 1;
   const [next, setNext] = useState(Math.min(status.threshold, Math.max(remaining, 1)));
   const removingMe = status.signers.find((signer) => signer.slotId === slotId)?.isMe;
   return (
-    <Proposal input={() => ({ kind: "remove-signer", slotId: slotId!, threshold: next })} ready={slotId !== undefined && remaining >= 1} onClose={onClose}>
+    <Proposal input={() => ({ kind: "remove-signer", slotId: slotId!, threshold: next })} ready={slotId !== undefined && remaining >= 1} queue={queue} onClose={onClose}>
       <label className="field">
         <span className="field-label">Signer</span>
         <select value={slotId ?? ""} onChange={(e) => setSlotId(e.target.value === "" ? undefined : Number(e.target.value))}>
@@ -184,10 +245,10 @@ function RemoveSigner({ status, onClose }: { status: StatusView; onClose: () => 
   );
 }
 
-function ChangeThreshold({ status, onClose }: { status: StatusView; onClose: () => void }) {
+function ChangeThreshold({ status, queue, onClose }: { status: StatusView; queue: QueueProps; onClose: () => void }) {
   const [next, setNext] = useState(status.threshold);
   return (
-    <Proposal input={() => ({ kind: "threshold", threshold: next })} ready={next !== status.threshold} onClose={onClose}>
+    <Proposal input={() => ({ kind: "threshold", threshold: next })} ready={next !== status.threshold} queue={queue} onClose={onClose}>
       <label className="field">
         <span className="field-label">Signatures needed</span>
         <ThresholdSelect value={next} max={status.signers.length} onChange={setNext} />

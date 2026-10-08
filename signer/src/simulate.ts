@@ -5,6 +5,8 @@ const TRANSFER = toEventSelector("Transfer(address,address,uint256)");
 const APPROVAL = toEventSelector("Approval(address,address,uint256)");
 /** The pseudo-address `eth_simulateV1` uses for native ETH movements when `traceTransfers` is on. */
 const ETH_PSEUDO_TOKEN = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+/** Geth also reports each ETH move from its system address; counting it would double every ETH change. */
+const SYSTEM_ADDRESS = "0xfffffffffffffffffffffffffffffffffffffffe";
 
 export interface RpcLog {
   address: Address;
@@ -104,6 +106,7 @@ export async function simulateCalls(client: PublicClient, safe: Address, calls: 
   const approvals = new Map<string, { token: Address; spender: Address; amount: bigint }>();
   for (const result of results) {
     for (const log of result.logs ?? []) {
+      if (isAddressEqual(log.address, SYSTEM_ADDRESS)) continue;
       const [topic, a, b] = log.topics;
       if (topic === TRANSFER && log.topics.length === 3) {
         const from = topicAddress(a);
