@@ -307,7 +307,7 @@ Options considered:
 Design:
 
 - Interface (decided): a local web UI. `rotation-signer` starts a process on the signer's machine that holds the key (seed file or Ledger over USB) and serves a browser UI on `127.0.0.1`. Keys never enter the browser. The session is protected by a random token in the URL fragment, a Host-header check against DNS rebinding, and no cross-origin access.
-- Scope of v1 (decided): confirm and execute. Transactions are still created in Safe{Wallet}; proposing (including through a non-owner proposer account) is v2, after proposer behaviour across rotation is tested.
+- Scope of v1 (decided): confirm and execute. Transactions are still created in Safe{Wallet}. v2 adds proposing from the app, signed as the proposer's own confirmation; a fixed non-owner proposer was tested on Sepolia and does not survive rotation (see open questions).
 - Layers: browser-safe logic in `packages/core` (Transaction Service client, local EIP-712 SafeTx hashing, action decoding, and a rules engine that decides per transaction and per signer whether Confirm or Execute is allowed and why not); key handling in a Node-only `packages/keys` (seed and Ledger sources moved out of the generator); the server and UI in `signer/`. It is not part of the generator, which stays offline-only; the signer needs network access.
 - Key source: the signer's seed file or Ledger, with the same derivation and code as the generator. The signer's tree file identifies their slot; the tool reads the slot's current owner index on-chain and derives exactly that key. The signer never picks an account.
 - Safe{Wallet} stays the place where transactions are created and the queue is viewed. Only confirming and executing move into the tool.
@@ -329,10 +329,12 @@ Open questions to settle on Sepolia before mainnet:
 - Settled: when the last owner clicks Execute without confirming first, Safe{Wallet} submits their signature as pre-validated (v = 1, `APPROVED_HASH` in the Transaction Service) next to the other confirmation, exactly `threshold` signatures. This is the form the executor rule requires.
 - Settled: the 2-of-3 setup transaction used 4,367,352 gas on Sepolia.
 - Settled: the first guarded transaction (`0xb163d027…f091fd`, a 2-of-3 transfer) rotated exactly its two signers to tree index 1, matching the generated trees. The Transaction Service accepted a confirmation from an owner rotated in by the previous transaction with no delay.
+- Settled: the rotation signer works on Sepolia end to end. Nonce 2 (`0x0edb6cfc…28098d4a`, 662,328 gas) was confirmed from signer 1's app through the real Transaction Service and executed from signer 3's app; both rotated as their trees predict, with no keys imported anywhere.
+- Found: Flashbots Protect on Sepolia held the execution privately and never included it (few Flashbots-connected Sepolia builders), and the app waited without a timeout. Resending through the normal RPC worked. Fixes: show the transaction hash immediately with a status and a timeout, and default to the read RPC on Sepolia (Flashbots Protect stays the mainnet default).
 - The Transaction Service API has moved to `https://api.safe.global/tx-service/<network>/api/v1/...` (for Sepolia, `sep`); the per-network domains now redirect.
 - When more owners confirm than the threshold needs, does Safe{Wallet} include the extra signatures (which the guard rejects)?
 - Does Rabby's Safe integration execute with the owner's own pre-validated signature, like Safe{Wallet}?
-- Do registered proposers survive after the owner that registered them rotates out?
+- Settled, no: registered proposers do not survive rotation. A proposer registered by slot 2's owner (Transaction Service delegate, EIP-712 domain "Safe Transaction Service") proposed nonce 2 with zero owner confirmations, but once that owner rotated out the service deleted the delegate and rejected its next proposal ("not an owner or delegate"). Registering also needs an owner's off-chain signature, which exposes that key. So the rotation signer proposes itself instead: proposing signs as the proposer's own confirmation, which costs no extra exposure.
 - How quickly does the Transaction Service accept confirmations from a newly rotated-in owner?
 
 ## 11. Testing and assurance
