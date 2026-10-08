@@ -23,6 +23,7 @@ import { foundry } from "viem/chains";
 import { rotationGuardAbi, safeAbi } from "../src/index.js";
 import { guardCalls, installTx, type MetaTx } from "../src/calls.js";
 import { describeRevert } from "../src/errors.js";
+import { plainSafeTx, safeTxHash } from "../src/safetx.js";
 import { assess, readSafeState } from "../src/state.js";
 import { createTreeFile, loadTreeFile, slotConfig, stageEntries, type TreeFile } from "../src/tree.js";
 
@@ -69,6 +70,7 @@ describe("core against a local chain", { skip }, () => {
       functionName: "getTransactionHash",
       args: [tx.to, tx.value, tx.data, tx.operation, 0n, 0n, 0n, zero, zero, nonce],
     });
+    assert.equal(safeTxHash(foundry.id, safe, { ...plainSafeTx({ ...tx, nonce }) }), hash, "local SafeTx hash must match the contract");
     const ecdsa = await signer.sign({ hash });
     const preValidated = concatHex([pad(executor.address, { size: 32 }), pad("0x", { size: 32 }), "0x01"]);
     const signatures = BigInt(executor.address) < BigInt(signer.address) ? concatHex([preValidated, ecdsa]) : concatHex([ecdsa, preValidated]);
