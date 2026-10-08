@@ -386,6 +386,15 @@ Still to do:
      - 4i-4. React UI: identity header, decoded queue, one action per transaction with blocking reasons, pre-flight checklist. Done (`signer/ui`; `npm run demo -w signer` runs it locally).
      - 4i-5. End-to-end tests on a local chain with three signer instances: done (`signer/test/e2e.test.ts`), and a Sepolia run with the real Transaction Service: done.
      - 4i-6. Desktop app (Electron 44): same UI, talking to the signing process over IPC instead of HTTP (no port, no token), with a setup screen and an all-signers view. Done for seed files; Ledger in the desktop app needs the USB library rebuilt for Electron. Packaging and code signing are not done.
+   - 4j. One app for each signer, from onboarding to daily use (decided 2026-10-08). The desktop app becomes the main interface; Safe{Wallet} is an optional viewer. Each signer runs their own copy holding only their own keys; signers share only public data (chain, Transaction Service queue, slot packages).
+     - Decisions: seeds live in an encrypted vault in the app's data folder (scrypt + AES-256-GCM, password unlock each launch), with Ledger as the hardware alternative; slot packages travel by copy-paste or file; external wallets are limited to seed and Ledger (tree keys need one of them); v1 proposals cover ETH and ERC-20 transfers plus guard admin actions.
+     - Accounts: the seed's standard first account is the signer's operator account (their initial owner, which stops being an owner at install) and pays for staging and gas top-ups; tree accounts are only ever used as owners.
+     - 4j-1. Wallet vault: import or unlock, replacing seed files in the desktop app.
+     - 4j-2. Join a Safe: paste its address, check it, find the signer's slot from their operator account, generate the tree in the app (account range chosen automatically) and export a slot package.
+     - 4j-3. Coordinator install: import every slot package, check roots and bindings, propose and execute the setup from the app.
+     - 4j-4. Self-staging and gas: the app stages its own slot's next keys and tops up its current owner from the operator account, automatically when low.
+     - 4j-5. Propose in the app: transfers and guard admin, signed as the proposer's own confirmation.
+     - 4j-6. Ledger in Electron, then packaging and code signing.
    - Sepolia validation: deploy the guard, create a 2-of-3 Safe in Safe{Wallet} with three independent test signers, install through the app, and settle the open questions in section 10. Test seeds live in `.sepolia/` (gitignored, testnet only).
 5. Keeper: buffer refills and gas top-ups.
 6. Audit, then mainnet canary.
