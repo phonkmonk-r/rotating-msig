@@ -52,10 +52,32 @@ export interface JoinProgress {
 export interface DesktopState {
   vault: { exists: boolean; unlocked: boolean; operator?: string };
   configured: boolean;
+  /** A new Safe is being set up (as its creator or as an invited signer). */
+  creating: boolean;
   settings?: DesktopSettings;
   tree?: TreeSummary;
   error?: string;
 }
+
+/** A new Safe being set up, as the setup screens show it. */
+export interface CreatingView {
+  role: "creator" | "signer";
+  safe: string;
+  chainId: number;
+  chainName: string;
+  threshold: number;
+  inviteCode: string;
+  slots: { slotId: number; operator: string; isMe: boolean; received: boolean }[];
+  /** This signer's slot package, to send to the creator. */
+  myPackage?: string;
+  /** Every package is in. */
+  ready: boolean;
+  /** Creator only: the operator account's balance and a generous estimate of the gas cost, in wei. */
+  balance?: string;
+  estimatedCost?: string;
+}
+
+export type CreateStage = "deploying" | "installing" | "done" | "joining";
 
 type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -84,6 +106,14 @@ interface DesktopBridge {
   browserPreview(id: string): Promise<Result<ProposalResult>>;
   browserApprove(id: string): Promise<Result<ProposalResult>>;
   browserReject(id: string): Promise<Result<null>>;
+  creatingState(): Promise<Result<CreatingView | null>>;
+  createPlan(chainId: number, coSigners: string[], threshold: number): Promise<Result<true>>;
+  createAccept(code: string): Promise<Result<true>>;
+  createAdd(code: string): Promise<Result<number>>;
+  createLaunch(): Promise<Result<true>>;
+  createCheck(): Promise<Result<boolean>>;
+  createCancel(): Promise<Result<true>>;
+  onCreateStage(listener: (stage: CreateStage) => void): () => void;
   onBrowserState(listener: (state: BrowserState) => void): () => void;
   onBrowserRequest(listener: (request: DappRequest | null) => void): () => void;
 }
@@ -155,6 +185,14 @@ export const desktop = bridge
       unlock: (password: string) => unwrap(bridge.unlock(password)),
       lock: () => unwrap(bridge.lock()),
       reset: () => unwrap(bridge.reset()),
+      creatingState: () => unwrap(bridge.creatingState()),
+      createPlan: (chainId: number, coSigners: string[], threshold: number) => unwrap(bridge.createPlan(chainId, coSigners, threshold)),
+      createAccept: (code: string) => unwrap(bridge.createAccept(code)),
+      createAdd: (code: string) => unwrap(bridge.createAdd(code)),
+      createLaunch: () => unwrap(bridge.createLaunch()),
+      createCheck: () => unwrap(bridge.createCheck()),
+      createCancel: () => unwrap(bridge.createCancel()),
+      onCreateStage: (listener: (stage: CreateStage) => void) => bridge.onCreateStage(listener),
     }
   : undefined;
 

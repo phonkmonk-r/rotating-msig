@@ -5,6 +5,7 @@ import { useSignerData } from "./data";
 import { short } from "./format";
 import { IconGlobe, IconLock, IconOverview, IconRefresh, IconSettings, IconSigners, IconTransactions, Logo } from "./icons";
 import { JoinSafe } from "./JoinSafe";
+import { Setup } from "./Setup";
 import { Browse } from "./pages/Browse";
 import { Overview } from "./pages/Overview";
 import { Settings } from "./pages/Settings";
@@ -62,6 +63,20 @@ export function App() {
     );
   }
   if (!desktopState.configured || changingSafe) {
+    if (!pendingSafe) {
+      return (
+        <AuthLayout>
+          <Setup
+            state={desktopState}
+            onDone={() => {
+              setChangingSafe(false);
+              void reload();
+            }}
+            onCancel={desktopState.configured ? () => setChangingSafe(false) : undefined}
+          />
+        </AuthLayout>
+      );
+    }
     return (
       <AuthLayout>
         <JoinSafe

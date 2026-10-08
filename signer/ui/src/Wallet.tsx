@@ -6,7 +6,7 @@ import { Avatar } from "./ui";
 
 const MIN_PASSWORD = 10;
 
-/** First launch: seed, Safe and password. Everything else is worked out by the app. */
+/** First launch: seed, password and, when joining an existing Safe, its address. Everything else is worked out by the app. */
 export function ImportWallet({ onDone }: { onDone: (safe: string) => void }) {
   const [mnemonic, setMnemonic] = useState("");
   const [safe, setSafe] = useState("");
@@ -16,7 +16,7 @@ export function ImportWallet({ onDone }: { onDone: (safe: string) => void }) {
   const [working, setWorking] = useState(false);
 
   const words = mnemonic.trim() === "" ? 0 : mnemonic.trim().split(/\s+/).length;
-  const validSafe = /^0x[0-9a-fA-F]{40}$/.test(safe.trim());
+  const validSafe = safe.trim() === "" || /^0x[0-9a-fA-F]{40}$/.test(safe.trim());
   const mismatch = confirm !== "" && confirm !== password;
   const ready = (words === 12 || words === 24) && validSafe && password.length >= MIN_PASSWORD && password === confirm && !working;
 
@@ -55,8 +55,10 @@ export function ImportWallet({ onDone }: { onDone: (safe: string) => void }) {
       </label>
 
       <label className="field">
-        <span className="field-label">Safe address</span>
-        <input placeholder="0x…" spellCheck={false} value={safe} onChange={(e) => setSafe(e.target.value)} />
+        <span className="field-label">
+          Safe address <span className="muted">optional</span>
+        </span>
+        <input placeholder="Leave empty to create a Safe or use an invite" spellCheck={false} value={safe} onChange={(e) => setSafe(e.target.value)} />
         {safe !== "" && !validSafe && <span className="field-error">Not a valid address</span>}
       </label>
 

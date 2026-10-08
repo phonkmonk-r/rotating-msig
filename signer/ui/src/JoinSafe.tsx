@@ -16,7 +16,7 @@ function explain(message: string): string {
   const detail = rest.join(": ");
   switch (kind) {
     case "not-installed":
-      return "This Safe doesn't have rotation set up yet. New-Safe setup is coming to the app; for now, install it with the Safe App.";
+      return "This Safe doesn't have rotation set up yet. If someone is creating it with you, go back and use their invite.";
     case "not-owner":
       return "This seed isn't a signer of this Safe. Check the seed phrase and the address.";
     case "no-safe":

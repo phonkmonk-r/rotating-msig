@@ -13,11 +13,20 @@ npm run build
 npm run desktop -w signer
 ```
 
-On first launch, enter your seed phrase, the Safe's address and a password. That is all. The seed is encrypted (scrypt and AES-256-GCM) into the app's data folder, and the app then works out the rest itself:
+On first launch, enter your seed phrase, a password and, to join an existing Safe, its address. That is all. The seed is encrypted (scrypt and AES-256-GCM) into the app's data folder, and the app then works out the rest itself:
 
 - the network (it looks for the Safe on Ethereum and Sepolia),
 - which signer you are, by matching the key your seed holds at each slot's current tree index against the slot's on-chain owner, so it works however many times you have already signed,
 - your rotation keys, rebuilt from the seed and checked against the root committed on-chain.
+
+To start a new Safe instead, leave the Safe address empty and choose **Create a new Safe**:
+
+1. Every signer opens the app with their own seed and sends the creator their signer address (shown on the setup screen).
+2. The creator enters the addresses and the number of signatures needed, and gets an invite code to send to everyone.
+3. Each signer chooses **I have an invite** and pastes it. Their app checks it, generates their keys for that Safe and shows a slot package (addresses and proofs only) to send back.
+4. The creator pastes each package and clicks **Create Safe**. Their signer address pays the gas for two transactions: creating the Safe, then installing rotation. Each signer's app then connects by itself.
+
+After joining, every signer should check on Overview and Signers that their slot and the threshold are what was agreed, before anyone funds the Safe: the creator installs alone.
 
 It reads the chain through public RPCs; Advanced lets you set your own RPC, an execution RPC, or pin the network. Each later launch asks only for the password. Settings changes the Safe, and Lock clears the key from memory.
 

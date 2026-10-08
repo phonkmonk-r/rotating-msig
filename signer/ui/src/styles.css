@@ -1346,3 +1346,107 @@ button.link {
   font-weight: 600;
   text-decoration: underline;
 }
+
+/* ---------- Setup: create or join ---------- */
+
+.auth-card.wide {
+  max-width: 580px;
+}
+
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.choice {
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 14px 16px;
+  text-align: left;
+}
+
+.choice-title {
+  font-weight: 650;
+}
+
+.operator-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.signer-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.signer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+}
+
+.signer-row input {
+  flex: 1;
+}
+
+.signer-row .grow {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slot-number {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.add-row {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.copy-box {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.copy-box code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 9px 12px;
+  border-radius: 9px;
+  background: var(--surface-2);
+  font-size: 12px;
+}
+
+.copy-box button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}

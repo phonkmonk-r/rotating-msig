@@ -1,13 +1,26 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { loadTreeFile, type TreeFile } from "@rotating-msig/core";
+import {
+  decodeInvite,
+  decodePackage,
+  encodeInvite,
+  encodePackage,
+  loadTreeFile,
+  readSafeState,
+  verifyPackages,
+  type SafeInvite,
+  type SlotPackage,
+  type TreeFile,
+} from "@rotating-msig/core";
 import { seedSource, type AddressSource } from "@rotating-msig/keys";
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { isHex, type Hex } from "viem";
 
 import { createSession } from "../src/create.js";
-import { JoinError, joinSafe, type JoinProgress } from "../src/join.js";
+import { JoinError, joinSafe, readClient, type JoinProgress } from "../src/join.js";
+import { chainFor } from "../src/networks.js";
+import { createSafe, planSafe, prepareSlot, type NewSafeContext } from "../src/newsafe.js";
 import type { SignerSession } from "../src/session.js";
 import { DappBrowser, type Bounds } from "./browser.js";
 import { createVault, readVault, unlockVault } from "./vault.js";
@@ -46,6 +59,7 @@ const appRoot = () => app.getAppPath();
 if (process.env.ROTATION_SIGNER_USER_DATA) app.setPath("userData", process.env.ROTATION_SIGNER_USER_DATA);
 const settingsPath = () => join(app.getPath("userData"), "settings.json");
 const vaultPath = () => join(app.getPath("userData"), "vault.json");
+const creatingPath = () => join(app.getPath("userData"), "creating.json");
 const treePath = (settings: Pick<Settings, "chainId" | "safe" | "slotId">) =>
   join(app.getPath("userData"), "trees", `${settings.chainId}-${settings.safe.toLowerCase()}-slot${settings.slotId}.json`);
 
@@ -146,6 +160,157 @@ async function joinWith(safe: string, advanced: Advanced, sendProgress: (progres
   writeFileSync(settingsPath(), JSON.stringify(settings, null, 2));
 }
 
+/** A new Safe being set up: kept on disk so either side can close the app between steps. */
+interface Creating {
+  role: "creator" | "signer";
+  invite: SafeInvite;
+  /** Indexed by slot; the creator collects all of them, a signer holds only their own. */
+  packages: (SlotPackage | null)[];
+}
+
+/** Rough gas for deploying a Safe and installing the guard, per the Sepolia runs (install grows with slots). */
+const CREATE_GAS = 600_000n;
+const INSTALL_GAS_PER_SLOT = 1_600_000n;
+
+function readCreating(): Creating | undefined {
+  try {
+    return JSON.parse(readFileSync(creatingPath(), "utf8")) as Creating;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeCreating(creating: Creating | undefined) {
+  if (!creating) {
+    rmSync(creatingPath(), { force: true });
+    return;
+  }
+  mkdirSync(dirname(creatingPath()), { recursive: true });
+  writeFileSync(creatingPath(), JSON.stringify(creating, null, 2));
+}
+
+function operator(): string | undefined {
+  try {
+    return readVault(vaultPath())?.operator;
+  } catch {
+    return undefined;
+  }
+}
+
+function newSafeContext(chainId: number): NewSafeContext {
+  return { client: readClient(chainId, readSettings()?.rpc), chain: chainFor(chainId) };
+}
+
+/** What the setup screens show about a Safe being created. */
+function creatingView(creating: Creating) {
+  const me = operator()?.toLowerCase();
+  const mySlot = creating.invite.owners.findIndex((owner) => owner.toLowerCase() === me);
+  const mine = creating.packages[mySlot];
+  return {
+    role: creating.role,
+    safe: creating.invite.safe,
+    chainId: creating.invite.chainId,
+    chainName: chainFor(creating.invite.chainId).name,
+    threshold: creating.invite.threshold,
+    inviteCode: encodeInvite(creating.invite),
+    slots: creating.invite.owners.map((owner, slotId) => ({ slotId, operator: owner, isMe: slotId === mySlot, received: Boolean(creating.packages[slotId]) })),
+    myPackage: mine ? encodePackage(mine) : undefined,
+    ready: creating.packages.length === creating.invite.owners.length && creating.packages.every(Boolean),
+  };
+}
+
+/** Generates this signer's keys for the invite's Safe and saves the tree where joining will look for it. */
+async function prepareMySlot(invite: SafeInvite): Promise<SlotPackage> {
+  if (!source) throw new Error("unlock your wallet first");
+  const { tree, package: pkg } = await prepareSlot(newSafeContext(invite.chainId), source, invite, (done, total) =>
+    sendToWindow("app:progress", { stage: "deriving", done, total }),
+  );
+  const path = treePath({ chainId: tree.chainId, safe: tree.safe, slotId: tree.slotId });
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(tree));
+  return pkg;
+}
+
+handle("create:state", async () => {
+  const creating = readCreating();
+  if (!creating) return null;
+  const view = creatingView(creating);
+  if (creating.role !== "creator") return { ...view, balance: undefined, estimatedCost: undefined };
+  try {
+    const { client } = newSafeContext(creating.invite.chainId);
+    const [balance, gasPrice] = await Promise.all([client.getBalance({ address: operator() as `0x${string}` }), client.getGasPrice()]);
+    const gas = CREATE_GAS + INSTALL_GAS_PER_SLOT * BigInt(creating.invite.owners.length);
+    return { ...view, balance: balance.toString(), estimatedCost: ((gas * gasPrice * 3n) / 2n).toString() };
+  } catch {
+    return { ...view, balance: undefined, estimatedCost: undefined };
+  }
+});
+
+handle("create:plan", async (chainId: unknown, coSigners: unknown, threshold: unknown) => {
+  const me = operator();
+  if (!me || !source) throw new Error("unlock your wallet first");
+  const others = Array.isArray(coSigners) ? coSigners.map((value) => String(value).trim()) : [];
+  const invite = await planSafe(newSafeContext(Number(chainId)), [me, ...others], Number(threshold));
+  const pkg = await prepareMySlot(invite);
+  writeCreating({ role: "creator", invite, packages: invite.owners.map((_, slot) => (slot === pkg.slotId ? pkg : null)) });
+  return true;
+});
+
+handle("create:accept", async (code: unknown) => {
+  const invite = decodeInvite(String(code));
+  const pkg = await prepareMySlot(invite);
+  writeCreating({ role: "signer", invite, packages: invite.owners.map((_, slot) => (slot === pkg.slotId ? pkg : null)) });
+  return true;
+});
+
+handle("create:add", (code: unknown) => {
+  const creating = readCreating();
+  if (creating?.role !== "creator") throw new Error("there is no Safe being created");
+  const pkg = decodePackage(String(code));
+  if (!Number.isInteger(pkg.slotId) || pkg.slotId < 0 || pkg.slotId >= creating.invite.owners.length) throw new Error("this package is for a slot this Safe does not have");
+  const trial = creating.invite.owners.map((_, slot) => (slot === pkg.slotId ? pkg : (creating.packages[slot] ?? null)));
+  const prefix = `slot ${pkg.slotId}:`;
+  const errors = verifyPackages(creating.invite, trial as SlotPackage[]).filter((error) => error.startsWith(prefix) && !error.endsWith("missing"));
+  if (errors.length > 0) throw new Error(errors.map((error) => error.slice(prefix.length).trim()).join("; "));
+  creating.packages = trial;
+  writeCreating(creating);
+  return pkg.slotId;
+});
+
+handle("create:launch", async () => {
+  const creating = readCreating();
+  if (creating?.role !== "creator") throw new Error("there is no Safe being created");
+  if (!source) throw new Error("unlock your wallet first");
+  const { invite } = creating;
+  const state = await readSafeState(newSafeContext(invite.chainId).client, invite.safe).catch(() => undefined);
+  if (!state?.installed) {
+    await createSafe(newSafeContext(invite.chainId), source, invite, creating.packages as SlotPackage[], (stage) => sendToWindow("create:stage", stage));
+  }
+  sendToWindow("create:stage", "joining");
+  await joinWith(invite.safe, { chainId: invite.chainId }, (progress) => sendToWindow("app:progress", progress));
+  writeCreating(undefined);
+  return true;
+});
+
+/** A signer waiting for the creator: joins once the Safe exists with the guard installed. */
+handle("create:check", async () => {
+  const creating = readCreating();
+  if (!creating) throw new Error("there is no Safe being created");
+  const { invite } = creating;
+  const client = newSafeContext(invite.chainId).client;
+  if (!(await client.getCode({ address: invite.safe }))) return false;
+  const state = await readSafeState(client, invite.safe);
+  if (!state.installed) return false;
+  await joinWith(invite.safe, { chainId: invite.chainId }, (progress) => sendToWindow("app:progress", progress));
+  writeCreating(undefined);
+  return true;
+});
+
+handle("create:cancel", () => {
+  writeCreating(undefined);
+  return true;
+});
+
 handle("app:state", () => {
   const settings = readSettings();
   let tree: TreeSummary | undefined;
@@ -168,6 +333,7 @@ handle("app:state", () => {
       ? { safe: settings.safe, chainId: settings.chainId, slotId: settings.slotId, rpc: settings.rpc ?? "", executionRpc: settings.executionRpc ?? "" }
       : undefined,
     tree,
+    creating: readCreating() !== undefined,
     error: sessionError,
   };
 });
