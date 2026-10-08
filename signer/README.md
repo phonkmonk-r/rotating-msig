@@ -64,7 +64,7 @@ It prints a link like `http://127.0.0.1:7373/#token=…`. Open it; that is your 
 
 ### Gas
 
-Your seed's first account is your gas account: it pays for every execution, so your rotation keys never need ETH. When you execute, the app sends your current key exactly the gas it needs, executes, and once the transaction is mined returns everything left on that key to the gas account, leaving the retired key empty. Confirming costs nothing. Keep some ETH in the gas account; Overview shows its balance and warns when it runs low.
+Your seed's first account is your gas account: it pays for every execution, so your rotation keys never need ETH. When you execute, the app sends your current key exactly the gas it needs, executes, and once the transaction is mined returns everything left on that key to the gas account, leaving the retired key empty (or with a fraction of a gwei). Confirming costs nothing. Keep some ETH in the gas account; Overview shows its balance and warns when it runs low.
 
 ## What it enforces
 

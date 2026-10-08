@@ -9,6 +9,7 @@ import {
   preValidatedSignature,
   readSafeState,
   plainSafeTx,
+  rotationGuardAbi,
   safeTxHash,
   safeTxTypedData,
   type Action,
@@ -28,6 +29,8 @@ import {
   formatEther,
   getAddress,
   http,
+  isAddressEqual,
+  parseEventLogs,
   isAddress,
   numberToHex,
   toEventSelector,
@@ -531,11 +534,11 @@ export class SignerSession {
     if (receipt) {
       record.gasUsed = receipt.gasUsed.toString();
       if (receipt.status === "success") {
-        const after = await readSafeState(this.options.publicClient, before.safe);
         record.status = "success";
-        record.rotated = before.slots
-          .map((slot) => ({ slotId: slot.slotId, from: slot.owner, to: after.slots.find((s) => s.slotId === slot.slotId)?.owner ?? slot.owner }))
-          .filter((change) => change.from !== change.to);
+        // From the receipt's own logs: a load-balanced RPC may not have caught up with the receipt's block yet.
+        record.rotated = parseEventLogs({ abi: rotationGuardAbi, eventName: "OwnerRotated", logs: receipt.logs })
+          .filter((log) => isAddressEqual(log.args.safe, before.safe))
+          .map((log) => ({ slotId: Number(log.args.slotId), from: log.args.oldOwner, to: log.args.newOwner }));
         record.message = undefined;
       } else {
         record.status = "reverted";
