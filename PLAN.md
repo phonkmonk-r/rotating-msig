@@ -1,6 +1,30 @@
 # Rotating Multisig: Plan
 
-Status: planning. Last updated 2026-10-07.
+Status: phases 1-3 done, phase 4 (Safe App) in progress. Last updated 2026-10-08.
+
+## 0. Progress
+
+| Phase | State | Where |
+|---|---|---|
+| 1. Spec and threat model | Done | this file |
+| 2. Contracts | Done, pending external audit | `src/`, `test/` (127 Solidity tests: unit, mainnet fork, fuzz, invariants, gas budgets; mutation-tested) |
+| 3. Generator CLI | Done; Ledger mode still needs one run on a real device | `generator/` (26 TypeScript tests), cross-checked by `test/GeneratorVector.t.sol` |
+| Demo | Done | `demo/run.sh`: Anvil mainnet fork, real Safe 1.5.0 contracts, 2-of-3 Safe rotating through generated trees |
+| 4. Safe App | In progress | `app/`, `packages/core/` (see section 12) |
+| 5-8 | Not started | |
+
+How to run everything:
+
+- `forge test`: Solidity suite. Fork tests read `MAINNET_RPC_URL` from `.env` (gitignored) and skip without it.
+- `cd generator && npm test`: TypeScript suite.
+- `./demo/run.sh` (`KEEP=1` to leave Anvil running): end-to-end rotation on a local mainnet fork.
+
+Findings that changed the design during implementation:
+
+- Re-committing an old tree at a low index would bring back already-exposed owners. Fixed with a per-root consumed-index mark (section 6). Found by the invariant suite.
+- Without `to == safe`, any transaction carrying `setGuard(0)` calldata would bypass rotation. The check was already present; mutation testing showed no test pinned it, now one does.
+- Measured rotation overhead is 65-82k gas per signer, not the 40-50k first estimated (section 6).
+- Addresses depend only on the seed and account index, not on the Safe, so every Safe needs its own unused `--base` range (`generator/README.md`).
 
 ## 1. Background and threat model
 
@@ -250,7 +274,15 @@ Having the Guard pull the gas top-up from the Safe automatically during rotation
 5. Exposure tracker: scans Transaction Service confirmations, message signatures, `ApproveHash` events, owner EOA nonces and the signers of any escape-hatch tx; computes exposed-but-not-rotated owners; warns at threshold-2, blocks at threshold-1; offers one-click `forceRotate`.
 6. Executor flow: simulate, check that every signer has a staged next owner with gas, warn if the executor already confirmed off-chain, then broadcast through a private revert-protected RPC.
 7. Admin: add or remove a signer, replace a root, force-rotate all, remove the guard (escape hatch).
-8. `approveHash` watch: an owner calling `approveHash` on-chain exposes their key, and the guard never sees it. The tracker must flag such owners and offer `forceRotate`.
+
+### Architecture
+
+- Runs as a Safe App inside Safe{Wallet} (Safe Apps SDK). Transactions are proposed into the Safe{Wallet} queue with `sdk.txs.send`, so owners confirm and execute in the normal Safe UI. The app never holds keys.
+- Also runs standalone, read-only, against any RPC and Safe address. This is how it is developed and tested against the Anvil demo, since Safe{Wallet} cannot load a local chain.
+- Shared logic lives in `packages/core` (npm workspace): the tree format, leaf and proof code moved out of the generator, the RotationGuard ABI, read helpers and calldata builders. The generator and app both depend on it, so there is one implementation of the leaf.
+- Tree files come from an upload or from IPFS, using the CID in the `SlotConfigured` event. They are verified on load (root rebuilt from addresses) and against the on-chain root.
+- Pending transactions and confirmations come from the Safe Transaction Service API.
+- The executor flow cannot choose the RPC Safe{Wallet} broadcasts through. It runs the pre-flight checks and tells the executor to point their wallet at a private, revert-protected RPC (for example Flashbots Protect) before executing.
 
 ## 11. Testing and assurance
 
@@ -285,7 +317,15 @@ Still to do:
 1. Spec and threat model (this document).
 2. Contracts: RotationGuard, Foundry tests, fuzz and invariant suite. Done, pending audit.
 3. Generator CLI (TypeScript): both modes, tree file format, shared leaf and proof library. Done in `generator/`, cross-checked against the contract.
-4. Safe App: setup, dashboard, staging, exposure tracker, executor flow, admin.
+4. Safe App: setup, dashboard, staging, exposure tracker, executor flow, admin. In progress, in milestones:
+   - 4a. `packages/core`: shared tree code, guard ABI, read helpers and calldata builders, tested against the Anvil demo.
+   - 4b. App shell: Vite + React + TypeScript, Safe Apps SDK connection, standalone read-only mode.
+   - 4c. Dashboard: slots, owners, tree progress, buffers, owner gas, keeper balance, warnings.
+   - 4d. Setup wizard: load tree files, check roots, propose the install batch.
+   - 4e. Staging: refill buffers from tree files, from a non-owner wallet or inside a batch.
+   - 4f. Exposure tracker: Transaction Service confirmations, `ApproveHash` events, owner nonces, escape-hatch signers; one-click `forceRotate`.
+   - 4g. Executor pre-flight: simulate the next transaction with the executor's signature, check buffers and gas, warn on prior confirmation, point to a private RPC.
+   - 4h. Admin: add or remove a slot, replace a root, skip indexes, escape hatch.
 5. Keeper: buffer refills and gas top-ups.
 6. Audit, then mainnet canary.
 7. Hash-based EIP-1271 co-signer (path out of bunker mode).
