@@ -61,8 +61,11 @@ export interface SessionOptions {
 
 export const DEFAULT_EXECUTION_TIMEOUT_MS = 180_000;
 
-/** Gas for a plain ETH transfer, used by the sweep. */
-const TRANSFER_GAS = 21_000n;
+/**
+ * Gas set aside for the sweep when funding. Plain transfers are not always 21,000 gas (Sepolia's repricing charges
+ * more for some recipients), so the sweep itself estimates its exact cost.
+ */
+const SWEEP_GAS_ALLOWANCE = 60_000n;
 /** An execution's gas allowance for warning when the operator account runs low. */
 const EXECUTION_GAS_ALLOWANCE = 1_000_000n;
 /** How long the sweep keeps waiting for an execution that is not mined yet. */
@@ -417,7 +420,7 @@ export class SignerSession {
 
       const gasLimit = (gas * 12n) / 10n;
       const fees = await publicClient.estimateFeesPerGas();
-      const funding = this.options.gasFunding ? await this.fund(from, (gasLimit + TRANSFER_GAS) * fees.maxFeePerGas) : undefined;
+      const funding = this.options.gasFunding ? await this.fund(from, (gasLimit + SWEEP_GAS_ALLOWANCE) * fees.maxFeePerGas) : undefined;
 
       const wallet = createWalletClient({ account: owner.account, chain, transport: http(executionRpcUrl) });
       const transactionHash = await wallet.sendTransaction({
@@ -450,8 +453,13 @@ export class SignerSession {
     if (balance >= needed) return undefined;
     const amount = needed - balance;
     const operator = await source.signer(OPERATOR_ACCOUNT);
-    const [operatorBalance, gasPrice] = await Promise.all([publicClient.getBalance({ address: operator.address }), publicClient.getGasPrice()]);
-    const required = amount + TRANSFER_GAS * gasPrice * 2n;
+    // Funding a never-used key creates its account, which some networks price far above 21,000 gas.
+    const [operatorBalance, gasPrice, transferGas] = await Promise.all([
+      publicClient.getBalance({ address: operator.address }),
+      publicClient.getGasPrice(),
+      publicClient.estimateGas({ account: operator.address, to: key, value: 1n }).catch(() => 250_000n),
+    ]);
+    const required = amount + transferGas * gasPrice * 2n;
     if (operatorBalance < required) {
       throw new Error(`your gas account ${operator.address} needs about ${formatEther(required)} ETH for this execution and holds ${formatEther(operatorBalance)}; nothing was sent`);
     }
@@ -485,24 +493,30 @@ export class SignerSession {
   }
 
   /**
-   * Sends everything `key` holds to the operator account. A legacy transaction at a fixed gas price costs exactly
-   * 21,000 × price, so the key is left at zero.
+   * Sends everything `key` holds to the operator account. A legacy transaction with its gas limit set to the estimate
+   * costs exactly limit × price, so the key is left at zero. Waits for the transfer and reports a revert as a failure.
    */
   private async sweep(key: LocalAccount, sweep: NonNullable<Execution["sweep"]>): Promise<void> {
     const { publicClient, chain, source } = this.options;
-    const [balance, gasPrice, operator] = await Promise.all([
+    const operator = await source.address(OPERATOR_ACCOUNT);
+    const [balance, gasPrice, gas] = await Promise.all([
       publicClient.getBalance({ address: key.address }),
       publicClient.getGasPrice().then((price) => (price * 12n) / 10n),
-      source.address(OPERATOR_ACCOUNT),
+      publicClient.estimateGas({ account: key.address, to: operator, value: 1n }),
     ]);
-    const cost = TRANSFER_GAS * gasPrice;
+    const cost = gas * gasPrice;
     if (balance <= cost) {
       sweep.status = "nothing";
       return;
     }
     const wallet = createWalletClient({ account: key, chain, transport: custom(publicClient) });
     const amount = balance - cost;
-    const hash = await wallet.sendTransaction({ to: operator, value: amount, gas: TRANSFER_GAS, gasPrice, type: "legacy", chain });
+    const hash = await wallet.sendTransaction({ to: operator, value: amount, gas, gasPrice, type: "legacy", chain });
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success") {
+      Object.assign(sweep, { status: "failed", transactionHash: hash, message: "the transfer back to your gas account reverted" });
+      return;
+    }
     Object.assign(sweep, { status: "sent", transactionHash: hash, amount: amount.toString() });
   }
 
