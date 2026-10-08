@@ -9,11 +9,13 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json && vite build ui",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p ui/tsconfig.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p ui/tsconfig.json && tsc --noEmit -p desktop/tsconfig.json",
     "test": "node --conditions=source --import tsx --test test/*.test.ts",
     "start": "tsx --conditions=source src/cli.ts",
     "ui": "vite ui",
-    "demo": "tsx --conditions=source scripts/local-demo.ts"
+    "demo": "tsx --conditions=source scripts/local-demo.ts",
+    "desktop:build": "tsc -p desktop/tsconfig.json && vite build ui",
+    "desktop": "npm run desktop:build && electron ."
   },
   "dependencies": {
     "@rotating-msig/core": "0.1.0",
@@ -25,10 +27,12 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.1",
+    "electron": "44.4.5",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vite": "8.3.1"
-  }
+  },
+  "main": "dist-desktop/desktop/main.js"
 }

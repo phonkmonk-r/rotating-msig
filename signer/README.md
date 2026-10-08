@@ -4,7 +4,20 @@ Confirms and executes Safe transactions with your **current** rotation key, so y
 
 Safe{Wallet} stays where transactions are created and the queue is viewed. This tool only does the two steps that need your key: confirm, and execute.
 
-## Run
+## Desktop app
+
+```sh
+# From the repository root
+npm install
+npm run build
+npm run desktop -w signer
+```
+
+On first launch, choose your tree file and your seed phrase file and enter an RPC URL. The app checks your key against the chain before saving. It remembers the file paths and RPC, never the seed itself; Settings changes them later.
+
+The window runs the same UI as the command-line version, but talks to the signing process directly instead of through a local web server, so there is no port and no session token. It is isolated from Node, sandboxed, and opens explorer links in your browser. Ledger signing is available in the command-line version; the desktop app supports seed files for now (the Ledger USB library has to be rebuilt for Electron first).
+
+## Command line
 
 ```sh
 # From the repository root

@@ -384,7 +384,8 @@ Still to do:
      - 4i-2. `packages/keys`: seed and Ledger sources shared with the generator; resolve the current owner key from tree file and chain.
      - 4i-3. Local server and JSON API (status, queue, confirm, execute) with token, Host check and private-RPC execution. Done, with the `rotation-signer` CLI (Flashbots Protect by default).
      - 4i-4. React UI: identity header, decoded queue, one action per transaction with blocking reasons, pre-flight checklist. Done (`signer/ui`; `npm run demo -w signer` runs it locally).
-     - 4i-5. End-to-end tests on a local chain with three signer instances: done (`signer/test/e2e.test.ts`). Next: a Sepolia run with the real Transaction Service.
+     - 4i-5. End-to-end tests on a local chain with three signer instances: done (`signer/test/e2e.test.ts`), and a Sepolia run with the real Transaction Service: done.
+     - 4i-6. Desktop app (Electron 44): same UI, talking to the signing process over IPC instead of HTTP (no port, no token), with a setup screen and an all-signers view. Done for seed files; Ledger in the desktop app needs the USB library rebuilt for Electron. Packaging and code signing are not done.
    - Sepolia validation: deploy the guard, create a 2-of-3 Safe in Safe{Wallet} with three independent test signers, install through the app, and settle the open questions in section 10. Test seeds live in `.sepolia/` (gitignored, testnet only).
 5. Keeper: buffer refills and gas top-ups.
 6. Audit, then mainnet canary.

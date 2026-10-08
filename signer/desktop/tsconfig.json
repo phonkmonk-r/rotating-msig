@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "outDir": "../dist-desktop",
+    "noEmit": false
+  },
+  "include": ["main.ts"]
+}

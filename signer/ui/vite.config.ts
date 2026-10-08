@@ -4,6 +4,8 @@ import { defineConfig } from "vite";
 export default defineConfig({
   root: __dirname,
   plugins: [react()],
+  // Relative asset paths: the same build is served by the CLI over HTTP and loaded from disk by the desktop app.
+  base: "./",
   build: { outDir: "dist", emptyOutDir: true },
   server: {
     port: 5174,

@@ -2,10 +2,59 @@ import type { Execution, QueueItem, SignerView, StatusView } from "../../src/ses
 
 export type { Execution, QueueItem, SignerView, StatusView };
 
+export interface TreeSummary {
+  safe: string;
+  chainId: number;
+  slotId: number;
+  size: number;
+  base: number;
+}
+
+export interface DesktopSettings {
+  treePath: string;
+  seedPath: string;
+  rpc: string;
+  executionRpc: string;
+}
+
+export interface DesktopState {
+  configured: boolean;
+  settings?: DesktopSettings;
+  tree?: TreeSummary;
+  error?: string;
+}
+
+type Result<T> = { ok: true; value: T } | { ok: false; error: string };
+
+/** The desktop app's preload bridge (`desktop/preload.cjs`); absent when the UI runs in a browser from the CLI. */
+interface DesktopBridge {
+  state(): Promise<Result<DesktopState>>;
+  pickTree(): Promise<Result<{ path: string; tree: TreeSummary } | undefined>>;
+  pickSeed(): Promise<Result<{ path: string } | undefined>>;
+  configure(settings: DesktopSettings): Promise<Result<true>>;
+  reset(): Promise<Result<true>>;
+  status(): Promise<Result<StatusView>>;
+  queue(): Promise<Result<QueueItem[]>>;
+  confirm(hash: string): Promise<Result<{ owner: string }>>;
+  execute(hash: string): Promise<Result<Execution>>;
+  execution(hash: string): Promise<Result<Execution>>;
+}
+
+const bridge = (window as unknown as { signer?: DesktopBridge }).signer;
+
+export const isDesktop = bridge !== undefined;
+
+async function unwrap<T>(result: Promise<Result<T>>): Promise<T> {
+  const settled = await result;
+  if (!settled.ok) throw new Error(settled.error);
+  return settled.value;
+}
+
 const TOKEN_KEY = "rotation-signer-token";
 
-/** Takes the session token from the URL fragment once, then keeps it for this tab only. */
+/** Browser mode only: takes the session token from the URL fragment once, then keeps it for this tab. */
 function sessionToken(): string {
+  if (isDesktop) return "";
   const match = window.location.hash.match(/token=([\w-]+)/);
   if (match?.[1]) {
     try {
@@ -25,19 +74,33 @@ function sessionToken(): string {
 
 const token = sessionToken();
 
-export const hasToken = token !== "";
+/** Whether the UI can reach a signer: through the desktop bridge, or with a session token from the CLI. */
+export const canConnect = isDesktop || token !== "";
 
-async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function http<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { ...init, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" } });
   const body = (await response.json().catch(() => ({}))) as { error?: string };
   if (!response.ok) throw new Error(body.error ?? `${response.status} ${response.statusText}`);
   return body as T;
 }
 
+const post = (safeTxHash: string) => ({ method: "POST", body: JSON.stringify({ safeTxHash }) });
+
 export const api = {
-  status: () => call<StatusView>("/api/status"),
-  queue: () => call<QueueItem[]>("/api/queue"),
-  confirm: (safeTxHash: string) => call<{ owner: string }>("/api/confirm", { method: "POST", body: JSON.stringify({ safeTxHash }) }),
-  execute: (safeTxHash: string) => call<Execution>("/api/execute", { method: "POST", body: JSON.stringify({ safeTxHash }) }),
-  execution: (transactionHash: string) => call<Execution>(`/api/executions/${transactionHash}`),
+  status: () => (bridge ? unwrap(bridge.status()) : http<StatusView>("/api/status")),
+  queue: () => (bridge ? unwrap(bridge.queue()) : http<QueueItem[]>("/api/queue")),
+  confirm: (hash: string) => (bridge ? unwrap(bridge.confirm(hash)) : http<{ owner: string }>("/api/confirm", post(hash))),
+  execute: (hash: string) => (bridge ? unwrap(bridge.execute(hash)) : http<Execution>("/api/execute", post(hash))),
+  execution: (hash: string) => (bridge ? unwrap(bridge.execution(hash)) : http<Execution>(`/api/executions/${hash}`)),
 };
+
+/** Desktop-only calls; never used in browser mode. */
+export const desktop = bridge
+  ? {
+      state: () => unwrap(bridge.state()),
+      pickTree: () => unwrap(bridge.pickTree()),
+      pickSeed: () => unwrap(bridge.pickSeed()),
+      configure: (settings: DesktopSettings) => unwrap(bridge.configure(settings)),
+      reset: () => unwrap(bridge.reset()),
+    }
+  : undefined;

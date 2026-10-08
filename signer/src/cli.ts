@@ -3,26 +3,16 @@ import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
-import { loadTreeFile, SEPOLIA_CHAIN_ID, TxService, type TreeFile } from "@rotating-msig/core";
+import { loadTreeFile, type TreeFile } from "@rotating-msig/core";
 import { openLedgerSource, readSecret, seedSource, type AddressSource } from "@rotating-msig/keys";
-import { createPublicClient, formatEther, http, type Chain, type PublicClient } from "viem";
-import { mainnet, sepolia } from "viem/chains";
+import { formatEther, type Chain } from "viem";
 
+import { chainFor, createSession, DEFAULT_EXECUTION_RPC } from "./create.js";
 import { serve } from "./server.js";
-import { SignerSession } from "./session.js";
+
+export { DEFAULT_EXECUTION_RPC };
 
 export const DEFAULT_PORT = 7373;
-
-/**
- * Mainnet executions default to Flashbots Protect: private, and it drops transactions that would revert instead of
- * mining them. Sepolia defaults to the read RPC: Flashbots Protect accepts Sepolia transactions but few builders
- * include them, so executions hang (seen on 2026-10-08).
- */
-export const DEFAULT_EXECUTION_RPC: Record<number, string> = {
-  1: "https://rpc.flashbots.net",
-};
-
-const CHAINS: Record<number, Chain> = { 1: mainnet, [SEPOLIA_CHAIN_ID]: sepolia };
 
 const USAGE = `rotation-signer: confirm and execute Safe transactions with your current rotation key
 
@@ -65,8 +55,7 @@ export function parseConfig(argv: string[], env: NodeJS.ProcessEnv = process.env
   if (values.help) return "help";
   if (!values.tree) throw new Error("--tree is required");
   const tree = loadTreeFile(readFileSync(values.tree, "utf8")).file;
-  const chain = CHAINS[tree.chainId];
-  if (!chain) throw new Error(`the tree is for chain ${tree.chainId}; only mainnet and Sepolia are supported`);
+  const chain = chainFor(tree.chainId);
   const rpc = values.rpc ?? env.RPC_URL;
   if (!rpc) throw new Error("--rpc (or RPC_URL) is required");
   const executionRpc = values["execution-rpc"] ?? DEFAULT_EXECUTION_RPC[tree.chainId] ?? rpc;
@@ -105,16 +94,10 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   const source = await openSource(config.key);
-  const publicClient = createPublicClient({ chain: config.chain, transport: http(config.rpc) }) as PublicClient;
-  const session = new SignerSession({
-    publicClient,
-    chain: config.chain,
-    executionRpcUrl: config.executionRpc,
-    txService: new TxService(config.tree.chainId, { apiKey: process.env.SAFE_API_KEY }),
+  const { session } = createSession(
+    { tree: config.tree, rpc: config.rpc, executionRpc: config.executionRpc, safeApiKey: process.env.SAFE_API_KEY },
     source,
-    tree: config.tree,
-    safe: config.tree.safe,
-  });
+  );
 
   const status = await session.status();
   const uiDir = fileURLToPath(new URL("../ui/dist/", import.meta.url));

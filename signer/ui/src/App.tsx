@@ -1,13 +1,49 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { api, hasToken, type Execution, type QueueItem, type SignerView, type StatusView } from "./api";
+import { api, canConnect, desktop, type DesktopState, type Execution, type QueueItem, type SignerView, type StatusView } from "./api";
 import { eth, explorer, short } from "./format";
+import { Setup } from "./Setup";
 
 const REFRESH_MS = 10_000;
 const EXECUTION_POLL_MS = 3_000;
 const LOW_GAS_WEI = 5_000_000_000_000_000n;
 
 export function App() {
+  const [desktopState, setDesktopState] = useState<DesktopState>();
+  const [editing, setEditing] = useState(false);
+
+  const loadDesktopState = useCallback(async () => {
+    if (desktop) setDesktopState(await desktop.state());
+  }, []);
+
+  useEffect(() => {
+    void loadDesktopState();
+  }, [loadDesktopState]);
+
+  if (desktop) {
+    if (!desktopState) return <main className="app" />;
+    if (!desktopState.configured || editing) {
+      return (
+        <main className="app">
+          <header className="header">
+            <h1>Rotation Signer</h1>
+          </header>
+          <Setup
+            initial={desktopState}
+            onDone={() => {
+              setEditing(false);
+              void loadDesktopState();
+            }}
+            onCancel={desktopState.configured ? () => setEditing(false) : undefined}
+          />
+        </main>
+      );
+    }
+  }
+  return <Dashboard onSettings={desktop ? () => setEditing(true) : undefined} />;
+}
+
+function Dashboard({ onSettings }: { onSettings?: () => void }) {
   const [status, setStatus] = useState<StatusView>();
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [error, setError] = useState<string>();
@@ -28,13 +64,13 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (!hasToken) return;
+    if (!canConnect) return;
     void refresh();
     const timer = setInterval(() => void refresh(), REFRESH_MS);
     return () => clearInterval(timer);
   }, [refresh]);
 
-  if (!hasToken) {
+  if (!canConnect) {
     return (
       <main className="app">
         <h1>Rotation Signer</h1>
@@ -60,9 +96,16 @@ export function App() {
             </p>
           )}
         </div>
-        <button type="button" onClick={() => void refresh()}>
-          Refresh
-        </button>
+        <div className="header-actions">
+          <button type="button" onClick={() => void refresh()}>
+            Refresh
+          </button>
+          {onSettings && (
+            <button type="button" onClick={onSettings}>
+              Settings
+            </button>
+          )}
+        </div>
       </header>
 
       {error && <p className="banner critical">Could not reach the signer: {error}</p>}
