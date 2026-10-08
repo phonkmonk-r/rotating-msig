@@ -55,7 +55,7 @@ export interface OwnerSignature {
 
 /** Signature for the executor itself: Safe accepts it because `msg.sender` is that owner (v = 1). */
 export function preValidatedSignature(owner: Address): OwnerSignature {
-  return { owner, data: concatHex([pad(owner, { size: 32 }), pad("0x", { size: 32 }), "0x01"]) };
+  return { owner, data: concatHex([pad(owner, { size: 32 }), pad("0x", { size: 32 }), "0x01"]).toLowerCase() as Hex };
 }
 
 /** Concatenates signatures sorted by owner address, as Safe's `checkNSignatures` requires. */
