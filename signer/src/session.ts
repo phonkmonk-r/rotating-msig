@@ -21,7 +21,19 @@ import {
   type Verdict,
 } from "@rotating-msig/core";
 import { resolveCurrentOwner, type AddressSource, type CurrentOwner } from "@rotating-msig/keys";
-import { createWalletClient, erc20Abi, getAddress, http, isAddress, type Address, type Chain, type Hex, type PublicClient } from "viem";
+import {
+  createWalletClient,
+  erc20Abi,
+  getAddress,
+  http,
+  isAddress,
+  numberToHex,
+  toEventSelector,
+  type Address,
+  type Chain,
+  type Hex,
+  type PublicClient,
+} from "viem";
 
 export interface SessionOptions {
   publicClient: PublicClient;
@@ -123,6 +135,18 @@ export interface Execution {
   message?: string;
 }
 
+/** Where a proposal stands, read from the Safe's nonce and its execution events. */
+export interface ProposalStatus {
+  /** `replaced`: another transaction used the proposal's nonce. */
+  status: "pending" | "executed" | "failed" | "replaced";
+  transactionHash?: Hex;
+  /** The execution's receipt as the RPC returned it. */
+  receipt?: Record<string, unknown>;
+}
+
+const EXECUTION_SUCCESS = toEventSelector("ExecutionSuccess(bytes32,uint256)");
+const EXECUTION_FAILURE = toEventSelector("ExecutionFailure(bytes32,uint256)");
+
 /** Ether amount as a decimal string, for JSON. */
 const wei = (value: bigint) => value.toString();
 
@@ -135,6 +159,40 @@ export class SignerSession {
   private readonly executions = new Map<string, { record: Execution; before: SafeState; sentAtMs: number }>();
 
   constructor(private readonly options: SessionOptions) {}
+
+  get safe(): Address {
+    return this.options.safe;
+  }
+
+  get chainId(): number {
+    return this.options.chain.id;
+  }
+
+  /** Forwards a read-only JSON-RPC request to the read RPC. Callers decide which methods are allowed. */
+  rpc(method: string, params: unknown[]): Promise<unknown> {
+    return this.options.publicClient.request({ method, params } as never);
+  }
+
+  async blockNumber(): Promise<bigint> {
+    return this.options.publicClient.getBlockNumber({ cacheTime: 0 });
+  }
+
+  /**
+   * Whether a proposal was executed: pending while the Safe's nonce has not passed it, then found by its
+   * ExecutionSuccess or ExecutionFailure event from `fromBlock` on (the block before it was proposed).
+   */
+  async proposalStatus(safeTxHash: Hex, nonce: bigint, fromBlock: bigint): Promise<ProposalStatus> {
+    const { publicClient, safe } = this.options;
+    const state = await readSafeState(publicClient, safe);
+    if (state.nonce <= nonce) return { status: "pending" };
+    const logs = (await this.rpc("eth_getLogs", [
+      { address: safe, fromBlock: numberToHex(fromBlock), toBlock: "latest", topics: [[EXECUTION_SUCCESS, EXECUTION_FAILURE], safeTxHash] },
+    ])) as { topics: Hex[]; transactionHash: Hex }[];
+    const log = logs[0];
+    if (!log) return { status: "replaced" };
+    const receipt = (await this.rpc("eth_getTransactionReceipt", [log.transactionHash])) as Record<string, unknown>;
+    return { status: log.topics[0] === EXECUTION_SUCCESS ? "executed" : "failed", transactionHash: log.transactionHash, receipt };
+  }
 
   private async snapshot(): Promise<{ state: SafeState; owner?: CurrentOwner; ownerError?: string }> {
     const state = await readSafeState(this.options.publicClient, this.options.safe);
@@ -232,8 +290,13 @@ export class SignerSession {
       const queue = await this.options.txService.pending(this.options.safe, state.nonce);
       if (queue.length > 0) throw new Error(`transaction #${queue[0]!.tx.nonce} is still pending: execute it or replace it in Safe{Wallet} first`);
 
-      const call = buildProposal(input, { safe: state.safe, guard: state.guard });
+      const multiSendCallOnly = this.options.multiSendCallOnly ?? deploymentsFor(state.chainId).multiSendCallOnly;
+      const call = buildProposal(input, { safe: state.safe, guard: state.guard, multiSendCallOnly });
       if (input.kind === "eth" && state.balance < call.value) throw new Error("the Safe does not hold that much ETH");
+      if (input.kind === "calls") {
+        const total = input.calls.reduce((sum, item) => sum + (item.value && item.value !== "0x" ? BigInt(item.value) : 0n), 0n);
+        if (state.balance < total) throw new Error("the Safe does not hold enough ETH for this request");
+      }
       if (input.kind === "erc20") {
         const balance = await this.options.publicClient.readContract({ address: call.to, abi: erc20Abi, functionName: "balanceOf", args: [state.safe] });
         if (balance < BigInt(input.amount)) throw new Error("the Safe does not hold that many tokens");
