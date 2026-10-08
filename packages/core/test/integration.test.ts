@@ -204,8 +204,8 @@ describe("core against a local chain", { skip }, () => {
     }
     const state = await readSafeState(client, safe);
     const findings = assess(state);
-    assert.ok(findings.some((f) => f.severity === "critical" && f.slotId === 1 && /no staged address/.test(f.message)));
-    assert.ok(findings.some((f) => f.severity === "warning" && f.slotId === 2 && /only 1 staged/.test(f.message)));
+    assert.ok(findings.some((f) => f.severity === "critical" && f.slotId === 1 && /Out of staged keys/.test(f.message)));
+    assert.ok(findings.some((f) => f.severity === "warning" && f.slotId === 2 && /1 staged key left/.test(f.message)));
     assert.equal(state.nonce, 6n);
 
     await assert.rejects(

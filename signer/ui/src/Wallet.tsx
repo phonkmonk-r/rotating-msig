@@ -2,10 +2,11 @@ import { useState } from "react";
 
 import { desktop } from "./api";
 import { short } from "./format";
+import { Avatar } from "./ui";
 
 const MIN_PASSWORD = 10;
 
-/** First launch: import the seed phrase into the encrypted vault. */
+/** First launch: seed, Safe and password. Everything else is worked out by the app. */
 export function ImportWallet({ onDone }: { onDone: (safe: string) => void }) {
   const [mnemonic, setMnemonic] = useState("");
   const [safe, setSafe] = useState("");
@@ -15,9 +16,9 @@ export function ImportWallet({ onDone }: { onDone: (safe: string) => void }) {
   const [working, setWorking] = useState(false);
 
   const words = mnemonic.trim() === "" ? 0 : mnemonic.trim().split(/\s+/).length;
-  const mismatch = confirm !== "" && confirm !== password;
   const validSafe = /^0x[0-9a-fA-F]{40}$/.test(safe.trim());
-  const ready = (words === 12 || words === 24) && password.length >= MIN_PASSWORD && password === confirm && validSafe && !working;
+  const mismatch = confirm !== "" && confirm !== password;
+  const ready = (words === 12 || words === 24) && validSafe && password.length >= MIN_PASSWORD && password === confirm && !working;
 
   async function submit() {
     setWorking(true);
@@ -36,51 +37,50 @@ export function ImportWallet({ onDone }: { onDone: (safe: string) => void }) {
   }
 
   return (
-    <section className="panel setup">
+    <form
+      className="auth-card"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (ready) void submit();
+      }}
+    >
       <h2>Set up your signer</h2>
-      <p className="muted">
-        Enter your seed phrase. It is encrypted with your password and stored only on this computer. The app uses it for two
-        things: your first account pays for staging and gas, and your rotation keys are derived from it for signing.
-      </p>
-      <div className="field">
-        <label htmlFor="mnemonic">Seed phrase</label>
-        <textarea
-          id="mnemonic"
-          rows={3}
-          spellCheck={false}
-          autoComplete="off"
-          value={mnemonic}
-          onChange={(e) => setMnemonic(e.target.value)}
-          placeholder="12 or 24 words, separated by spaces"
-        />
-        <p className="muted small">{words > 0 && `${words} words`}</p>
+      <p className="muted">Your seed phrase is encrypted and never leaves this device.</p>
+
+      <label className="field">
+        <span className="field-label">
+          Seed phrase {words > 0 && <span className="muted">{words} words</span>}
+        </span>
+        <textarea rows={3} spellCheck={false} autoComplete="off" value={mnemonic} onChange={(e) => setMnemonic(e.target.value)} placeholder="12 or 24 words" />
+      </label>
+
+      <label className="field">
+        <span className="field-label">Safe address</span>
+        <input placeholder="0x…" spellCheck={false} value={safe} onChange={(e) => setSafe(e.target.value)} />
+        {safe !== "" && !validSafe && <span className="field-error">Not a valid address</span>}
+      </label>
+
+      <div className="field-row">
+        <label className="field">
+          <span className="field-label">Password</span>
+          <input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        </label>
+        <label className="field">
+          <span className="field-label">Confirm</span>
+          <input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+        </label>
       </div>
-      <div className="field">
-        <label htmlFor="import-safe">Safe address</label>
-        <input id="import-safe" placeholder="0x…" spellCheck={false} value={safe} onChange={(e) => setSafe(e.target.value)} />
-        {safe !== "" && !validSafe && <p className="small error-text">That is not an address</p>}
-      </div>
-      <div className="field">
-        <label htmlFor="password">Password</label>
-        <input id="password" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        <p className="muted small">At least {MIN_PASSWORD} characters. You will need it every time you open the app; it cannot be recovered.</p>
-      </div>
-      <div className="field">
-        <label htmlFor="confirm">Confirm password</label>
-        <input id="confirm" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
-        {mismatch && <p className="small error-text">Passwords do not match</p>}
-      </div>
-      {error && <p className="banner critical">{error}</p>}
-      <div className="tx-actions">
-        <button type="button" className="primary" disabled={!ready} onClick={() => void submit()}>
-          {working ? "Encrypting…" : "Continue"}
-        </button>
-      </div>
-    </section>
+      <span className={`field-hint ${mismatch ? "field-error" : ""}`}>{mismatch ? "Passwords don't match" : `At least ${MIN_PASSWORD} characters. It can't be recovered.`}</span>
+
+      {error && <div className="note critical">{error}</div>}
+      <button type="submit" className="primary block" disabled={!ready}>
+        {working ? "Encrypting…" : "Continue"}
+      </button>
+    </form>
   );
 }
 
-/** Later launches: unlock the vault. */
+/** Later launches: password only. */
 export function UnlockWallet({ operator, onDone }: { operator?: string; onDone: () => void }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string>();
@@ -101,30 +101,28 @@ export function UnlockWallet({ operator, onDone }: { operator?: string; onDone: 
   }
 
   return (
-    <section className="panel setup unlock">
-      <h2>Unlock your wallet</h2>
+    <form
+      className="auth-card narrow"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void submit();
+      }}
+    >
       {operator && (
-        <p className="muted">
-          Wallet <span className="mono">{short(operator)}</span>
-        </p>
+        <div className="unlock-account">
+          <Avatar address={operator} size={48} />
+          <span className="mono">{short(operator)}</span>
+        </div>
       )}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          void submit();
-        }}
-      >
-        <div className="field">
-          <label htmlFor="unlock-password">Password</label>
-          <input id="unlock-password" type="password" autoFocus autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        </div>
-        {error && <p className="banner critical">{error}</p>}
-        <div className="tx-actions">
-          <button type="submit" className="primary" disabled={password === "" || working}>
-            {working ? "Unlocking…" : "Unlock"}
-          </button>
-        </div>
-      </form>
-    </section>
+      <h2 className="center">Welcome back</h2>
+      <label className="field">
+        <span className="field-label">Password</span>
+        <input type="password" autoFocus autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+      </label>
+      {error && <div className="note critical">{error.charAt(0).toUpperCase() + error.slice(1)}</div>}
+      <button type="submit" className="primary block" disabled={password === "" || working}>
+        {working ? "Unlocking…" : "Unlock"}
+      </button>
+    </form>
   );
 }

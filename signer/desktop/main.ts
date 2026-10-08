@@ -228,7 +228,8 @@ function createWindow() {
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event) => event.preventDefault());
-  void window.loadFile(join(appRoot(), "ui/dist/index.html"));
+  const page = process.env.ROTATION_SIGNER_TEST_PAGE;
+  void window.loadFile(join(appRoot(), "ui/dist/index.html"), page ? { hash: `page=${page}` } : undefined);
 
   const screenshot = process.env.ROTATION_SIGNER_SCREENSHOT;
   if (screenshot) {

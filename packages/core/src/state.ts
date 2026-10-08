@@ -132,26 +132,26 @@ export function assess(state: SafeState, options: AssessOptions = {}): Finding[]
   const { minOwnerGas = 5_000_000_000_000_000n, lowBuffer = 2, lowTreeFraction = 0.1 } = options;
   const findings: Finding[] = [];
   if (!state.installed) {
-    findings.push({ severity: "critical", message: "RotationGuard is not installed as module, transaction guard and module guard" });
+    findings.push({ severity: "critical", message: "Rotation guard not installed" });
     return findings;
   }
   for (const owner of state.unmanagedOwners) {
-    findings.push({ severity: "critical", message: `owner ${owner} has no slot` });
+    findings.push({ severity: "critical", message: `Owner ${owner} has no slot` });
   }
   for (const slot of state.slots) {
     const left = slot.staged.length + slot.unstaged;
     if (slot.staged.length === 0) {
-      findings.push({ severity: "critical", slotId: slot.slotId, message: "no staged address: any transaction this owner signs will revert" });
+      findings.push({ severity: "critical", slotId: slot.slotId, message: "Out of staged keys: signing fails until refilled" });
     } else if (slot.staged.length < lowBuffer) {
-      findings.push({ severity: "warning", slotId: slot.slotId, message: `only ${slot.staged.length} staged address left; refill the buffer` });
+      findings.push({ severity: "warning", slotId: slot.slotId, message: `${slot.staged.length} staged key left` });
     }
     if (left === 0) {
-      findings.push({ severity: "critical", slotId: slot.slotId, message: "tree exhausted: commit a new root with setRoot" });
+      findings.push({ severity: "critical", slotId: slot.slotId, message: "Tree used up: commit a new root" });
     } else if (left < slot.size * lowTreeFraction) {
-      findings.push({ severity: "warning", slotId: slot.slotId, message: `${left} of ${slot.size} tree addresses left; prepare a new tree` });
+      findings.push({ severity: "warning", slotId: slot.slotId, message: `${left} of ${slot.size} keys left` });
     }
     if (slot.ownerBalance < minOwnerGas) {
-      findings.push({ severity: "warning", slotId: slot.slotId, message: "owner has too little ETH to execute; the keeper should top it up" });
+      findings.push({ severity: "warning", slotId: slot.slotId, message: "Needs gas to execute" });
     }
   }
   return findings;

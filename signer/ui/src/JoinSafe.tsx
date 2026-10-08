@@ -16,9 +16,9 @@ function explain(message: string): string {
   const detail = rest.join(": ");
   switch (kind) {
     case "not-installed":
-      return "This Safe does not have the rotation guard yet. Setting up a new Safe from the app is the next feature; until then, install it with the Safe App.";
+      return "This Safe doesn't have rotation set up yet. New-Safe setup is coming to the app; for now, install it with the Safe App.";
     case "not-owner":
-      return `Your seed is not one of this Safe's signers. ${detail.includes("Check") ? "Check that you imported the right seed phrase and that this is the right Safe." : detail}`;
+      return "This seed isn't a signer of this Safe. Check the seed phrase and the address.";
     case "no-safe":
     case "ambiguous-chain":
     case "invalid-address":
@@ -81,70 +81,67 @@ export function JoinSafe({
 
   const percent = progress?.stage === "deriving" && progress.total ? Math.round(((progress.done ?? 0) / progress.total) * 100) : undefined;
   return (
-    <section className="panel setup">
-      <h2>Your Safe</h2>
-      <p className="muted">
-        Paste the Safe's address. The app finds the network, works out which signer you are from your seed, rebuilds your
-        rotation keys and checks them against what is committed on-chain, even if you have already signed before.
-      </p>
-      <div className="field">
-        <label htmlFor="safe">Safe address</label>
-        <input id="safe" placeholder="0x…" spellCheck={false} value={safe} onChange={(e) => setSafe(e.target.value)} disabled={working} />
-      </div>
+    <form
+      className="auth-card"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!working && safe.trim() !== "") void join();
+      }}
+    >
+      <h2>Connect your Safe</h2>
+      <p className="muted">We'll find your signer slot and rebuild your keys.</p>
+
+      <label className="field">
+        <span className="field-label">Safe address</span>
+        <input placeholder="0x…" spellCheck={false} value={safe} onChange={(e) => setSafe(e.target.value)} disabled={working} />
+      </label>
 
       <details className="advanced">
         <summary>Advanced</summary>
-        <div className="field">
-          <label htmlFor="network">Network</label>
-          <select
-            id="network"
-            value={advanced.chainId ?? ""}
-            onChange={(e) => setAdvanced({ ...advanced, chainId: e.target.value ? Number(e.target.value) : undefined })}
-          >
+        <label className="field">
+          <span className="field-label">Network</span>
+          <select value={advanced.chainId ?? ""} onChange={(e) => setAdvanced({ ...advanced, chainId: e.target.value ? Number(e.target.value) : undefined })}>
             <option value="">Detect automatically</option>
             <option value="1">Ethereum</option>
             <option value="11155111">Sepolia</option>
           </select>
-        </div>
-        <div className="field">
-          <label htmlFor="rpc">RPC URL</label>
-          <input id="rpc" placeholder="Default: public RPCs" value={advanced.rpc ?? ""} onChange={(e) => setAdvanced({ ...advanced, rpc: e.target.value || undefined })} />
-        </div>
-        <div className="field">
-          <label htmlFor="execution-rpc">Execution RPC</label>
+        </label>
+        <label className="field">
+          <span className="field-label">RPC URL</span>
+          <input placeholder="Public RPCs" value={advanced.rpc ?? ""} onChange={(e) => setAdvanced({ ...advanced, rpc: e.target.value || undefined })} />
+        </label>
+        <label className="field">
+          <span className="field-label">Execution RPC</span>
           <input
-            id="execution-rpc"
-            placeholder="Default: Flashbots Protect on Ethereum, the RPC above on Sepolia"
+            placeholder="Flashbots Protect on Ethereum"
             value={advanced.executionRpc ?? ""}
             onChange={(e) => setAdvanced({ ...advanced, executionRpc: e.target.value || undefined })}
           />
-        </div>
+        </label>
       </details>
 
-      {working && progress && (
+      {working && (
         <div className="progress-block">
-          <div>
-            {STAGES[progress.stage]}
-            {percent !== undefined && ` ${progress.done?.toLocaleString()} / ${progress.total?.toLocaleString()}`}…
+          <div className="progress-label">
+            <span>{progress ? STAGES[progress.stage] : "Starting"}</span>
+            {percent !== undefined && <span className="muted">{percent}%</span>}
           </div>
-          {percent !== undefined && (
-            <div className="bar">
-              <div style={{ width: `${percent}%` }} />
-            </div>
-          )}
+          <div className="bar">
+            <div style={{ width: `${percent ?? 8}%` }} />
+          </div>
         </div>
       )}
-      {error && <p className="banner critical">{error}</p>}
-      <div className="tx-actions">
-        <button type="button" className="primary" disabled={working || safe.trim() === ""} onClick={() => void join()}>
-          {working ? "Setting up…" : "Continue"}
-        </button>
+      {error && <div className="note critical">{error}</div>}
+      <div className="form-actions">
         {onCancel && (
           <button type="button" onClick={onCancel} disabled={working}>
             Cancel
           </button>
         )}
+        <button type="submit" className="primary" disabled={working || safe.trim() === ""}>
+          {working ? "Connecting…" : "Continue"}
+        </button>
       </div>
-    </section>
+    </form>
   );
 }
