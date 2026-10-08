@@ -28,6 +28,7 @@ Findings that changed the design during implementation:
 - Measured rotation overhead is 65-82k gas per signer, not the 40-50k first estimated (section 6).
 - Addresses depend only on the seed and account index, not on the Safe, so every Safe needs its own unused `--base` range (`generator/README.md`).
 - Sepolia's hardfork of early October 2026 reprices contract and state creation. Deploying the guard costs 16,697,418 gas there (2.38M on mainnet today), 99.5% of the 2^24 per-transaction cap. Mainnet is likely to adopt the same rules, so the guard must not grow; any new on-chain feature (including the phase 7 co-signer) needs a size budget, and rotation gas must be re-measured under the new rules. The setup transaction for a 2-of-3 estimates at 4.4M gas on Sepolia.
+- Under the same rules, a 2-of-3 transfer that rotates both signers used 649,233 gas on Sepolia, about 3.3x the 197k measured locally under Prague rules, so roughly 250-300k per rotated signer. The cost is dominated by the two storage entries each rotation creates (Safe's owner list entry and the guard's `ownerToSlot`). Candidate optimization: drop `ownerToSlot` and find a signer's slot by scanning the 2-5 slots, removing one new storage entry per rotation and shrinking the contract.
 
 ## 1. Background and threat model
 
@@ -325,6 +326,7 @@ Open questions to settle on Sepolia before mainnet:
 - Settled on Sepolia (setup tx `0x7584d52c…9c116799`): Safe{Wallet} creates Safes at 1.5.0 (SafeL2), and batches through MultiSendCallOnly `0xA83c…1836`, the one the guard allows.
 - Settled: when the last owner clicks Execute without confirming first, Safe{Wallet} submits their signature as pre-validated (v = 1, `APPROVED_HASH` in the Transaction Service) next to the other confirmation, exactly `threshold` signatures. This is the form the executor rule requires.
 - Settled: the 2-of-3 setup transaction used 4,367,352 gas on Sepolia.
+- Settled: the first guarded transaction (`0xb163d027…f091fd`, a 2-of-3 transfer) rotated exactly its two signers to tree index 1, matching the generated trees. The Transaction Service accepted a confirmation from an owner rotated in by the previous transaction with no delay.
 - The Transaction Service API has moved to `https://api.safe.global/tx-service/<network>/api/v1/...` (for Sepolia, `sep`); the per-network domains now redirect.
 - When more owners confirm than the threshold needs, does Safe{Wallet} include the extra signatures (which the guard rejects)?
 - Does Rabby's Safe integration execute with the owner's own pre-validated signature, like Safe{Wallet}?
