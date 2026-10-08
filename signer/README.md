@@ -70,7 +70,7 @@ It prints a link like `http://127.0.0.1:7373/#token=…`. Open it; that is your 
 
 ### Gas
 
-Your seed's first account is your gas account: it pays for every execution, so your rotation keys never need ETH. When you execute, the app sends your current key exactly the gas it needs, executes, and once the transaction is mined returns everything left on that key to the gas account, leaving the retired key empty (or with a fraction of a gwei). Confirming costs nothing. Keep some ETH in the gas account; Overview shows its balance and warns when it runs low.
+Your seed's first account is your gas account: it pays for every execution, so your rotation keys never need ETH. When you execute, the app sends your current key exactly the gas it needs, executes, and once the transaction is mined returns everything left on that key to the gas account, leaving the retired key empty (or with a fraction of a gwei). Confirming costs nothing. The gas account also refills your next keys: once two of your five staged keys are used, the app stages the next ones from your tree (the command-line version does the same while it runs). Keep some ETH in the gas account; Overview shows its balance and warns when it runs low or a refill fails.
 
 ## What it enforces
 

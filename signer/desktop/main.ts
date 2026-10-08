@@ -76,6 +76,7 @@ const treePath = (settings: Pick<Settings, "chainId" | "safe" | "slotId">) =>
   join(profileDir(), "trees", `${settings.chainId}-${settings.safe.toLowerCase()}-slot${settings.slotId}.json`);
 
 let session: SignerSession | undefined;
+let stopAutoRefill: (() => void) | undefined;
 /** Present only while the wallet is unlocked: the decrypted seed never leaves this process. */
 let source: AddressSource | undefined;
 let sessionError: string | undefined;
@@ -96,6 +97,8 @@ function summarize(tree: TreeFile): TreeSummary {
 /** Builds a session from settings with the unlocked wallet, and proves it works by resolving the current owner key. */
 async function start(settings: Settings): Promise<void> {
   if (!source) throw new Error("unlock your wallet first");
+  stopAutoRefill?.();
+  stopAutoRefill = undefined;
   session = undefined;
   browser?.close();
   const tree = loadTreeFile(readFileSync(treePath(settings), "utf8")).file;
@@ -107,9 +110,12 @@ async function start(settings: Settings): Promise<void> {
   if (!status.me) throw new Error(status.meError ?? "your current owner key could not be resolved");
   session = next;
   sessionError = undefined;
+  stopAutoRefill = next.startAutoRefill();
 }
 
 async function lock() {
+  stopAutoRefill?.();
+  stopAutoRefill = undefined;
   session = undefined;
   browser?.close();
   await source?.close();
@@ -468,6 +474,7 @@ handle("signer:confirm", (hash: unknown) => requireSession().confirm(requireHash
 handle("signer:execute", (hash: unknown) => requireSession().execute(requireHash(hash)));
 handle("signer:execution", (hash: unknown) => requireSession().execution(requireHash(hash)));
 handle("signer:propose", (input: unknown, preview: unknown) => requireSession().propose(input as never, preview === true));
+handle("signer:refill", () => requireSession().refill());
 handle("signer:token", (address: unknown) => requireSession().tokenInfo(String(address)));
 
 let browser: DappBrowser | undefined;

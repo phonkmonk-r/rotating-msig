@@ -99,6 +99,7 @@ export async function main(argv: string[]): Promise<number> {
     source,
   );
 
+  session.startAutoRefill();
   const status = await session.status();
   const uiDir = fileURLToPath(new URL("../ui/dist/", import.meta.url));
   const server = await serve(session, { port: config.port, uiDir: existsSync(uiDir) ? uiDir : undefined });

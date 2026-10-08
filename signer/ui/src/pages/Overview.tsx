@@ -1,4 +1,6 @@
-import type { QueueItem, StatusView } from "../api";
+import { useState } from "react";
+
+import { api, type QueueItem, type StatusView } from "../api";
 import { LOW_GAS_WEI } from "../data";
 import { eth } from "../format";
 import { IconAlert, IconTransactions } from "../icons";
@@ -37,7 +39,9 @@ export function Overview({ status, queue, onOpenTransactions }: { status: Status
               <span className="metric-value">{eth(gasAccount ? gasAccount.balance : me.balance)}</span>
             </div>
             <div className={`metric ${me.staged === 0 ? "critical" : me.staged < 2 ? "warning" : ""}`}>
-              <span className="metric-label">Next keys</span>
+              <span className="metric-label">
+                Next keys {me.staged < me.bufferSize && <RefillButton />}
+              </span>
               <span className="metric-value">
                 <Dots filled={me.staged} total={me.bufferSize} />
               </span>
@@ -92,5 +96,32 @@ export function Overview({ status, queue, onOpenTransactions }: { status: Status
         </section>
       )}
     </>
+  );
+}
+
+/** Stages the missing next keys now instead of waiting for the automatic refill. */
+function RefillButton() {
+  const [state, setState] = useState<"idle" | "working" | "done">("idle");
+  const [error, setError] = useState<string>();
+  return (
+    <button
+      type="button"
+      className="link-button small"
+      title={error ?? "Stage your next keys now, paid by your gas account"}
+      disabled={state === "working"}
+      onClick={() => {
+        setState("working");
+        setError(undefined);
+        api.refill().then(
+          () => setState("done"),
+          (caught: Error) => {
+            setError(caught.message);
+            setState("idle");
+          },
+        );
+      }}
+    >
+      {state === "working" ? "Refilling…" : state === "done" ? "Refilled" : error ? "Retry refill" : "Refill"}
+    </button>
   );
 }

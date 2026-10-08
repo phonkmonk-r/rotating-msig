@@ -9,6 +9,9 @@ import {
   preValidatedSignature,
   readSafeState,
   plainSafeTx,
+  guardCalls,
+  loadTreeFile,
+  stageEntries,
   rotationGuardAbi,
   safeTxHash,
   safeTxTypedData,
@@ -71,6 +74,9 @@ export const DEFAULT_EXECUTION_TIMEOUT_MS = 180_000;
 const SWEEP_GAS_ALLOWANCE = 60_000n;
 /** An execution's gas allowance for warning when the operator account runs low. */
 const EXECUTION_GAS_ALLOWANCE = 1_000_000n;
+/** Refill once the buffer has this many free places, so one transaction stages several keys. */
+const REFILL_FREE_PLACES = 2;
+
 /** How long the sweep keeps waiting for an execution that is not mined yet. */
 const SWEEP_WATCH_MS = 30 * 60_000;
 const SWEEP_POLL_MS = 3_000;
@@ -85,6 +91,8 @@ export interface Me {
   treeSize: number;
   /** With gas funding: the account that pays for executions. */
   operator?: { address: Address; balance: string };
+  /** The latest refill of this signer's staged keys. */
+  lastRefill?: RefillStatus;
 }
 
 /** One slot as every signer sees it. */
@@ -178,6 +186,21 @@ export interface ProposalStatus {
 const EXECUTION_SUCCESS = toEventSelector("ExecutionSuccess(bytes32,uint256)");
 const EXECUTION_FAILURE = toEventSelector("ExecutionFailure(bytes32,uint256)");
 
+/** A staging transaction this signer's gas account sent for its own slot. */
+export interface Refill {
+  transactionHash: Hex;
+  count: number;
+  /** Tree index of the first key staged. */
+  fromIndex: number;
+}
+
+/** The latest automatic or manual refill, shown on the dashboard. */
+export interface RefillStatus {
+  at: string;
+  refill?: Refill;
+  error?: string;
+}
+
 /** Ether amount as a decimal string, for JSON. */
 const wei = (value: bigint) => value.toString();
 
@@ -187,6 +210,8 @@ const wei = (value: bigint) => value.toString();
  */
 export class SignerSession {
   private busy: Promise<unknown> = Promise.resolve();
+  private loadedTree?: ReturnType<typeof loadTreeFile>;
+  private lastRefill?: RefillStatus;
   private readonly executions = new Map<string, { record: Execution; before: SafeState; sentAtMs: number; account: LocalAccount }>();
 
   constructor(private readonly options: SessionOptions) {}
@@ -256,8 +281,10 @@ export class SignerSession {
           findings.push({ severity: "warning", slotId: owner.slot.slotId, message: "Your gas account is low: executions are paid from it" });
         }
       }
+      if (this.lastRefill?.error) findings.push({ severity: "warning", slotId: owner.slot.slotId, message: `Refilling your next keys failed: ${this.lastRefill.error}` });
       me = {
         operator,
+        lastRefill: this.lastRefill,
         slotId: owner.slot.slotId,
         index: owner.index,
         address: owner.account.address,
@@ -447,6 +474,73 @@ export class SignerSession {
       if (this.options.gasFunding) void this.sweepWhenMined(transactionHash);
       return record;
     });
+  }
+
+  /**
+   * Stages this signer's next keys from their tree until the guard's buffer is full, sent and paid by the gas account
+   * (staging is permissionless, and the gas account is not an owner). Returns undefined when the buffer is already full.
+   */
+  refill(): Promise<Refill | undefined> {
+    return this.exclusive(async () => {
+      const { publicClient, chain, source } = this.options;
+      const { state, owner, ownerError } = await this.snapshot();
+      if (!owner) throw new Error(ownerError ?? "your current owner key could not be resolved");
+      const slot = owner.slot;
+      const count = Math.min(state.bufferSize - slot.staged.length, slot.unstaged);
+      if (count <= 0) return undefined;
+      this.loadedTree ??= loadTreeFile(JSON.stringify(this.options.tree));
+      const { file, tree } = this.loadedTree;
+      if (file.root !== slot.root) throw new Error("the slot's root on-chain is not your tree's; join the Safe again");
+
+      const call = guardCalls.stage(state.guard, state.safe, slot.slotId, stageEntries(tree, file, slot.nextStageIndex, count));
+      const gasAccount = await source.signer(OPERATOR_ACCOUNT);
+      let gas: bigint;
+      try {
+        gas = await publicClient.estimateGas({ account: gasAccount.address, to: call.to, data: call.data });
+      } catch (error) {
+        throw new Error(`staging would fail: ${describeRevert(error) ?? (error as Error).message}`);
+      }
+      const [balance, fees] = await Promise.all([publicClient.getBalance({ address: gasAccount.address }), publicClient.estimateFeesPerGas()]);
+      if (balance < gas * fees.maxFeePerGas) {
+        throw new Error(`your gas account ${gasAccount.address} needs about ${formatEther(gas * fees.maxFeePerGas)} ETH to stage your next keys`);
+      }
+      const wallet = createWalletClient({ account: gasAccount, chain, transport: custom(publicClient) });
+      const transactionHash = await wallet.sendTransaction({ to: call.to, data: call.data, gas: (gas * 12n) / 10n, chain });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: transactionHash });
+      if (receipt.status !== "success") throw new Error(`staging reverted (${transactionHash})`);
+      return { transactionHash, count, fromIndex: slot.nextStageIndex };
+    });
+  }
+
+  /** Refills when the buffer has room for several keys; records the outcome for the dashboard. Never throws. */
+  async autoRefill(): Promise<Refill | undefined> {
+    try {
+      const { state, owner } = await this.snapshot();
+      if (!owner) return undefined;
+      const free = state.bufferSize - owner.slot.staged.length;
+      if (owner.slot.unstaged === 0 || free === 0) return undefined;
+      if (free < REFILL_FREE_PLACES && owner.slot.staged.length > 0) return undefined;
+      const refill = await this.refill();
+      if (refill) this.lastRefill = { at: new Date().toISOString(), refill };
+      return refill;
+    } catch (error) {
+      this.lastRefill = { at: new Date().toISOString(), error: (error as Error).message };
+      return undefined;
+    }
+  }
+
+  /** Checks every `intervalMs` and refills as needed until the returned function is called. */
+  startAutoRefill(intervalMs = 60_000): () => void {
+    let running = false;
+    const tick = async () => {
+      if (running) return;
+      running = true;
+      await this.autoRefill();
+      running = false;
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), intervalMs);
+    return () => clearInterval(timer);
   }
 
   /** Tops `key` up from the operator account to `needed` wei, waiting until the transfer is mined. */

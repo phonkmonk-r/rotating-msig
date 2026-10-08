@@ -1,9 +1,9 @@
 import type { ProposalInput } from "@rotating-msig/core";
 
 import type { DappRequest } from "../../src/dapp.js";
-import type { Execution, ProposalResult, QueueItem, SignerView, StatusView, TokenInfo } from "../../src/session.js";
+import type { Execution, ProposalResult, QueueItem, Refill, SignerView, StatusView, TokenInfo } from "../../src/session.js";
 
-export type { DappRequest, Execution, ProposalInput, ProposalResult, QueueItem, SignerView, StatusView, TokenInfo };
+export type { DappRequest, Execution, ProposalInput, ProposalResult, QueueItem, Refill, SignerView, StatusView, TokenInfo };
 
 /** The dApp browser's page, as the main process reports it. */
 export interface BrowserState {
@@ -121,6 +121,7 @@ interface DesktopBridge {
   execution(hash: string): Promise<Result<Execution>>;
   propose(input: ProposalInput, preview: boolean): Promise<Result<ProposalResult>>;
   token(address: string): Promise<Result<TokenInfo>>;
+  refill(): Promise<Result<Refill | null>>;
   browserOpen(url: string): Promise<Result<BrowserState>>;
   browserBounds(bounds: Bounds | null): Promise<Result<null>>;
   browserNavigate(action: "back" | "forward" | "reload" | "stop"): Promise<Result<null>>;
@@ -196,6 +197,7 @@ export const api = {
   execution: (hash: string) => (bridge ? unwrap(bridge.execution(hash)) : http<Execution>(`/api/executions/${hash}`)),
   propose: (input: ProposalInput, preview: boolean) =>
     bridge ? unwrap(bridge.propose(input, preview)) : http<ProposalResult>("/api/propose", { method: "POST", body: JSON.stringify({ input, preview }) }),
+  refill: () => (bridge ? unwrap(bridge.refill()) : http<Refill | null>("/api/refill", { method: "POST", body: "{}" })),
   token: (address: string) => (bridge ? unwrap(bridge.token(address)) : http<TokenInfo>(`/api/token?address=${encodeURIComponent(address)}`)),
 };
 

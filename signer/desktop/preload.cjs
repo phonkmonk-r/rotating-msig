@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld("signer", {
   execution: call("signer:execution"),
   propose: call("signer:propose"),
   token: call("signer:token"),
+  refill: call("signer:refill"),
   browserOpen: call("browser:open"),
   browserBounds: call("browser:bounds"),
   browserNavigate: call("browser:navigate"),
