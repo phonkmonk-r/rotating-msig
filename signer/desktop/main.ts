@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import {
@@ -57,7 +57,18 @@ type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
 const appRoot = () => app.getAppPath();
 
-if (process.env.ROTATION_SIGNER_USER_DATA) app.setPath("userData", process.env.ROTATION_SIGNER_USER_DATA);
+export const APP_NAME = "Keyturn";
+app.setName(APP_NAME);
+if (process.env.ROTATION_SIGNER_USER_DATA) {
+  app.setPath("userData", process.env.ROTATION_SIGNER_USER_DATA);
+} else {
+  // Data from before the rename (the folder Electron derived from the package name) moves to the new folder once.
+  const current = join(app.getPath("appData"), APP_NAME);
+  const previous = join(app.getPath("appData"), "@rotating-msig", "signer");
+  if (!existsSync(current) && existsSync(previous)) renameSync(previous, current);
+  app.setPath("userData", current);
+}
+const iconPath = () => join(appRoot(), "desktop/assets/icon.png");
 const profiles = new ProfileStore(app.getPath("userData"));
 /** The profile in use; its seed or Ledger is unlocked separately (`source`). */
 let activeId: string | undefined;
@@ -560,7 +571,8 @@ function createWindow() {
     width: 980,
     height: 860,
     minWidth: 420,
-    title: "Rotation Signer",
+    title: APP_NAME,
+    icon: iconPath(),
     backgroundColor: "#f6f7f8",
     webPreferences: { preload: join(appRoot(), "desktop/preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false },
   }));
@@ -593,6 +605,7 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  app.dock?.setIcon(iconPath());
   profiles.migrateLegacy();
   activeId = profiles.lastUsed()?.id;
   // Test hooks only: unlock (and optionally join) without the UI, so smoke tests can reach the dashboard.

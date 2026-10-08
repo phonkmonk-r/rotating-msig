@@ -54,12 +54,12 @@ contextBridge.executeInMainWorld({
 
     const info = Object.freeze({
       uuid: crypto.randomUUID(),
-      name: "Rotation Signer (Safe)",
-      rdns: "io.raac.rotation-signer",
+      name: "Keyturn (Safe)",
+      rdns: "io.raac.keyturn",
       icon:
         "data:image/svg+xml;base64," +
         btoa(
-          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#0f7a55"/><path d="M10 13a7 7 0 0 1 12-3l1.5-1.5V14h-5.5l2-2a4.5 4.5 0 0 0-7.4 2zM22 19a7 7 0 0 1-12 3l-1.5 1.5V18h5.5l-2 2a4.5 4.5 0 0 0 7.4-2z" fill="#fff"/></svg>',
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="64 64 896 896"><rect x="64" y="64" width="896" height="896" rx="200" fill="#0f7a55"/><path d="M611.2 239.5 A290 290 0 1 1 412.8 239.5" fill="none" stroke="#fff" stroke-width="64" stroke-linecap="round"/><path d="M478.6 215.6 L388.9 173.7 L436.7 305.3 Z" fill="#fff" stroke="#fff" stroke-width="18" stroke-linejoin="round"/><circle cx="512" cy="475" r="82" fill="#fff"/><path d="M468 520 L556 520 L540 660 Q538 676 522 676 L502 676 Q486 676 484 660 Z" fill="#fff"/></svg>',
         ),
     });
     const announce = () => window.dispatchEvent(new CustomEvent("eip6963:announceProvider", { detail: Object.freeze({ info, provider }) }));

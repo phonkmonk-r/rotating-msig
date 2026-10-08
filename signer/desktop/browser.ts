@@ -151,7 +151,7 @@ export class DappBrowser {
 
   /** Closes the page and refuses any request waiting for review; used on lock and when the Safe changes. */
   close(): void {
-    this.settle()?.reject(new ProviderError(4900, "Rotation Signer was locked"));
+    this.settle()?.reject(new ProviderError(4900, "Keyturn was locked"));
     if (!this.view) return;
     this.deps.window()?.contentView.removeChildView(this.view);
     this.view.webContents.close();
@@ -160,7 +160,7 @@ export class DappBrowser {
   }
 
   private review(request: DappRequest): Promise<ProposalResult> {
-    if (!this.deps.window()) return Promise.reject(new ProviderError(4900, "Rotation Signer is not open"));
+    if (!this.deps.window()) return Promise.reject(new ProviderError(4900, "Keyturn is not open"));
     return new Promise((resolve, reject) => {
       this.pending = { request, resolve, reject };
       this.deps.send("browser:request", request);

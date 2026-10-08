@@ -84,7 +84,7 @@ export class DappProvider {
 
   async request(origin: string, method: string, params: unknown = []): Promise<unknown> {
     const session = this.host.session();
-    if (!session) throw new ProviderError(DISCONNECTED, "Rotation Signer is locked");
+    if (!session) throw new ProviderError(DISCONNECTED, "Keyturn is locked");
     const args = Array.isArray(params) ? params : [];
     const chainHex = numberToHex(session.chainId);
 
@@ -144,7 +144,7 @@ export class DappProvider {
     }
 
     if (SIGNING_METHODS.has(method)) {
-      throw new ProviderError(UNSUPPORTED_METHOD, "Rotation Signer does not sign messages: it would expose a Safe owner key without rotating it");
+      throw new ProviderError(UNSUPPORTED_METHOD, "Keyturn does not sign messages: it would expose a Safe owner key without rotating it");
     }
     if (READ_METHODS.has(method)) return session.rpc(method, args);
     throw new ProviderError(UNSUPPORTED_METHOD, `${method} is not supported`);
