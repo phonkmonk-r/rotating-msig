@@ -3,6 +3,12 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 const call = (channel) => (...args) => ipcRenderer.invoke(channel, ...args);
 
+const subscribe = (channel, listener) => {
+  const handler = (_event, payload) => listener(payload);
+  ipcRenderer.on(channel, handler);
+  return () => ipcRenderer.removeListener(channel, handler);
+};
+
 contextBridge.exposeInMainWorld("signer", {
   state: call("app:state"),
   join: call("app:join"),
@@ -22,4 +28,15 @@ contextBridge.exposeInMainWorld("signer", {
   execution: call("signer:execution"),
   propose: call("signer:propose"),
   token: call("signer:token"),
+  browserOpen: call("browser:open"),
+  browserBounds: call("browser:bounds"),
+  browserNavigate: call("browser:navigate"),
+  browserState: call("browser:state"),
+  browserClose: call("browser:close"),
+  browserPending: call("browser:pending"),
+  browserPreview: call("browser:preview"),
+  browserApprove: call("browser:approve"),
+  browserReject: call("browser:reject"),
+  onBrowserState: (listener) => subscribe("browser:state", listener),
+  onBrowserRequest: (listener) => subscribe("browser:request", listener),
 });

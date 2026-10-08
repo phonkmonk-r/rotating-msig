@@ -25,6 +25,16 @@ Your seed's first account is your operator account (the wallet you were an initi
 
 The window runs the same UI as the command-line version, but talks to the signing process directly instead of through a local web server, so there is no port and no session token. It is isolated from Node, sandboxed, and opens explorer links in your browser. Ledger signing is available in the command-line version; in the desktop app it needs the Ledger USB library rebuilt for Electron, which is not done yet.
 
+### Browsing dApps
+
+**Browse dApps** opens any dApp (https only) inside the app, connected as the Safe. The dApp sees the Safe's address as its wallet; when it sends a transaction, the page is hidden and the app shows what it asks for, decoded and checked by the same rules. **Sign & propose** posts it with your current key's signature as your confirmation, and another signer executes it from their app. Several calls sent together (EIP-5792 `wallet_sendCalls`) become one batched transaction.
+
+- The dApp receives the Safe transaction hash. dApps that support smart accounts track it until execution; others show it as pending.
+- Signing messages (log-in messages, permits, off-chain orders) is refused: it would expose your key without the guard rotating it, and the signature would stop working when owners rotate. CoW Swap and others fall back to an on-chain approval for Safes.
+- dApps cannot ask the Safe to change owners, threshold, modules or the guard.
+- One proposal at a time: if a transaction is pending, execute it first.
+- Pages run sandboxed in their own storage, with no permissions and no access to the app; links that open new windows go to your normal browser.
+
 ## Command line
 
 ```sh

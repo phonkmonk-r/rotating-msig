@@ -9,6 +9,7 @@ import { isHex, type Hex } from "viem";
 import { createSession } from "../src/create.js";
 import { JoinError, joinSafe, type JoinProgress } from "../src/join.js";
 import type { SignerSession } from "../src/session.js";
+import { DappBrowser, type Bounds } from "./browser.js";
 import { createVault, readVault, unlockVault } from "./vault.js";
 
 /** Saved between launches. The seed lives only in the encrypted vault (`vault.json`); the tree is public data. */
@@ -69,6 +70,7 @@ function summarize(tree: TreeFile): TreeSummary {
 async function start(settings: Settings): Promise<void> {
   if (!source) throw new Error("unlock your wallet first");
   session = undefined;
+  browser?.close();
   const tree = loadTreeFile(readFileSync(treePath(settings), "utf8")).file;
   const { session: next } = createSession(
     { tree, rpc: settings.rpc || undefined, executionRpc: settings.executionRpc || undefined, txServiceUrl: settings.txServiceUrl, safeApiKey: process.env.SAFE_API_KEY },
@@ -82,6 +84,7 @@ async function start(settings: Settings): Promise<void> {
 
 async function lock() {
   session = undefined;
+  browser?.close();
   await source?.close();
   source = undefined;
 }
@@ -97,9 +100,10 @@ async function resume() {
   }
 }
 
-/** Every handler returns a Result so error messages reach the UI unchanged. */
+/** Every handler returns a Result so error messages reach the UI unchanged. Only the app's own UI may call them. */
 function handle<A extends unknown[], T>(channel: string, fn: (...args: A) => Promise<T> | T) {
-  ipcMain.handle(channel, async (_event, ...args: A): Promise<Result<T>> => {
+  ipcMain.handle(channel, async (event, ...args: A): Promise<Result<T>> => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) return { ok: false, error: "not allowed" };
     try {
       return { ok: true, value: await fn(...args) };
     } catch (error) {
@@ -215,6 +219,27 @@ handle("signer:execution", (hash: unknown) => requireSession().execution(require
 handle("signer:propose", (input: unknown, preview: unknown) => requireSession().propose(input as never, preview === true));
 handle("signer:token", (address: unknown) => requireSession().tokenInfo(String(address)));
 
+let browser: DappBrowser | undefined;
+function requireBrowser(): DappBrowser {
+  if (!browser) throw new Error("the browser is not ready");
+  return browser;
+}
+handle("browser:open", (url: unknown) => {
+  requireSession();
+  return requireBrowser().open(String(url));
+});
+handle("browser:bounds", (bounds: Bounds | null) => browser?.setBounds(bounds) ?? null);
+handle("browser:navigate", (action: unknown) => {
+  if (action === "back" || action === "forward" || action === "reload" || action === "stop") browser?.navigate(action);
+  return null;
+});
+handle("browser:state", () => requireBrowser().state());
+handle("browser:close", () => browser?.close() ?? null);
+handle("browser:pending", () => browser?.pendingRequest() ?? null);
+handle("browser:preview", (id: unknown) => requireBrowser().preview(String(id)));
+handle("browser:approve", (id: unknown) => requireBrowser().approve(String(id)));
+handle("browser:reject", (id: unknown) => requireBrowser().reject(String(id)) ?? null);
+
 function createWindow() {
   const window = (mainWindow = new BrowserWindow({
     width: 980,
@@ -230,6 +255,12 @@ function createWindow() {
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event) => event.preventDefault());
+  browser ??= new DappBrowser({
+    window: () => mainWindow,
+    session: () => session,
+    preload: join(appRoot(), "desktop/dapp-preload.cjs"),
+    send: sendToWindow,
+  });
   const page = process.env.ROTATION_SIGNER_TEST_PAGE;
   void window.loadFile(join(appRoot(), "ui/dist/index.html"), page ? { hash: `page=${page}` } : undefined);
 
@@ -238,6 +269,8 @@ function createWindow() {
     window.webContents.once("did-finish-load", () => {
       setTimeout(async () => {
         writeFileSync(screenshot, (await window.webContents.capturePage()).toPNG());
+        const page = await browser?.capture();
+        if (page) writeFileSync(screenshot.replace(/\.png$/, "-dapp.png"), page);
         app.quit();
       }, Number(process.env.ROTATION_SIGNER_SCREENSHOT_DELAY ?? 2500));
     });
@@ -256,6 +289,7 @@ app.whenReady().then(async () => {
     }
   }
   createWindow();
+  if (process.env.ROTATION_SIGNER_TEST_BROWSE && session) browser?.open(process.env.ROTATION_SIGNER_TEST_BROWSE);
 });
 
 app.on("window-all-closed", () => {

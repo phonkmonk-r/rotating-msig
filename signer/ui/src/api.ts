@@ -1,8 +1,25 @@
 import type { ProposalInput } from "@rotating-msig/core";
 
+import type { DappRequest } from "../../src/dapp.js";
 import type { Execution, ProposalResult, QueueItem, SignerView, StatusView, TokenInfo } from "../../src/session.js";
 
-export type { Execution, ProposalInput, ProposalResult, QueueItem, SignerView, StatusView, TokenInfo };
+export type { DappRequest, Execution, ProposalInput, ProposalResult, QueueItem, SignerView, StatusView, TokenInfo };
+
+/** The dApp browser's page, as the main process reports it. */
+export interface BrowserState {
+  url: string;
+  title: string;
+  loading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+}
+
+export interface Bounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 
 export interface TreeSummary {
   safe: string;
@@ -58,6 +75,17 @@ interface DesktopBridge {
   execution(hash: string): Promise<Result<Execution>>;
   propose(input: ProposalInput, preview: boolean): Promise<Result<ProposalResult>>;
   token(address: string): Promise<Result<TokenInfo>>;
+  browserOpen(url: string): Promise<Result<BrowserState>>;
+  browserBounds(bounds: Bounds | null): Promise<Result<null>>;
+  browserNavigate(action: "back" | "forward" | "reload" | "stop"): Promise<Result<null>>;
+  browserState(): Promise<Result<BrowserState>>;
+  browserClose(): Promise<Result<null>>;
+  browserPending(): Promise<Result<DappRequest | null>>;
+  browserPreview(id: string): Promise<Result<ProposalResult>>;
+  browserApprove(id: string): Promise<Result<ProposalResult>>;
+  browserReject(id: string): Promise<Result<null>>;
+  onBrowserState(listener: (state: BrowserState) => void): () => void;
+  onBrowserRequest(listener: (request: DappRequest | null) => void): () => void;
 }
 
 const bridge = (window as unknown as { signer?: DesktopBridge }).signer;
@@ -127,5 +155,22 @@ export const desktop = bridge
       unlock: (password: string) => unwrap(bridge.unlock(password)),
       lock: () => unwrap(bridge.lock()),
       reset: () => unwrap(bridge.reset()),
+    }
+  : undefined;
+
+/** The dApp browser; desktop only. */
+export const browser = bridge
+  ? {
+      open: (url: string) => unwrap(bridge.browserOpen(url)),
+      bounds: (bounds: Bounds | null) => unwrap(bridge.browserBounds(bounds)),
+      navigate: (action: "back" | "forward" | "reload" | "stop") => unwrap(bridge.browserNavigate(action)),
+      state: () => unwrap(bridge.browserState()),
+      close: () => unwrap(bridge.browserClose()),
+      pending: () => unwrap(bridge.browserPending()),
+      preview: (id: string) => unwrap(bridge.browserPreview(id)),
+      approve: (id: string) => unwrap(bridge.browserApprove(id)),
+      reject: (id: string) => unwrap(bridge.browserReject(id)),
+      onState: (listener: (state: BrowserState) => void) => bridge.onBrowserState(listener),
+      onRequest: (listener: (request: DappRequest | null) => void) => bridge.onBrowserRequest(listener),
     }
   : undefined;

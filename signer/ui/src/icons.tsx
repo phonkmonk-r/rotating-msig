@@ -86,6 +86,31 @@ export const IconPlus = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 );
 
+export const IconGlobe = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" />
+  </Icon>
+);
+
+export const IconBack = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M15 18l-6-6 6-6" />
+  </Icon>
+);
+
+export const IconForward = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M9 18l6-6-6-6" />
+  </Icon>
+);
+
+export const IconClose = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M6 6l12 12M18 6L6 18" />
+  </Icon>
+);
+
 export const IconInbox = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p} width="28" height="28" strokeWidth="1.5">
     <path d="M3 13l3-8h12l3 8v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6z" />
