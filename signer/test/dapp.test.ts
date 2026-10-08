@@ -40,13 +40,16 @@ describe("dApp browser wallet", { skip }, () => {
         }),
     );
     decide = (request, session) => session.propose({ kind: "calls", origin: request.origin, calls: request.calls });
-    provider = new DappProvider({
-      session: () => sessions[0],
-      review: (request) => {
-        reviewed.push(request);
-        return decide(request, sessions[0]!);
+    provider = new DappProvider(
+      {
+        session: () => sessions[0],
+        review: (request) => {
+          reviewed.push(request);
+          return decide(request, sessions[0]!);
+        },
       },
-    });
+      100,
+    );
   });
   after(async () => {
     await service?.stop();
@@ -92,6 +95,20 @@ describe("dApp browser wallet", { skip }, () => {
     assert.equal(receipt.transactionHash, sent.transactionHash);
     assert.equal(receipt.status, "0x1");
     assert.equal(await chain.client.getBalance({ address: BOB }), parseEther("0.01"));
+  });
+
+  it("answers eth_sendTransaction with the real execution hash, which a dApp's own RPC can find", async () => {
+    const sending = call("eth_sendTransaction", [{ from: chain.safe, to: ALICE, value: "0x1", nonce: "0x1" }]) as Promise<Hex>;
+    let queue = await sessions[1]!.queue();
+    for (let i = 0; i < 50 && queue.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      queue = await sessions[1]!.queue();
+    }
+    const executed = await sessions[1]!.execute(queue[0]!.safeTxHash);
+    const hash = await sending;
+    assert.equal(hash, executed.transactionHash);
+    assert.equal(reviewed.at(-1)?.readsOwnRpc, true, "a dApp that sets the nonce reads its own RPC");
+    assert.equal((await chain.client.getTransactionReceipt({ hash })).status, "success", "the hash is a mined transaction");
   });
 
   it("passes on the user's refusal and the rules' refusals, and handles one request at a time", async () => {

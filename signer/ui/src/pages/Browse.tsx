@@ -117,7 +117,7 @@ export function Browse({ status, request, queueMode }: { status: StatusView; req
       {proposed && request === null && (
         <div className="note ok browser-note">
           <IconCheck width="15" height="15" />
-          <span>Proposed #{proposed.nonce}. Another signer executes it; the dApp sees it as pending until then.</span>
+          <span>Proposed #{proposed.nonce}. The dApp waits until another signer executes it, then continues.</span>
           <button type="button" className="link" onClick={() => setProposed(undefined)}>
             Dismiss
           </button>
@@ -228,6 +228,7 @@ function RequestReview({
     }
   }
 
+  const queueFirst = queueMode && !request.readsOwnRpc;
   const total = request.calls.reduce((sum, call) => sum + (call.value && call.value !== "0x" ? BigInt(call.value) : 0n), 0n);
   return (
     <section className="card request-review">
@@ -268,6 +269,15 @@ function RequestReview({
         !error && <p className="muted">Checking…</p>
       )}
 
+      {request.readsOwnRpc && request.method === "eth_sendTransaction" && (
+        <div className="note warning">
+          <IconAlert width="15" height="15" />
+          <span>
+            This dApp reads the chain itself, so it only sees transactions once they are on-chain. Sign & propose: it waits until another signer executes, then continues. Queued, it
+            would keep waiting.
+          </span>
+        </div>
+      )}
       {error && (
         <div className="note critical">
           <IconAlert width="15" height="15" />
@@ -279,10 +289,16 @@ function RequestReview({
         <button type="button" onClick={() => void browser!.reject(request.id)} disabled={working}>
           Reject
         </button>
-        <button type="button" className={queueMode ? "primary" : ""} onClick={() => void queue()} disabled={working}>
+        <button
+          type="button"
+          className={queueFirst ? "primary" : ""}
+          onClick={() => void queue()}
+          disabled={working}
+          title={request.readsOwnRpc ? "This dApp cannot see queued actions; it will keep waiting" : undefined}
+        >
           Add to queue
         </button>
-        <button type="button" className={queueMode ? "" : "primary"} onClick={() => void approve()} disabled={working || !preview}>
+        <button type="button" className={queueFirst ? "" : "primary"} onClick={() => void approve()} disabled={working || !preview}>
           {working ? "Signing…" : "Sign & propose"}
         </button>
       </div>

@@ -23,7 +23,7 @@ contextBridge.executeInMainWorld({
     const request = async (args) => {
       if (!args || typeof args.method !== "string") throw Object.assign(new Error("Invalid request"), { code: -32600 });
       const reply = await bridge.request(args.method, args.params === undefined ? [] : args.params);
-      if (reply.error) throw Object.assign(new Error(reply.error.message), { code: reply.error.code });
+      if (reply.error) throw Object.assign(new Error(reply.error.message), { code: reply.error.code, data: reply.error.data });
       return reply.result;
     };
 

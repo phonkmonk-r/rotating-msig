@@ -1,3 +1,5 @@
+import { appendFileSync, readFileSync } from "node:fs";
+
 import { ipcMain, session as electronSession, shell, WebContentsView, type BrowserWindow } from "electron";
 
 import { DappProvider, ProviderError, USER_REJECTED, type DappRequest } from "../src/dapp.js";
@@ -77,11 +79,16 @@ export class DappBrowser {
     ipcMain.handle("dapp:request", async (event, method: unknown, params: unknown) => {
       if (!this.view || event.sender !== this.view.webContents) return { error: { code: 4100, message: "Unauthorized" } };
       const origin = event.senderFrame?.origin ?? "unknown";
+      let reply: { result?: unknown; error?: { code: number; message: string; data?: string } };
       try {
-        return { result: await this.provider.request(origin, String(method), params) };
+        reply = { result: await this.provider.request(origin, String(method), params) };
       } catch (error) {
-        return { error: { code: error instanceof ProviderError ? error.code : -32603, message: (error as Error).message } };
+        reply = { error: { code: error instanceof ProviderError ? error.code : -32603, message: (error as Error).message, data: error instanceof ProviderError ? error.data : undefined } };
       }
+      // Debugging aid for dApp compatibility: every request and reply, one JSON line each.
+      const log = process.env.ROTATION_SIGNER_DEBUG_DAPP;
+      if (log) appendFileSync(log, JSON.stringify({ at: new Date().toISOString(), method, params, reply }, (_key, value) => (typeof value === "bigint" ? value.toString() : value)).slice(0, 2000) + "\n");
+      return reply;
     });
   }
 
@@ -173,6 +180,7 @@ export class DappBrowser {
     return new Promise((resolve, reject) => {
       this.pending = { request, resolve, reject };
       this.deps.send("browser:request", request);
+      if (process.env.ROTATION_SIGNER_TEST_AUTOQUEUE) void this.queue(request.id).catch(reject);
     });
   }
 
@@ -216,6 +224,8 @@ export class DappBrowser {
     contents.on("will-redirect", (event) => {
       if (!navigable(event.url)) event.preventDefault();
     });
+    const script = process.env.ROTATION_SIGNER_TEST_DAPP_SCRIPT;
+    if (script) contents.once("did-finish-load", () => void contents.executeJavaScript(readFileSync(script, "utf8")).catch(() => undefined));
     const update = () => this.deps.send("browser:state", this.state());
     for (const name of ["did-start-loading", "did-stop-loading", "did-navigate", "did-navigate-in-page", "page-title-updated"] as const) {
       contents.on(name as "did-start-loading", update);

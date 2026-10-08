@@ -34,7 +34,15 @@ export interface DappRequest {
   origin: string;
   method: "eth_sendTransaction" | "wallet_sendCalls";
   calls: DappCall[];
+  /**
+   * The dApp reads the chain through its own RPC rather than this wallet (it filled in the nonce itself, or never read
+   * through the wallet). It cannot see queued actions or proposals, only transactions that are on-chain.
+   */
+  readsOwnRpc: boolean;
 }
+
+/** Methods a dApp uses to read the chain; seeing one from an origin means it reads through this wallet. */
+const WALLET_READS = new Set(["eth_call", "eth_estimateGas", "eth_getTransactionByHash", "eth_getTransactionReceipt", "eth_getBalance", "eth_blockNumber"]);
 
 export interface DappHost {
   /** The signing session, or undefined while the wallet is locked or no Safe is joined. */
@@ -95,13 +103,21 @@ export class DappProvider {
   private reviewing = false;
   private nextId = 0;
 
-  constructor(private readonly host: DappHost) {}
+  /** Origins that have read the chain through this wallet. */
+  private readonly readingOrigins = new Set<string>();
+
+  constructor(
+    private readonly host: DappHost,
+    /** How often to check whether a proposal a dApp is waiting for has executed. */
+    private readonly pollMs = 4_000,
+  ) {}
 
   async request(origin: string, method: string, params: unknown = []): Promise<unknown> {
     const session = this.host.session();
     if (!session) throw new ProviderError(DISCONNECTED, "Keyturn is locked");
     const args = Array.isArray(params) ? params : [];
     const chainHex = numberToHex(session.chainId);
+    if (WALLET_READS.has(method)) this.readingOrigins.add(origin);
 
     switch (method) {
       case "eth_chainId":
@@ -124,10 +140,15 @@ export class DappProvider {
       case "wallet_getCapabilities":
         return { [chainHex]: { atomic: { status: "supported" } } };
       case "eth_sendTransaction": {
-        const tx = args[0] as { from?: string; to?: string; value?: string; data?: string; input?: string } | undefined;
+        const tx = args[0] as { from?: string; to?: string; value?: string; data?: string; input?: string; nonce?: string } | undefined;
         if (!tx || typeof tx.to !== "string") throw new ProviderError(INVALID_PARAMS, "Contract creation is not supported");
         this.checkFrom(session, tx.from);
-        return (await this.propose(session, { origin, method, calls: [{ to: tx.to, value: tx.value, data: tx.data ?? tx.input }] })).hash;
+        const readsOwnRpc = tx.nonce !== undefined || !this.readingOrigins.has(origin);
+        const sent = await this.propose(session, { origin, method, calls: [{ to: tx.to, value: tx.value, data: tx.data ?? tx.input }], readsOwnRpc });
+        if (sent.queued) return sent.hash;
+        // eth_sendTransaction promises a transaction hash, and many dApps look it up through their own RPC: answer with
+        // the real execution once a signer executes the proposal.
+        return this.executionOf(session, sent.hash);
       }
       case "wallet_sendCalls": {
         const request = args[0] as { from?: string; chainId?: string; calls?: { to?: string; value?: string; data?: string }[] } | undefined;
@@ -138,7 +159,7 @@ export class DappProvider {
         this.checkFrom(session, request.from);
         if (request.calls.some((call) => typeof call.to !== "string")) throw new ProviderError(INVALID_PARAMS, "Contract creation is not supported");
         const calls = request.calls.map((call) => ({ to: call.to!, value: call.value, data: call.data }));
-        return { id: (await this.propose(session, { origin, method, calls })).hash };
+        return { id: (await this.propose(session, { origin, method, calls, readsOwnRpc: !this.readingOrigins.has(origin) })).hash };
       }
       case "wallet_getCallsStatus":
         return this.callsStatus(session, args[0]);
@@ -186,7 +207,7 @@ export class DappProvider {
   }
 
   /** Proposes or queues a request, as the user chooses; returns the hash the dApp gets back. */
-  private async propose(session: SignerSession, request: Omit<DappRequest, "id">): Promise<{ hash: Hex }> {
+  private async propose(session: SignerSession, request: Omit<DappRequest, "id">): Promise<{ hash: Hex; queued?: boolean }> {
     if (this.reviewing) throw new ProviderError(RESOURCE_UNAVAILABLE, "Another request is waiting for review");
     this.reviewing = true;
     try {
@@ -196,12 +217,25 @@ export class DappProvider {
         const hash = keccak256(stringToHex(`keyturn-queued:${result.queued.id}:${result.queued.addedAt}`));
         this.queued.set(hash.toLowerCase(), result.queued.id);
         if (request.calls[0]) this.queuedCalls.set(hash.toLowerCase(), request.calls[0]);
-        return { hash };
+        return { hash, queued: true };
       }
       this.proposals.set(result.safeTxHash.toLowerCase(), { nonce: BigInt(result.nonce), fromBlock, call: request.calls[0] });
       return { hash: result.safeTxHash };
     } finally {
       this.reviewing = false;
+    }
+  }
+
+  /** Waits until the proposal executes and returns the execution's transaction hash. */
+  private async executionOf(session: SignerSession, safeTxHash: Hex): Promise<Hex> {
+    const tracked = this.proposals.get(safeTxHash.toLowerCase())!;
+    for (;;) {
+      if (this.host.session() !== session) throw new ProviderError(DISCONNECTED, "Keyturn was locked before the transaction executed");
+      const status = await session.proposalStatus(safeTxHash, tracked.nonce, tracked.fromBlock).catch(() => undefined);
+      if (status?.status === "executed") return status.transactionHash!;
+      if (status?.status === "failed") throw new ProviderError(-32603, `the Safe executed the transaction but its call reverted (${status.transactionHash})`);
+      if (status?.status === "replaced") throw new ProviderError(USER_REJECTED, "another transaction was executed instead of this one");
+      await new Promise((resolve) => setTimeout(resolve, this.pollMs));
     }
   }
 
