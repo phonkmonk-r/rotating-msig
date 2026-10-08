@@ -8,6 +8,7 @@
   "include": [
     "main.ts",
     "browser.ts",
+    "profiles.ts",
     "vault.ts"
   ]
 }

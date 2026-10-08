@@ -13,7 +13,7 @@ import {
   type SlotPackage,
   type TreeFile,
 } from "@rotating-msig/core";
-import { seedSource, type AddressSource } from "@rotating-msig/keys";
+import { openLedgerSource, OPERATOR_ACCOUNT, seedSource, type AddressSource } from "@rotating-msig/keys";
 import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { isHex, type Hex } from "viem";
 
@@ -23,7 +23,8 @@ import { chainFor } from "../src/networks.js";
 import { createSafe, planSafe, prepareSlot, type NewSafeContext } from "../src/newsafe.js";
 import type { SignerSession } from "../src/session.js";
 import { DappBrowser, type Bounds } from "./browser.js";
-import { createVault, readVault, unlockVault } from "./vault.js";
+import { ProfileStore, type ProfileEntry } from "./profiles.js";
+import { readVault, unlockVault } from "./vault.js";
 
 /** Saved between launches. The seed lives only in the encrypted vault (`vault.json`); the tree is public data. */
 interface Settings {
@@ -57,20 +58,32 @@ type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 const appRoot = () => app.getAppPath();
 
 if (process.env.ROTATION_SIGNER_USER_DATA) app.setPath("userData", process.env.ROTATION_SIGNER_USER_DATA);
-const settingsPath = () => join(app.getPath("userData"), "settings.json");
-const vaultPath = () => join(app.getPath("userData"), "vault.json");
-const creatingPath = () => join(app.getPath("userData"), "creating.json");
+const profiles = new ProfileStore(app.getPath("userData"));
+/** The profile in use; its seed or Ledger is unlocked separately (`source`). */
+let activeId: string | undefined;
+
+function activeProfile(): ProfileEntry {
+  const profile = activeId ? profiles.get(activeId) : undefined;
+  if (!profile) throw new Error("choose a profile first");
+  return profile;
+}
+
+const profileDir = () => profiles.dir(activeProfile().id);
+const settingsPath = () => join(profileDir(), "settings.json");
+const vaultPath = () => join(profileDir(), "vault.json");
+const creatingPath = () => join(profileDir(), "creating.json");
 const treePath = (settings: Pick<Settings, "chainId" | "safe" | "slotId">) =>
-  join(app.getPath("userData"), "trees", `${settings.chainId}-${settings.safe.toLowerCase()}-slot${settings.slotId}.json`);
+  join(profileDir(), "trees", `${settings.chainId}-${settings.safe.toLowerCase()}-slot${settings.slotId}.json`);
 
 let session: SignerSession | undefined;
 /** Present only while the wallet is unlocked: the decrypted seed never leaves this process. */
 let source: AddressSource | undefined;
 let sessionError: string | undefined;
 
-function readSettings(): Settings | undefined {
+function readSettings(dir = activeId ? profileDir() : undefined): Settings | undefined {
+  if (!dir) return undefined;
   try {
-    return JSON.parse(readFileSync(settingsPath(), "utf8")) as Settings;
+    return JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")) as Settings;
   } catch {
     return undefined;
   }
@@ -173,6 +186,7 @@ const CREATE_GAS = 1_500_000n;
 const INSTALL_GAS_PER_SLOT = 1_600_000n;
 
 function readCreating(): Creating | undefined {
+  if (!activeId) return undefined;
   try {
     return JSON.parse(readFileSync(creatingPath(), "utf8")) as Creating;
   } catch {
@@ -190,11 +204,7 @@ function writeCreating(creating: Creating | undefined) {
 }
 
 function operator(): string | undefined {
-  try {
-    return readVault(vaultPath())?.operator;
-  } catch {
-    return undefined;
-  }
+  return activeId ? profiles.get(activeId)?.operator : undefined;
 }
 
 function newSafeContext(chainId: number): NewSafeContext {
@@ -319,14 +329,14 @@ handle("app:state", () => {
   } catch {
     // Reported through sessionError.
   }
-  let vault: { exists: boolean; unlocked: boolean; operator?: string } = { exists: false, unlocked: false };
-  try {
-    const file = readVault(vaultPath());
-    vault = { exists: file !== undefined, unlocked: source !== undefined, operator: file?.operator };
-  } catch (error) {
-    sessionError = (error as Error).message;
-  }
+  const profile = activeId ? profiles.get(activeId) : undefined;
+  const vault = { exists: profile !== undefined, unlocked: source !== undefined, operator: profile?.operator };
   return {
+    profiles: profiles.list().map((entry) => {
+      const saved = readSettings(profiles.dir(entry.id));
+      return { ...entry, safe: saved?.safe, chainId: saved?.chainId };
+    }),
+    profile,
     vault,
     configured: session !== undefined,
     settings: settings
@@ -338,9 +348,83 @@ handle("app:state", () => {
   };
 });
 
-handle("vault:create", async (mnemonic: string, password: string) => {
-  createVault(vaultPath(), String(mnemonic), String(password));
+/** Makes `id` the profile in use, locking whichever one was unlocked. */
+async function activate(id: string | undefined) {
+  await lock();
+  activeId = id;
+  sessionError = undefined;
+  profiles.setLastUsed(id);
+}
+
+/** Opens the connected Ledger, with plain-language errors for the usual setup problems. */
+async function connectLedger(): Promise<{ source: AddressSource; operator: string }> {
+  let device: AddressSource;
+  try {
+    device = await openLedgerSource();
+  } catch (error) {
+    throw new Error(`no Ledger found: connect it and unlock it (${(error as Error).message})`);
+  }
+  try {
+    return { source: device, operator: await device.address(OPERATOR_ACCOUNT) };
+  } catch (error) {
+    await device.close();
+    throw new Error(`open the Ethereum app on the Ledger and try again (${(error as Error).message})`);
+  }
+}
+
+handle("profiles:addSeed", async (name: unknown, mnemonic: unknown, password: unknown) => {
+  const entry = profiles.addSeed(String(name), String(mnemonic), String(password));
+  await activate(entry.id);
   source = seedSource(unlockVault(vaultPath(), String(password)));
+  await resume();
+  return entry;
+});
+
+handle("profiles:addLedger", async (name: unknown) => {
+  const device = await connectLedger();
+  let entry: ProfileEntry;
+  try {
+    entry = profiles.addLedger(String(name), device.operator as `0x${string}`);
+  } catch (error) {
+    await device.source.close();
+    throw error;
+  }
+  await activate(entry.id);
+  source = device.source;
+  await resume();
+  return entry;
+});
+
+handle("profiles:select", async (id: unknown) => {
+  if (!profiles.get(String(id))) throw new Error("no such profile");
+  await activate(String(id));
+  return true;
+});
+
+handle("profiles:deselect", async () => {
+  await activate(undefined);
+  return true;
+});
+
+handle("profiles:rename", (id: unknown, name: unknown) => profiles.rename(String(id), String(name)));
+
+handle("profiles:remove", async (id: unknown) => {
+  if (activeId === id) await activate(undefined);
+  profiles.remove(String(id));
+  return true;
+});
+
+/** Unlocks a Ledger profile: the connected device must be the one the profile was created with. */
+handle("ledger:connect", async () => {
+  const profile = activeProfile();
+  if (profile.kind !== "ledger") throw new Error("this profile uses a seed phrase");
+  const device = await connectLedger();
+  if (device.operator.toLowerCase() !== profile.operator.toLowerCase()) {
+    await device.source.close();
+    throw new Error(`this is a different Ledger (its first account is ${device.operator}); connect the one for "${profile.name}"`);
+  }
+  await lock();
+  source = device.source;
   await resume();
   return true;
 });
@@ -351,6 +435,7 @@ function sendToWindow(channel: string, payload: unknown) {
 }
 
 handle("vault:unlock", async (password: string) => {
+  if (activeProfile().kind !== "seed") throw new Error("this profile uses a Ledger");
   const phrase = unlockVault(vaultPath(), String(password));
   await lock();
   source = seedSource(phrase);
@@ -444,8 +529,10 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  profiles.migrateLegacy();
+  activeId = profiles.lastUsed()?.id;
   // Test hooks only: unlock (and optionally join) without the UI, so smoke tests can reach the dashboard.
-  if (process.env.ROTATION_SIGNER_TEST_PASSWORD && readVault(vaultPath())) {
+  if (process.env.ROTATION_SIGNER_TEST_PASSWORD && activeId && readVault(vaultPath())) {
     try {
       source = seedSource(unlockVault(vaultPath(), process.env.ROTATION_SIGNER_TEST_PASSWORD));
       if (process.env.ROTATION_SIGNER_TEST_JOIN) await joinWith(process.env.ROTATION_SIGNER_TEST_JOIN, {}, () => undefined);

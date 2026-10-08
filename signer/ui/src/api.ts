@@ -49,7 +49,25 @@ export interface JoinProgress {
   total?: number;
 }
 
+/** A signing identity: an encrypted seed or a Ledger, each with its own Safe. */
+export interface Profile {
+  id: string;
+  name: string;
+  kind: "seed" | "ledger";
+  operator: string;
+  createdAt: string;
+}
+
+export interface ProfileView extends Profile {
+  /** The Safe this profile is connected to, if any. */
+  safe?: string;
+  chainId?: number;
+}
+
 export interface DesktopState {
+  profiles: ProfileView[];
+  /** The profile in use; `vault` describes whether it is unlocked. */
+  profile?: Profile;
   vault: { exists: boolean; unlocked: boolean; operator?: string };
   configured: boolean;
   /** A new Safe is being set up (as its creator or as an invited signer). */
@@ -86,7 +104,13 @@ interface DesktopBridge {
   state(): Promise<Result<DesktopState>>;
   join(safe: string, advanced: Advanced): Promise<Result<true>>;
   onProgress(listener: (progress: JoinProgress) => void): () => void;
-  createVault(mnemonic: string, password: string): Promise<Result<true>>;
+  addSeedProfile(name: string, mnemonic: string, password: string): Promise<Result<Profile>>;
+  addLedgerProfile(name: string): Promise<Result<Profile>>;
+  selectProfile(id: string): Promise<Result<true>>;
+  deselectProfile(): Promise<Result<true>>;
+  renameProfile(id: string, name: string): Promise<Result<Profile>>;
+  removeProfile(id: string): Promise<Result<true>>;
+  connectLedger(): Promise<Result<true>>;
   unlock(password: string): Promise<Result<true>>;
   lock(): Promise<Result<true>>;
   reset(): Promise<Result<true>>;
@@ -181,7 +205,13 @@ export const desktop = bridge
       state: () => unwrap(bridge.state()),
       join: (safe: string, advanced: Advanced) => unwrap(bridge.join(safe, advanced)),
       onProgress: (listener: (progress: JoinProgress) => void) => bridge.onProgress(listener),
-      createVault: (mnemonic: string, password: string) => unwrap(bridge.createVault(mnemonic, password)),
+      addSeedProfile: (name: string, mnemonic: string, password: string) => unwrap(bridge.addSeedProfile(name, mnemonic, password)),
+      addLedgerProfile: (name: string) => unwrap(bridge.addLedgerProfile(name)),
+      selectProfile: (id: string) => unwrap(bridge.selectProfile(id)),
+      deselectProfile: () => unwrap(bridge.deselectProfile()),
+      renameProfile: (id: string, name: string) => unwrap(bridge.renameProfile(id, name)),
+      removeProfile: (id: string) => unwrap(bridge.removeProfile(id)),
+      connectLedger: () => unwrap(bridge.connectLedger()),
       unlock: (password: string) => unwrap(bridge.unlock(password)),
       lock: () => unwrap(bridge.lock()),
       reset: () => unwrap(bridge.reset()),

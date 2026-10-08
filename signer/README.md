@@ -19,6 +19,12 @@ On first launch, enter your seed phrase, a password and, to join an existing Saf
 - which signer you are, by matching the key your seed holds at each slot's current tree index against the slot's on-chain owner, so it works however many times you have already signed,
 - your rotation keys, rebuilt from the seed and checked against the root committed on-chain.
 
+### Profiles
+
+The app holds any number of profiles, each one wallet with its own Safe: a seed phrase (encrypted with its own password) or a Ledger (nothing secret is stored; the app recognizes the device by its first address and refuses a different one). Choose a profile at launch, switch from the sidebar, and rename or remove it in Settings. One profile is unlocked at a time; switching locks the current one. An install from before profiles is moved into a first profile automatically.
+
+Ledger profiles use the Ledger's USB library inside the desktop app; it loads without a rebuild, but signing has not been run on a real device yet.
+
 To start a new Safe instead, leave the Safe address empty and choose **Create a new Safe**:
 
 1. Every signer opens the app with their own seed and sends the creator their signer address (shown on the setup screen).

@@ -12,12 +12,13 @@ import { Settings } from "./pages/Settings";
 import { Signers } from "./pages/Signers";
 import { Transactions } from "./pages/Transactions";
 import { Avatar } from "./ui";
-import { ImportWallet, UnlockWallet } from "./Wallet";
+import { AddProfile, ConnectLedger, ProfilePicker, UnlockWallet } from "./Wallet";
 
 export function App() {
   const [desktopState, setDesktopState] = useState<DesktopState>();
   const [changingSafe, setChangingSafe] = useState(false);
   const [pendingSafe, setPendingSafe] = useState<string>();
+  const [adding, setAdding] = useState(false);
 
   const reload = useCallback(async () => {
     if (desktop) setDesktopState(await desktop.state());
@@ -43,22 +44,41 @@ export function App() {
 
   if (!desktopState) return <div className="boot" />;
 
-  if (!desktopState.vault.exists) {
+  const { profiles, profile } = desktopState;
+  if (profiles.length === 0 || adding) {
     return (
       <AuthLayout>
-        <ImportWallet
+        <AddProfile
+          suggestedName={`Wallet ${profiles.length + 1}`}
           onDone={(safe) => {
+            setAdding(false);
             setPendingSafe(safe);
             void reload();
           }}
+          onCancel={profiles.length > 0 ? () => setAdding(false) : undefined}
         />
       </AuthLayout>
     );
   }
-  if (!desktopState.vault.unlocked) {
+  if (!profile) {
     return (
       <AuthLayout>
-        <UnlockWallet operator={desktopState.vault.operator} onDone={() => void reload()} />
+        <ProfilePicker profiles={profiles} onPicked={() => void reload()} onAdd={() => setAdding(true)} />
+      </AuthLayout>
+    );
+  }
+  if (!desktopState.vault.unlocked) {
+    const switchProfile = () => {
+      setPendingSafe(undefined);
+      void reload();
+    };
+    return (
+      <AuthLayout>
+        {profile.kind === "ledger" ? (
+          <ConnectLedger name={profile.name} operator={profile.operator} onDone={() => void reload()} onSwitch={switchProfile} />
+        ) : (
+          <UnlockWallet name={profile.name} operator={profile.operator} onDone={() => void reload()} onSwitch={switchProfile} />
+        )}
       </AuthLayout>
     );
   }
@@ -98,6 +118,10 @@ export function App() {
     <Shell
       desktopState={desktopState}
       onChangeSafe={() => setChangingSafe(true)}
+      onSwitchProfile={() => {
+        void desktop!.deselectProfile().then(() => reload());
+      }}
+      onProfileChanged={() => void reload()}
       onLock={() => {
         void desktop!.lock().then(() => reload());
       }}
@@ -119,7 +143,19 @@ function AuthLayout({ children }: { children: ReactNode }) {
 
 type Page = "overview" | "transactions" | "browse" | "signers" | "settings";
 
-function Shell({ desktopState, onChangeSafe, onLock }: { desktopState?: DesktopState; onChangeSafe?: () => void; onLock?: () => void }) {
+function Shell({
+  desktopState,
+  onChangeSafe,
+  onLock,
+  onSwitchProfile,
+  onProfileChanged,
+}: {
+  desktopState?: DesktopState;
+  onChangeSafe?: () => void;
+  onLock?: () => void;
+  onSwitchProfile?: () => void;
+  onProfileChanged?: () => void;
+}) {
   const data = useSignerData();
   const [page, setPage] = useState<Page>(() => (window.location.hash.match(/page=(\w+)/)?.[1] as Page | undefined) ?? "overview");
   const { status, queue, refresh } = data;
@@ -173,6 +209,13 @@ function Shell({ desktopState, onChangeSafe, onLock }: { desktopState?: DesktopS
         </nav>
 
         <div className="sidebar-bottom">
+          {desktopState?.profile && onSwitchProfile && (
+            <button type="button" className="profile-chip" onClick={onSwitchProfile} title="Lock and switch to another profile">
+              <Avatar address={desktopState.profile.operator} size={22} />
+              <span className="profile-chip-name">{desktopState.profile.name}</span>
+              <span className="muted small">Switch</span>
+            </button>
+          )}
           {desktopState && (
             <button type="button" className={page === "settings" ? "nav-item active" : "nav-item"} onClick={() => setPage("settings")}>
               <IconSettings />
@@ -200,7 +243,7 @@ function Shell({ desktopState, onChangeSafe, onLock }: { desktopState?: DesktopS
         {status && page === "transactions" && <Transactions status={status} queue={queue} onBusy={data.setBusy} onRefresh={() => void data.refresh()} />}
         {status && page === "browse" && <Browse status={status} request={dappRequest} />}
         {status && page === "signers" && <Signers status={status} />}
-        {status && page === "settings" && desktopState && <Settings status={status} desktopState={desktopState} onChangeSafe={onChangeSafe!} onLock={onLock!} />}
+        {status && page === "settings" && desktopState && <Settings status={status} desktopState={desktopState} onChangeSafe={onChangeSafe!} onLock={onLock!} onProfileChanged={onProfileChanged!} onSwitchProfile={onSwitchProfile!} />}
       </main>
     </div>
   );

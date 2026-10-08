@@ -1450,3 +1450,120 @@ button.link {
   align-items: center;
   gap: 6px;
 }
+
+/* ---------- Profiles ---------- */
+
+.segmented.full {
+  display: flex;
+}
+
+.segmented.full button {
+  flex: 1;
+}
+
+.profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.profile-option {
+  height: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  text-align: left;
+}
+
+.profile-option-text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.profile-option-name {
+  font-weight: 650;
+}
+
+.link-button {
+  height: auto;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-weight: 500;
+  align-self: center;
+}
+
+.link-button:hover {
+  color: var(--text);
+  background: none;
+}
+
+.center {
+  text-align: center;
+}
+
+.profile-chip {
+  height: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  text-align: left;
+}
+
+.profile-chip-name {
+  flex: 1;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inline-edit {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.inline-edit input {
+  flex: 1;
+  max-width: 260px;
+}
+
+.danger-zone {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.danger-zone summary {
+  cursor: pointer;
+  color: var(--critical);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.danger-zone p {
+  margin: 8px 0;
+}
+
+button.danger {
+  color: #fff;
+  background: var(--critical);
+  border-color: transparent;
+}
+
+.unlock-account .profile-option-name {
+  color: var(--text);
+  font-size: 16px;
+}

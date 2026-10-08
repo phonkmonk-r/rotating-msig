@@ -17,7 +17,13 @@ contextBridge.exposeInMainWorld("signer", {
     ipcRenderer.on("app:progress", handler);
     return () => ipcRenderer.removeListener("app:progress", handler);
   },
-  createVault: call("vault:create"),
+  addSeedProfile: call("profiles:addSeed"),
+  addLedgerProfile: call("profiles:addLedger"),
+  selectProfile: call("profiles:select"),
+  deselectProfile: call("profiles:deselect"),
+  renameProfile: call("profiles:rename"),
+  removeProfile: call("profiles:remove"),
+  connectLedger: call("ledger:connect"),
   unlock: call("vault:unlock"),
   lock: call("vault:lock"),
   reset: call("app:reset"),

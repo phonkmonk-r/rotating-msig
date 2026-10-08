@@ -1,13 +1,18 @@
 import { useState } from "react";
 
-import { desktop } from "./api";
+import { desktop, type ProfileView } from "./api";
 import { short } from "./format";
-import { Avatar } from "./ui";
+import { IconPlus } from "./icons";
+import { Avatar, Badge } from "./ui";
 
 const MIN_PASSWORD = 10;
 
-/** First launch: seed, password and, when joining an existing Safe, its address. Everything else is worked out by the app. */
-export function ImportWallet({ onDone }: { onDone: (safe: string) => void }) {
+type Kind = "seed" | "ledger";
+
+/** Adds a profile: a seed phrase encrypted on this device, or a Ledger. The first one also asks for the Safe. */
+export function AddProfile({ suggestedName, onDone, onCancel }: { suggestedName: string; onDone: (safe: string) => void; onCancel?: () => void }) {
+  const [kind, setKind] = useState<Kind>("seed");
+  const [name, setName] = useState(suggestedName);
   const [mnemonic, setMnemonic] = useState("");
   const [safe, setSafe] = useState("");
   const [password, setPassword] = useState("");
@@ -18,19 +23,22 @@ export function ImportWallet({ onDone }: { onDone: (safe: string) => void }) {
   const words = mnemonic.trim() === "" ? 0 : mnemonic.trim().split(/\s+/).length;
   const validSafe = safe.trim() === "" || /^0x[0-9a-fA-F]{40}$/.test(safe.trim());
   const mismatch = confirm !== "" && confirm !== password;
-  const ready = (words === 12 || words === 24) && validSafe && password.length >= MIN_PASSWORD && password === confirm && !working;
+  const ready =
+    name.trim() !== "" && validSafe && !working && (kind === "ledger" || ((words === 12 || words === 24) && password.length >= MIN_PASSWORD && password === confirm));
 
   async function submit() {
     setWorking(true);
     setError(undefined);
     try {
-      await desktop!.createVault(mnemonic, password);
+      if (kind === "seed") await desktop!.addSeedProfile(name, mnemonic, password);
+      else await desktop!.addLedgerProfile(name);
       setMnemonic("");
       setPassword("");
       setConfirm("");
       onDone(safe.trim());
     } catch (caught) {
-      setError((caught as Error).message);
+      const message = (caught as Error).message;
+      setError(message.charAt(0).toUpperCase() + message.slice(1));
     } finally {
       setWorking(false);
     }
@@ -44,46 +52,128 @@ export function ImportWallet({ onDone }: { onDone: (safe: string) => void }) {
         if (ready) void submit();
       }}
     >
-      <h2>Set up your signer</h2>
-      <p className="muted">Your seed phrase is encrypted and never leaves this device.</p>
+      <h2>Add a profile</h2>
+      <p className="muted">Each profile is one wallet with its own Safe. Seeds are encrypted and never leave this device.</p>
+
+      <div className="segmented full">
+        <button type="button" className={kind === "seed" ? "active" : ""} onClick={() => setKind("seed")}>
+          Seed phrase
+        </button>
+        <button type="button" className={kind === "ledger" ? "active" : ""} onClick={() => setKind("ledger")}>
+          Ledger
+        </button>
+      </div>
 
       <label className="field">
-        <span className="field-label">
-          Seed phrase {words > 0 && <span className="muted">{words} words</span>}
-        </span>
-        <textarea rows={3} spellCheck={false} autoComplete="off" value={mnemonic} onChange={(e) => setMnemonic(e.target.value)} placeholder="12 or 24 words" />
+        <span className="field-label">Profile name</span>
+        <input value={name} maxLength={40} onChange={(e) => setName(e.target.value)} />
       </label>
+
+      {kind === "seed" ? (
+        <label className="field">
+          <span className="field-label">
+            Seed phrase {words > 0 && <span className="muted">{words} words</span>}
+          </span>
+          <textarea rows={3} spellCheck={false} autoComplete="off" value={mnemonic} onChange={(e) => setMnemonic(e.target.value)} placeholder="12 or 24 words" />
+        </label>
+      ) : (
+        <div className="note pending">
+          <span>Connect your Ledger, unlock it and open the Ethereum app. The app reads only addresses; every signature is confirmed on the device.</span>
+        </div>
+      )}
 
       <label className="field">
         <span className="field-label">
           Safe address <span className="muted">optional</span>
         </span>
         <input placeholder="Leave empty to create a Safe or use an invite" spellCheck={false} value={safe} onChange={(e) => setSafe(e.target.value)} />
-        {safe !== "" && !validSafe && <span className="field-error">Not a valid address</span>}
+        {!validSafe && <span className="field-error">Not a valid address</span>}
       </label>
 
-      <div className="field-row">
-        <label className="field">
-          <span className="field-label">Password</span>
-          <input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        </label>
-        <label className="field">
-          <span className="field-label">Confirm</span>
-          <input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
-        </label>
-      </div>
-      <span className={`field-hint ${mismatch ? "field-error" : ""}`}>{mismatch ? "Passwords don't match" : `At least ${MIN_PASSWORD} characters. It can't be recovered.`}</span>
+      {kind === "seed" && (
+        <>
+          <div className="field-row">
+            <label className="field">
+              <span className="field-label">Password</span>
+              <input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            </label>
+            <label className="field">
+              <span className="field-label">Confirm</span>
+              <input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+            </label>
+          </div>
+          <span className={`field-hint ${mismatch ? "field-error" : ""}`}>{mismatch ? "Passwords don't match" : `At least ${MIN_PASSWORD} characters. It can't be recovered.`}</span>
+        </>
+      )}
 
       {error && <div className="note critical">{error}</div>}
-      <button type="submit" className="primary block" disabled={!ready}>
-        {working ? "Encrypting…" : "Continue"}
-      </button>
+      <div className="form-actions">
+        {onCancel && (
+          <button type="button" onClick={onCancel} disabled={working}>
+            Cancel
+          </button>
+        )}
+        <button type="submit" className="primary" disabled={!ready}>
+          {working ? (kind === "seed" ? "Encrypting…" : "Connecting…") : kind === "seed" ? "Add profile" : "Connect Ledger"}
+        </button>
+      </div>
     </form>
   );
 }
 
-/** Later launches: password only. */
-export function UnlockWallet({ operator, onDone }: { operator?: string; onDone: () => void }) {
+/** Lists the profiles on this device; choosing one leads to its unlock screen. */
+export function ProfilePicker({ profiles, onPicked, onAdd }: { profiles: ProfileView[]; onPicked: () => void; onAdd: () => void }) {
+  const [error, setError] = useState<string>();
+  return (
+    <div className="auth-card">
+      <h2>Choose a profile</h2>
+      <div className="profile-list">
+        {profiles.map((profile) => (
+          <button
+            key={profile.id}
+            type="button"
+            className="profile-option"
+            onClick={() => {
+              desktop!.selectProfile(profile.id).then(onPicked, (caught: Error) => setError(caught.message));
+            }}
+          >
+            <Avatar address={profile.operator} size={34} />
+            <span className="profile-option-text">
+              <span className="profile-option-name">{profile.name}</span>
+              <span className="muted small mono">{profile.safe ? `Safe ${short(profile.safe)}` : short(profile.operator)}</span>
+            </span>
+            <Badge tone={profile.kind === "ledger" ? "accent" : "neutral"}>{profile.kind === "ledger" ? "Ledger" : "Seed"}</Badge>
+          </button>
+        ))}
+      </div>
+      {error && <div className="note critical">{error}</div>}
+      <button type="button" className="add-row" onClick={onAdd}>
+        <IconPlus /> Add a profile
+      </button>
+    </div>
+  );
+}
+
+function ProfileHeader({ name, operator }: { name: string; operator: string }) {
+  return (
+    <div className="unlock-account">
+      <Avatar address={operator} size={48} />
+      <span className="profile-option-name">{name}</span>
+      <span className="mono small">{short(operator)}</span>
+    </div>
+  );
+}
+
+function SwitchProfile({ onSwitch }: { onSwitch: () => void }) {
+  return (
+    <button type="button" className="link-button" onClick={() => void desktop!.deselectProfile().then(onSwitch)}>
+      Use another profile
+    </button>
+  );
+}
+
+/** Later launches of a seed profile: password only. */
+export function UnlockWallet({ name, operator, onDone, onSwitch }: { name: string; operator?: string; onDone: () => void; onSwitch: () => void }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string>();
   const [working, setWorking] = useState(false);
@@ -110,13 +200,7 @@ export function UnlockWallet({ operator, onDone }: { operator?: string; onDone: 
         void submit();
       }}
     >
-      {operator && (
-        <div className="unlock-account">
-          <Avatar address={operator} size={48} />
-          <span className="mono">{short(operator)}</span>
-        </div>
-      )}
-      <h2 className="center">Welcome back</h2>
+      {operator && <ProfileHeader name={name} operator={operator} />}
       <label className="field">
         <span className="field-label">Password</span>
         <input type="password" autoFocus autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
@@ -125,6 +209,39 @@ export function UnlockWallet({ operator, onDone }: { operator?: string; onDone: 
       <button type="submit" className="primary block" disabled={password === "" || working}>
         {working ? "Unlocking…" : "Unlock"}
       </button>
+      <SwitchProfile onSwitch={onSwitch} />
     </form>
+  );
+}
+
+/** Later launches of a Ledger profile: the same device must be connected with the Ethereum app open. */
+export function ConnectLedger({ name, operator, onDone, onSwitch }: { name: string; operator: string; onDone: () => void; onSwitch: () => void }) {
+  const [error, setError] = useState<string>();
+  const [working, setWorking] = useState(false);
+
+  async function connect() {
+    setWorking(true);
+    setError(undefined);
+    try {
+      await desktop!.connectLedger();
+      onDone();
+    } catch (caught) {
+      const message = (caught as Error).message;
+      setError(message.charAt(0).toUpperCase() + message.slice(1));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  return (
+    <div className="auth-card narrow">
+      <ProfileHeader name={name} operator={operator} />
+      <p className="muted center">Connect this Ledger, unlock it and open the Ethereum app.</p>
+      {error && <div className="note critical">{error}</div>}
+      <button type="button" className="primary block" disabled={working} onClick={() => void connect()}>
+        {working ? "Connecting…" : "Connect Ledger"}
+      </button>
+      <SwitchProfile onSwitch={onSwitch} />
+    </div>
   );
 }
