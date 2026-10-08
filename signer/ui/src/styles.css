@@ -371,3 +371,79 @@ button:disabled {
   font-size: 12px;
   text-align: right;
 }
+
+.banner.warning {
+  background: var(--warning-bg);
+}
+
+.banner.pending {
+  background: var(--bg);
+  border: 1px dashed var(--border);
+}
+
+.table-panel {
+  padding: 0;
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+th {
+  color: var(--muted);
+  font-weight: 500;
+  font-size: 12px;
+}
+
+tr:last-child td {
+  border-bottom: none;
+}
+
+tr.me td {
+  background: var(--accent-soft);
+}
+
+.you {
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.state {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.state.ok {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.state.warning {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+
+.state.critical {
+  background: var(--critical-bg);
+  color: var(--critical);
+}
+
+.small {
+  font-size: 12px;
+  margin-top: 8px;
+}

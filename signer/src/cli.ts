@@ -13,10 +13,13 @@ import { SignerSession } from "./session.js";
 
 export const DEFAULT_PORT = 7373;
 
-/** Flashbots Protect: private, and drops transactions that would revert instead of mining them. */
+/**
+ * Mainnet executions default to Flashbots Protect: private, and it drops transactions that would revert instead of
+ * mining them. Sepolia defaults to the read RPC: Flashbots Protect accepts Sepolia transactions but few builders
+ * include them, so executions hang (seen on 2026-10-08).
+ */
 export const DEFAULT_EXECUTION_RPC: Record<number, string> = {
   1: "https://rpc.flashbots.net",
-  [SEPOLIA_CHAIN_ID]: "https://rpc-sepolia.flashbots.net",
 };
 
 const CHAINS: Record<number, Chain> = { 1: mainnet, [SEPOLIA_CHAIN_ID]: sepolia };
@@ -28,7 +31,7 @@ const USAGE = `rotation-signer: confirm and execute Safe transactions with your 
 
   --tree           your tree file; it names the Safe, the chain and your slot
   --rpc            RPC used to read the chain (also read from RPC_URL)
-  --execution-rpc  RPC used only to send executions; defaults to Flashbots Protect for the chain
+  --execution-rpc  RPC used only to send executions; defaults to Flashbots Protect on mainnet, the read RPC on Sepolia
   --mnemonic-file  your seed phrase file; without it (and without --ledger) the seed is asked for, hidden
   --ledger         sign on a Ledger instead of a seed
   --port           local port for the UI (127.0.0.1 only)
@@ -66,7 +69,7 @@ export function parseConfig(argv: string[], env: NodeJS.ProcessEnv = process.env
   if (!chain) throw new Error(`the tree is for chain ${tree.chainId}; only mainnet and Sepolia are supported`);
   const rpc = values.rpc ?? env.RPC_URL;
   if (!rpc) throw new Error("--rpc (or RPC_URL) is required");
-  const executionRpc = values["execution-rpc"] ?? DEFAULT_EXECUTION_RPC[tree.chainId]!;
+  const executionRpc = values["execution-rpc"] ?? DEFAULT_EXECUTION_RPC[tree.chainId] ?? rpc;
   const port = values.port === undefined ? DEFAULT_PORT : Number(values.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`invalid --port: ${values.port}`);
   if (values.ledger && values["mnemonic-file"]) throw new Error("choose either --ledger or --mnemonic-file");

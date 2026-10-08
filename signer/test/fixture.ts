@@ -8,6 +8,7 @@ import {
   encodeFunctionData,
   getAddress,
   http,
+  keccak256,
   pad,
   parseEther,
   recoverAddress,
@@ -138,6 +139,8 @@ interface StoredTx {
 export interface FakeTxService {
   baseUrl: string;
   propose(tx: SafeTx): Hex;
+  /** Removes a proposal, as when it is replaced in Safe{Wallet}. */
+  drop(safeTxHash: Hex): void;
   stop(): Promise<void>;
 }
 
@@ -187,6 +190,37 @@ export async function startFakeTxService(safe: Address, chainId: number): Promis
       store.set(hash.toLowerCase(), { tx, safeTxHash: hash, confirmations: [] });
       return hash;
     },
+    drop(safeTxHash: Hex) {
+      store.delete(safeTxHash.toLowerCase());
+    },
     stop: () => new Promise<void>((resolve) => server.close(() => resolve())),
   };
+}
+
+export interface BlackHoleRpc {
+  url: string;
+  swallowed(): number;
+  stop(): Promise<void>;
+}
+
+/** An RPC that answers like a private relay but never forwards raw transactions: what Flashbots Protect did on Sepolia. */
+export async function startBlackHoleRpc(upstream: string): Promise<BlackHoleRpc> {
+  let swallowed = 0;
+  const server: Server = createServer(async (req, res) => {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    const call = JSON.parse(body) as { id: number; method: string; params: unknown[] };
+    res.writeHead(200, { "content-type": "application/json" });
+    if (call.method === "eth_sendRawTransaction") {
+      swallowed++;
+      res.end(JSON.stringify({ jsonrpc: "2.0", id: call.id, result: keccak256(call.params[0] as Hex) }));
+      return;
+    }
+    const forwarded = await fetch(upstream, { method: "POST", headers: { "content-type": "application/json" }, body });
+    res.end(await forwarded.text());
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  return { url: `http://127.0.0.1:${port}`, swallowed: () => swallowed, stop: () => new Promise<void>((resolve) => server.close(() => resolve())) };
 }

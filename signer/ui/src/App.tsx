@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { api, hasToken, type ExecuteResult, type QueueItem, type StatusView } from "./api";
+import { api, hasToken, type Execution, type QueueItem, type SignerView, type StatusView } from "./api";
 import { eth, explorer, short } from "./format";
 
 const REFRESH_MS = 10_000;
+const EXECUTION_POLL_MS = 3_000;
 const LOW_GAS_WEI = 5_000_000_000_000_000n;
 
 export function App() {
@@ -65,6 +66,7 @@ export function App() {
       </header>
 
       {error && <p className="banner critical">Could not reach the signer: {error}</p>}
+      {status?.queueError && <p className="banner warning">The Safe Transaction Service could not be read, so pending transactions are unknown: {status.queueError}</p>}
       {!status && !error && <p className="muted">Loading…</p>}
       {status && (
         <>
@@ -82,6 +84,7 @@ export function App() {
               </ul>
             </section>
           )}
+          <Signers status={status} />
           <Queue
             status={status}
             queue={queue}
@@ -153,6 +156,74 @@ function Stat({ label, value, hint, tone }: { label: string; value: React.ReactN
   );
 }
 
+function Signers({ status }: { status: StatusView }) {
+  return (
+    <section>
+      <h2>Signers</h2>
+      <div className="panel table-panel">
+        <table>
+          <thead>
+            <tr>
+              <th>Slot</th>
+              <th>Current owner</th>
+              <th>Key</th>
+              <th>Next keys</th>
+              <th>Gas</th>
+              <th>State</th>
+            </tr>
+          </thead>
+          <tbody>
+            {status.signers.map((signer) => (
+              <tr key={signer.slotId} className={signer.isMe ? "me" : ""}>
+                <td>
+                  {signer.slotId}
+                  {signer.isMe && <span className="you">you</span>}
+                </td>
+                <td className="mono">
+                  <a href={explorer(status.chainId, "address", signer.owner)} target="_blank" rel="noreferrer" title={signer.owner}>
+                    {short(signer.owner)}
+                  </a>
+                </td>
+                <td>
+                  <span className="muted">
+                    {signer.index.toLocaleString()} / {signer.treeSize.toLocaleString()}
+                  </span>
+                </td>
+                <td>
+                  <span className="dots" aria-label={`${signer.staged} staged`}>
+                    {Array.from({ length: status.me?.bufferSize ?? 5 }, (_, i) => (
+                      <span key={i} className={i < signer.staged ? "dot on" : "dot"} />
+                    ))}
+                  </span>
+                </td>
+                <td>{eth(signer.balance)}</td>
+                <td>
+                  <SignerState signer={signer} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="muted small">
+        Each signature moves a slot to its next staged key. When a slot runs out of staged keys, anyone can refill it from the
+        signer's public tree file; no owner key is needed.
+      </p>
+    </section>
+  );
+}
+
+function SignerState({ signer }: { signer: SignerView }) {
+  if (signer.staged === 0) return <span className="state critical">Needs refill: cannot sign</span>;
+  if (signer.confirmedNonces.length > 0) {
+    return <span className="state warning">Confirmed #{signer.confirmedNonces.join(", #")}: exposed until it executes</span>;
+  }
+  if (signer.unused + signer.staged < signer.treeSize * 0.1) return <span className="state warning">Tree running low</span>;
+  if (BigInt(signer.balance) < LOW_GAS_WEI) return <span className="state warning">Low gas: cannot execute</span>;
+  if (signer.staged < 2) return <span className="state warning">Refill soon</span>;
+  return <span className="state ok">Ready</span>;
+}
+
 function Queue({ status, queue, onBusy }: { status: StatusView; queue: QueueItem[]; onBusy: (busy: boolean) => void }) {
   return (
     <section>
@@ -169,7 +240,13 @@ function Queue({ status, queue, onBusy }: { status: StatusView; queue: QueueItem
   );
 }
 
-type Stage = { kind: "idle" } | { kind: "review" } | { kind: "working" } | { kind: "done"; result?: ExecuteResult } | { kind: "failed"; message: string };
+type Stage =
+  | { kind: "idle" }
+  | { kind: "review" }
+  | { kind: "working" }
+  | { kind: "confirmed" }
+  | { kind: "executing"; execution: Execution }
+  | { kind: "failed"; message: string };
 
 function TxCard({ item, status, onBusy }: { item: QueueItem; status: StatusView; onBusy: (busy: boolean) => void }) {
   const [stage, setStage] = useState<Stage>({ kind: "idle" });
@@ -183,13 +260,20 @@ function TxCard({ item, status, onBusy }: { item: QueueItem; status: StatusView;
     try {
       if (action === "confirm") {
         await api.confirm(item.safeTxHash);
-        setStage({ kind: "done" });
+        setStage({ kind: "confirmed" });
+        onBusy(false);
       } else {
-        setStage({ kind: "done", result: await api.execute(item.safeTxHash) });
+        let execution = await api.execute(item.safeTxHash);
+        setStage({ kind: "executing", execution });
+        while (execution.status === "pending" || execution.status === "stuck") {
+          await new Promise((resolve) => setTimeout(resolve, EXECUTION_POLL_MS));
+          execution = await api.execution(execution.transactionHash);
+          setStage({ kind: "executing", execution });
+        }
+        onBusy(false);
       }
     } catch (caught) {
       setStage({ kind: "failed", message: (caught as Error).message });
-    } finally {
       onBusy(false);
     }
   }
@@ -231,8 +315,10 @@ function TxCard({ item, status, onBusy }: { item: QueueItem; status: StatusView;
         </ul>
       )}
 
-      {stage.kind === "done" ? (
-        <Done action={action} result={stage.result} chainId={status.chainId} />
+      {stage.kind === "confirmed" ? (
+        <p className="banner ok">Confirmation posted. The last signer can now execute.</p>
+      ) : stage.kind === "executing" ? (
+        <ExecutionStatus execution={stage.execution} chainId={status.chainId} />
       ) : action === "none" ? (
         <ul className="notes blocked">
           {blockers.map((b) => (
@@ -305,29 +391,45 @@ function Review({
   );
 }
 
-function Done({ action, result, chainId }: { action: "confirm" | "execute" | "none"; result?: ExecuteResult; chainId: number }) {
-  if (action === "confirm" || !result) return <p className="banner ok">Confirmation posted. The last signer can now execute.</p>;
-  const link = explorer(chainId, "tx", result.transactionHash);
+function ExecutionStatus({ execution, chainId }: { execution: Execution; chainId: number }) {
+  const link = explorer(chainId, "tx", execution.transactionHash);
+  const hash = link ? (
+    <a href={link} target="_blank" rel="noreferrer" className="mono">
+      {short(execution.transactionHash)}
+    </a>
+  ) : (
+    <span className="mono">{short(execution.transactionHash)}</span>
+  );
+  if (execution.status === "success") {
+    return (
+      <div className="banner ok">
+        <p>
+          Executed in {hash} using {Number(execution.gasUsed).toLocaleString()} gas.
+        </p>
+        <ul>
+          {execution.rotated?.map((r) => (
+            <li key={r.slotId}>
+              Slot {r.slotId} rotated: <span className="mono">{short(r.from)}</span> → <span className="mono">{short(r.to)}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+  if (execution.status === "reverted") {
+    return (
+      <div className="banner critical">
+        <p>Transaction {hash} reverted.</p>
+        <p>{execution.message}</p>
+      </div>
+    );
+  }
   return (
-    <div className="banner ok">
+    <div className={`banner ${execution.status === "stuck" ? "warning" : "pending"}`}>
       <p>
-        Executed in{" "}
-        {link ? (
-          <a href={link} target="_blank" rel="noreferrer" className="mono">
-            {short(result.transactionHash)}
-          </a>
-        ) : (
-          <span className="mono">{short(result.transactionHash)}</span>
-        )}{" "}
-        using {Number(result.gasUsed).toLocaleString()} gas.
+        Sent {hash} through {execution.sentThrough}. Waiting for it to be included…
       </p>
-      <ul>
-        {result.rotated.map((r) => (
-          <li key={r.slotId}>
-            Slot {r.slotId} rotated: <span className="mono">{short(r.from)}</span> → <span className="mono">{short(r.to)}</span>
-          </li>
-        ))}
-      </ul>
+      {execution.message && <p>{execution.message}</p>}
     </div>
   );
 }

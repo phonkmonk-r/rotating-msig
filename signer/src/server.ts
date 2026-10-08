@@ -77,6 +77,14 @@ export async function serve(session: SignerSession, options: ServeOptions): Prom
         return send(res, 409, { error: (error as Error).message });
       }
     }
+    const execution = url.pathname.match(/^\/api\/executions\/(0x[0-9a-fA-F]{64})$/);
+    if (req.method === "GET" && execution) {
+      try {
+        return send(res, 200, await session.execution(execution[1] as `0x${string}`));
+      } catch (error) {
+        return send(res, 404, { error: (error as Error).message });
+      }
+    }
     return send(res, 404, { error: "not found" });
   }
 

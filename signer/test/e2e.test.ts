@@ -9,7 +9,7 @@ import { seedSource } from "@rotating-msig/keys";
 
 import { serve, type SignerServer } from "../src/server.js";
 import { SignerSession } from "../src/session.js";
-import { hasAnvil, hasArtifacts, SIGNER_SEEDS, startChain, startFakeTxService, type Chain, type FakeTxService } from "./fixture.js";
+import { hasAnvil, hasArtifacts, SIGNER_SEEDS, startBlackHoleRpc, startChain, startFakeTxService, type Chain, type FakeTxService } from "./fixture.js";
 
 const skip = !hasAnvil ? "anvil not installed" : !hasArtifacts ? "run `forge build` first" : false;
 const RECIPIENT: Address = "0x000000000000000000000000000000000000beef";
@@ -28,6 +28,19 @@ describe("rotation signer end to end", { skip }, () => {
   }
 
   const post = (server: SignerServer, path: string, safeTxHash: string) => api(server, path, { method: "POST", body: JSON.stringify({ safeTxHash }) });
+
+  /** Sends an execution and polls it until it leaves "pending". */
+  async function executeAndWait(server: SignerServer, safeTxHash: string) {
+    const sent = await post(server, "/api/execute", safeTxHash);
+    assert.equal(sent.status, 200, JSON.stringify(sent.body));
+    assert.equal(sent.body.status, "pending");
+    for (let i = 0; i < 100; i++) {
+      const { body } = await api(server, `/api/executions/${sent.body.transactionHash}`);
+      if (body.status !== "pending") return body;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error("execution stayed pending");
+  }
 
   before(async () => {
     chain = await startChain(8548);
@@ -55,6 +68,18 @@ describe("rotation signer end to end", { skip }, () => {
     await Promise.all(servers?.map((server) => server.close()) ?? []);
     await service?.stop();
     chain?.stop();
+  });
+
+  it("shows every signer's slot, and who has confirmed a pending transaction", async () => {
+    const hash = service.propose(plainSafeTx({ to: RECIPIENT, value: 1n, data: "0x", operation: 0, nonce: 1n }));
+    assert.equal((await post(servers[2]!, "/api/confirm", hash)).status, 200);
+    const { body } = await api(servers[0]!, "/api/status");
+    const signers = body.signers as { slotId: number; isMe: boolean; index: number; staged: number; confirmedNonces: string[] }[];
+    assert.deepEqual(signers.map((s) => s.slotId), [0, 1, 2]);
+    assert.deepEqual(signers.map((s) => s.isMe), [true, false, false]);
+    assert.deepEqual(signers.map((s) => s.confirmedNonces), [[], [], ["1"]]);
+    assert.ok(signers.every((s) => s.index === 0 && s.staged === 5));
+    service.drop(hash);
   });
 
   it("reports each signer's slot and current key", async () => {
@@ -85,9 +110,9 @@ describe("rotation signer end to end", { skip }, () => {
     queue = (await api(two, "/api/queue")).body as never;
     assert.equal(queue[0]!.verdict.action, "execute");
 
-    const executed = await post(two, "/api/execute", hash);
-    assert.equal(executed.status, 200, JSON.stringify(executed.body));
-    const rotated = executed.body.rotated as { slotId: number }[];
+    const executed = await executeAndWait(two, hash);
+    assert.equal(executed.status, "success", JSON.stringify(executed));
+    const rotated = executed.rotated as { slotId: number }[];
     assert.deepEqual(rotated.map((r) => r.slotId).sort(), [0, 1]);
     assert.equal(await chain.client.getBalance({ address: RECIPIENT }), parseEther("0.01"));
 
@@ -102,8 +127,8 @@ describe("rotation signer end to end", { skip }, () => {
     const hash = service.propose(plainSafeTx({ to: RECIPIENT, value: 1n, data: "0x", operation: 0, nonce: 2n }));
     const [one, , three] = servers as [SignerServer, SignerServer, SignerServer];
     assert.equal((await post(three, "/api/confirm", hash)).status, 200);
-    const executed = await post(one, "/api/execute", hash);
-    assert.equal(executed.status, 200, JSON.stringify(executed.body));
+    const executed = await executeAndWait(one, hash);
+    assert.equal(executed.status, "success", JSON.stringify(executed));
     const me = (await api(one, "/api/status")).body.me as { index: number };
     assert.equal(me.index, 2);
   });
@@ -115,6 +140,41 @@ describe("rotation signer end to end", { skip }, () => {
     assert.match(String(out.body.error), /nonce 3 must execute first/);
     assert.equal((await post(servers[0]!, "/api/confirm", `0x${"00".repeat(32)}`)).status, 409);
     assert.equal((await post(servers[0]!, "/api/confirm", "0x1234")).status, 400);
+  });
+
+  it("reports an execution the RPC never includes as stuck, without sending it anywhere else", async () => {
+    const blackHole = await startBlackHoleRpc(chain.rpc);
+    const stuckSigner = await serve(
+      new SignerSession({
+        publicClient: chain.client,
+        chain: foundry,
+        executionRpcUrl: blackHole.url,
+        txService: new TxService(foundry.id, { baseUrl: service.baseUrl }),
+        source: seedSource(SIGNER_SEEDS[2]!),
+        tree: chain.trees[2]!,
+        safe: chain.safe,
+        multiSendCallOnly: chain.multiSend,
+        executionTimeoutMs: 1000,
+      }),
+      { port: 0 },
+    );
+    try {
+      const nonce = BigInt((await api(servers[0]!, "/api/status")).body.nonce as string);
+      const hash = service.propose(plainSafeTx({ to: RECIPIENT, value: 1n, data: "0x", operation: 0, nonce }));
+      assert.equal((await post(servers[1]!, "/api/confirm", hash)).status, 200);
+      const sent = await post(stuckSigner, "/api/execute", hash);
+      assert.equal(sent.body.status, "pending");
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const { body } = await api(stuckSigner, `/api/executions/${sent.body.transactionHash}`);
+      assert.equal(body.status, "stuck");
+      assert.match(String(body.message), /only one can ever be mined/);
+      assert.equal(blackHole.swallowed(), 1);
+      assert.equal(BigInt((await api(servers[0]!, "/api/status")).body.nonce as string), nonce, "nothing reached the chain");
+      service.drop(hash);
+    } finally {
+      await stuckSigner.close();
+      await blackHole.stop();
+    }
   });
 
   it("guards the local API", async () => {

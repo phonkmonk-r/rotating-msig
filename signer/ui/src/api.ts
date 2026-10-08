@@ -1,6 +1,6 @@
-import type { ExecuteResult, QueueItem, StatusView } from "../../src/session.js";
+import type { Execution, QueueItem, SignerView, StatusView } from "../../src/session.js";
 
-export type { ExecuteResult, QueueItem, StatusView };
+export type { Execution, QueueItem, SignerView, StatusView };
 
 const TOKEN_KEY = "rotation-signer-token";
 
@@ -38,5 +38,6 @@ export const api = {
   status: () => call<StatusView>("/api/status"),
   queue: () => call<QueueItem[]>("/api/queue"),
   confirm: (safeTxHash: string) => call<{ owner: string }>("/api/confirm", { method: "POST", body: JSON.stringify({ safeTxHash }) }),
-  execute: (safeTxHash: string) => call<ExecuteResult>("/api/execute", { method: "POST", body: JSON.stringify({ safeTxHash }) }),
+  execute: (safeTxHash: string) => call<Execution>("/api/execute", { method: "POST", body: JSON.stringify({ safeTxHash }) }),
+  execution: (transactionHash: string) => call<Execution>(`/api/executions/${transactionHash}`),
 };
