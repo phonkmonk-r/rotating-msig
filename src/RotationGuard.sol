@@ -29,6 +29,8 @@ import {IRotationGuard} from "./interfaces/IRotationGuard.sol";
 contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
     /// @notice Capacity of each slot's staging ring buffer.
     uint256 public constant BUFFER_SIZE = 5;
+    /// @notice Slot IDs one configuration can hand out; bounds the owner-to-slot scan. `initialize` starts over.
+    uint256 public constant MAX_SLOTS = 32;
 
     /// @notice The only delegatecall target allowed in guarded transactions.
     address public immutable MULTI_SEND_CALL_ONLY;
@@ -60,8 +62,6 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
 
     mapping(address safe => SafeConfig) internal _configs;
     mapping(address safe => mapping(uint64 epoch => mapping(uint256 slotId => Slot))) internal _slots;
-    /// @dev Stores `slotId + 1` so that zero means "no slot".
-    mapping(address safe => mapping(uint64 epoch => mapping(address owner => uint256))) internal _slotOf;
     mapping(address safe => mapping(bytes32 root => uint32)) internal _consumedUpTo;
 
     /**
@@ -172,9 +172,9 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
         for (uint256 i = 0; i < signerCount; ++i) {
             address signer = signers[i];
             if (!_safe(safe).isOwner(signer)) continue;
-            uint256 slotIdPlusOne = _slotOf[safe][epoch][signer];
-            if (slotIdPlusOne == 0) revert UnmanagedOwner(signer);
-            _rotate(safe, epoch, slotIdPlusOne - 1);
+            (bool found, uint256 slotId) = _findSlot(safe, epoch, signer);
+            if (!found) revert UnmanagedOwner(signer);
+            _rotate(safe, epoch, slotId);
         }
 
         _checkOwnerSet(safe, epoch);
@@ -262,7 +262,6 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
 
         address owner = slot.owner;
         _recordConsumed(safe, slot);
-        delete _slotOf[safe][epoch][owner];
         delete _slots[safe][epoch][slotId];
         --config.activeSlots;
 
@@ -385,9 +384,7 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
 
     /// @inheritdoc IRotationGuard
     function slotOf(address safe, address owner) external view override returns (bool found, uint256 slotId) {
-        uint256 slotIdPlusOne = _slotOf[safe][_configs[safe].epoch][owner];
-        if (slotIdPlusOne == 0) return (false, 0);
-        return (true, slotIdPlusOne - 1);
+        return _findSlot(safe, _configs[safe].epoch, owner);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -397,11 +394,11 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
     function _createSlot(address safe, uint64 epoch, SlotConfig calldata config) internal returns (address) {
         if (config.root == bytes32(0) || config.startIndex >= config.size) revert InvalidConfig();
         _requireUnconsumed(safe, config.root, config.startIndex);
-        if (!_isValidNewOwner(safe, config.owner) || _slotOf[safe][epoch][config.owner] != 0) {
-            revert InvalidOwner(config.owner);
-        }
+        // Every slot owner is a Safe owner (checked after each change), so this also rules out another slot's owner.
+        if (!_isValidNewOwner(safe, config.owner)) revert InvalidOwner(config.owner);
 
         SafeConfig storage safeConfig = _configs[safe];
+        if (safeConfig.slotCount >= MAX_SLOTS) revert InvalidConfig();
         uint256 slotId = safeConfig.slotCount++;
         ++safeConfig.activeSlots;
 
@@ -414,7 +411,6 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
         slot.owner = config.owner;
         slot.size = config.size;
         slot.nextStageIndex = config.startIndex + 1;
-        _slotOf[safe][epoch][config.owner] = slotId + 1;
 
         emit SlotConfigured(safe, slotId, config.root, config.size, config.startIndex, config.cid);
         return config.owner;
@@ -433,8 +429,6 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
         slot.head = uint8((head + 1) % BUFFER_SIZE);
         slot.count = uint8(count - 1);
         slot.owner = newOwner;
-        delete _slotOf[safe][epoch][oldOwner];
-        _slotOf[safe][epoch][newOwner] = slotId + 1;
 
         _execAsModule(
             safe,
@@ -462,12 +456,21 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
     function _checkOwnerSet(address safe, uint64 epoch) internal view {
         address[] memory owners = _safe(safe).getOwners();
         if (owners.length != _configs[safe].activeSlots) revert OwnerSetMismatch();
+        // Owners are distinct and each sits in a slot, and a slot has one owner: with equal counts, a bijection.
         for (uint256 i = 0; i < owners.length; ++i) {
-            uint256 slotIdPlusOne = _slotOf[safe][epoch][owners[i]];
-            if (slotIdPlusOne == 0 || _slots[safe][epoch][slotIdPlusOne - 1].owner != owners[i]) {
-                revert OwnerSetMismatch();
-            }
+            (bool found, ) = _findSlot(safe, epoch, owners[i]);
+            if (!found) revert OwnerSetMismatch();
         }
+    }
+
+    /// @dev The slot whose current owner is `owner`, scanning at most MAX_SLOTS IDs (removed slots have no owner).
+    function _findSlot(address safe, uint64 epoch, address owner) internal view returns (bool found, uint256 slotId) {
+        if (owner == address(0)) return (false, 0);
+        uint256 slotCount = _configs[safe].slotCount;
+        for (uint256 id = 0; id < slotCount; ++id) {
+            if (_slots[safe][epoch][id].owner == owner) return (true, id);
+        }
+        return (false, 0);
     }
 
     function _checkHooksInstalled(address safe) internal view {

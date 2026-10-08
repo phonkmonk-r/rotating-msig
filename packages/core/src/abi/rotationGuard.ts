@@ -26,6 +26,19 @@ export const rotationGuardAbi = [
   },
   {
     "type": "function",
+    "name": "MAX_SLOTS",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "MULTI_SEND_CALL_ONLY",
     "inputs": [],
     "outputs": [

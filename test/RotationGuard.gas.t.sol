@@ -33,19 +33,19 @@ contract RotationGuardGasTest is Test {
     }
 
     function test_gas_2of3() public {
-        _measure(3, 2, 70_000);
+        _measure(3, 2, 50_000);
     }
 
     function test_gas_3of5() public {
-        _measure(5, 3, 75_000);
+        _measure(5, 3, 55_000);
     }
 
     function test_gas_7of10() public {
-        _measure(10, 7, 80_000);
+        _measure(10, 7, 62_000);
     }
 
     function test_gas_20of20() public {
-        _measure(20, 20, 90_000);
+        _measure(20, 20, 75_000);
     }
 
     /// @dev `maxOverheadPerSigner` is a regression budget a little above the measured cost for each size.

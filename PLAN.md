@@ -28,7 +28,7 @@ Findings that changed the design during implementation:
 - Measured rotation overhead is 65-82k gas per signer, not the 40-50k first estimated (section 6).
 - Addresses depend only on the seed and account index, not on the Safe, so every Safe needs its own unused `--base` range (`generator/README.md`).
 - Sepolia's hardfork of early October 2026 reprices contract and state creation. Deploying the guard costs 16,697,418 gas there (2.38M on mainnet today), 99.5% of the 2^24 per-transaction cap. Mainnet is likely to adopt the same rules, so the guard must not grow; any new on-chain feature (including the phase 7 co-signer) needs a size budget, and rotation gas must be re-measured under the new rules. The setup transaction for a 2-of-3 estimates at 4.4M gas on Sepolia.
-- Under the same rules, a 2-of-3 transfer that rotates both signers used 649,233 gas on Sepolia, about 3.3x the 197k measured locally under Prague rules, so roughly 250-300k per rotated signer. The cost is dominated by the two storage entries each rotation creates (Safe's owner list entry and the guard's `ownerToSlot`). Candidate optimization: drop `ownerToSlot` and find a signer's slot by scanning the 2-5 slots, removing one new storage entry per rotation and shrinking the contract.
+- Under the same rules, a 2-of-3 transfer that rotates both signers used 649,233 gas on Sepolia, about 3.3x the 197k measured locally under Prague rules, so roughly 250-300k per rotated signer. The cost is dominated by the two storage entries each rotation creates (Safe's owner list entry and the guard's `ownerToSlot`). Done 2026-10-08: `ownerToSlot` is gone; the guard finds a signer's slot by scanning its slots (at most `MAX_SLOTS` = 32 IDs per configuration), removing one new storage entry per rotation. Locally the 2-of-3 overhead fell from 65.1k to 43.5k gas per signer (guarded transaction 197,375 to 154,185) and the contract from 10,662 to 10,280 bytes; Sepolia under repricing is still to be measured. Mutation-tested: 6 mutants of the new code, all killed (one redundant check was removed instead of kept as an equivalent mutant).
 
 ## 1. Background and threat model
 
@@ -126,7 +126,7 @@ Slot state lives under a per-Safe epoch, so `initialize` can start over cleanly:
 
 - `slot -> { root, owner, size, nextStageIndex, head, count, buffer[5] }`. The first five fields pack into one storage slot. `nextIndex` (the next owner to rotate in) is derived as `nextStageIndex - count`.
 - `buffer[slot]`: a ring buffer of up to 5 next owners, each already proven against the root. Storage slots are never zeroed, so refills after the first fill are non-zero to non-zero writes.
-- `ownerToSlot[owner]`, stored as `slotId + 1` so zero means "no slot".
+- No owner-to-slot mapping: a signer's slot is found by scanning the configuration's slot IDs (at most `MAX_SLOTS` = 32; `initialize` starts a new configuration). Removed slots have no owner, so they never match.
 - `consumedUpTo[safe][root]`, outside the epoch: the first index of a root that never held an owner, recorded whenever a root leaves a slot (`setRoot`, `removeSlot`, re-`initialize`). Any later commitment of that root must start at or above it. This closes address reuse: without it, re-committing an old tree at a low index puts already-exposed addresses back in as owners (found by the invariant suite).
 - The tree file's IPFS CID is emitted in `SlotConfigured`, not stored.
 
@@ -173,7 +173,7 @@ A stager cannot inject an address (it would fail the proof) or skip indexes, so 
 
 1. Rotate every recorded signer regardless of `success`. A failed inner call still consumed the nonce and exposed the signatures.
 2. Signers that are no longer owners (removed or force-rotated earlier in the same transaction) are skipped.
-3. Each rotation pops the head of the slot's buffer and calls `execTransactionFromModule(safe, swapOwner(prev, old, next))`, then updates the slot owner and `ownerToSlot`, and emits `OwnerRotated(safe, slot, oldOwner, newOwner, index)`.
+3. Each rotation pops the head of the slot's buffer and calls `execTransactionFromModule(safe, swapOwner(prev, old, next))`, then updates the slot owner, and emits `OwnerRotated(safe, slot, oldOwner, newOwner, index)`.
 4. Revert if any signer's buffer is empty. (The executor's pre-flight simulation must catch this before broadcast; see section 5, limit 3.)
 5. Invariant: `getOwners()` equals exactly the set of current slot owners.
 6. Invariant: the transaction guard, module guard and module are all still this contract.
@@ -214,7 +214,7 @@ Measured (`test/RotationGuard.gas.t.sol`, before refunds), against an identical 
 | 7-of-10 | 87k | 608k | 74k |
 | 20-of-20 | 139k | 1.79M | 82k |
 
-About 44k of each rotation is two unavoidable zero-to-nonzero writes (Safe's owner list and `ownerToSlot`); the rest is the module call through the module guard, signature recovery and bookkeeping. Overhead grows with owner count because `_prevOwner` re-reads the owner list per rotation; caching the list across rotations is a possible later optimization. No size approaches the block gas limit.
+About 22k of each rotation is the one unavoidable zero-to-nonzero write (Safe's owner list entry for the new owner); before `ownerToSlot` was dropped it was two such writes, about 44k; the rest is the module call through the module guard, signature recovery and bookkeeping. Overhead grows with owner count because `_prevOwner` re-reads the owner list per rotation; caching the list across rotations is a possible later optimization. No size approaches the block gas limit.
 
 Staging: after the first fill, about 15-20k per address (non-zero SSTORE plus proof calldata and verification). A batch of 5 is roughly 100-120k gas, about 0.0002-0.0005 ETH at 2-4 gwei.
 

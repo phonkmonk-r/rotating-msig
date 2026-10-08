@@ -442,6 +442,52 @@ contract RotationGuardTest is RotationFixture {
         assertEq(slotId, newSlot);
     }
 
+    function test_slotOf_followsRotationAndRemoval() public {
+        address before = currentOwner(1);
+        assertTrue(execBySlots(call(address(guard), 0, abi.encodeCall(guard.removeSlot, (2, 2))), 0, 1));
+        (bool found, uint256 slotId) = guard.slotOf(address(safe), before);
+        assertFalse(found, "a rotated-out owner has no slot");
+        (found, slotId) = guard.slotOf(address(safe), currentOwner(1));
+        assertTrue(found);
+        assertEq(slotId, 1);
+        (found, ) = guard.slotOf(address(safe), treeAddress(2, 0));
+        assertFalse(found, "a removed slot's owner has no slot");
+        (found, ) = guard.slotOf(address(safe), address(0));
+        assertFalse(found, "removed slots leave a zero owner that must not match");
+    }
+
+    /// @dev Unreachable through the Safe (every owner sits in a slot); pinned by corrupting the guard's record directly.
+    function test_revert_signerWithoutSlot() public {
+        (uint64 epoch, , ) = guard.getConfig(address(safe));
+        bytes32 slotsOfSafe = keccak256(abi.encode(address(safe), uint256(1)));
+        bytes32 slotsOfEpoch = keccak256(abi.encode(uint256(epoch), slotsOfSafe));
+        bytes32 ownerWord = bytes32(uint256(keccak256(abi.encode(uint256(1), slotsOfEpoch))) + 1);
+        uint256 word = uint256(vm.load(address(guard), ownerWord));
+        address real = currentOwner(1);
+        assertEq(address(uint160(word)), real, "located slot 1's owner");
+
+        SafeTx memory t = call(makeAddr("recipient"), 1, "");
+        (bytes memory sigs, address executor) = prepareBySlots(t, 0, 1);
+        vm.store(address(guard), ownerWord, bytes32((word >> 160 << 160) | uint160(makeAddr("elsewhere"))));
+
+        vm.expectRevert(abi.encodeWithSelector(IRotationGuard.UnmanagedOwner.selector, real));
+        execRaw(t, sigs, executor);
+    }
+
+    function test_revert_addSlot_beyondMaxSlots() public {
+        bytes32 configSlot = keccak256(abi.encode(address(safe), uint256(0)));
+        uint256 word = uint256(vm.load(address(guard), configSlot));
+        uint256 slotCountMask = uint256(type(uint32).max) << 64;
+        vm.store(address(guard), configSlot, bytes32((word & ~slotCountMask) | (guard.MAX_SLOTS() << 64)));
+        (, uint32 slotCount, ) = guard.getConfig(address(safe));
+        assertEq(slotCount, guard.MAX_SLOTS());
+
+        bytes memory data = abi.encodeCall(guard.addSlot, (slotConfig(0, 9), 2));
+        (bytes memory sigs, address executor) = prepareBySlots(call(address(guard), 0, data), 0, 1);
+        vm.expectRevert(IRotationGuard.InvalidConfig.selector);
+        execRaw(call(address(guard), 0, data), sigs, executor);
+    }
+
     function test_revert_adminRequiresInitializedCaller() public {
         uint256[] memory slots = new uint256[](0);
         vm.expectRevert(abi.encodeWithSelector(IRotationGuard.NotInitialized.selector, address(this)));
