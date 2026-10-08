@@ -50,6 +50,8 @@ export interface Chain {
   safe: Address;
   guard: Address;
   multiSend: Address;
+  singleton: Address;
+  factory: Address;
   trees: TreeFile[];
   stop(): void;
 }
@@ -127,7 +129,7 @@ export async function startChain(port: number): Promise<Chain> {
   });
   if ((await client.waitForTransactionReceipt({ hash: sent })).status !== "success") throw new Error("install failed");
 
-  return { anvil, rpc, client, safe, guard, multiSend, trees, stop: () => anvil.kill() };
+  return { anvil, rpc, client, safe, guard, multiSend, singleton, factory, trees, stop: () => anvil.kill() };
 }
 
 interface StoredTx {

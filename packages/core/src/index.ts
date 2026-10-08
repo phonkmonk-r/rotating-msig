@@ -1,6 +1,7 @@
 export * from "./addresses.js";
 export * from "./base.js";
 export * from "./calls.js";
+export * from "./create.js";
 export * from "./decode.js";
 export * from "./errors.js";
 export * from "./proposals.js";
