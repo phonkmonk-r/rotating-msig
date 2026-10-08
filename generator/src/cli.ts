@@ -4,11 +4,10 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { getAddress, isAddress, isHex, type Address } from "viem";
 
-import { readSecret } from "./prompt.js";
-import { openLedgerSource } from "./sources/ledger.js";
-import { seedSource } from "./sources/seed.js";
-import { PATH_TEMPLATE, type AddressSource } from "./sources/source.js";
 import { createTreeFile, loadTreeFile, proofFor, slotConfig, stageEntries, validateMeta, type TreeMeta } from "@rotating-msig/core";
+import { openLedgerSource, PATH_TEMPLATE, seedSource, type AddressSource } from "@rotating-msig/keys";
+
+import { readSecret } from "./prompt.js";
 
 /** Account indexes below this are where wallets put everyday accounts, whose keys may already be exposed. */
 export const MIN_BASE = 1000;

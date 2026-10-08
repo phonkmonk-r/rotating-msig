@@ -19,13 +19,8 @@
   },
   "dependencies": {
     "@rotating-msig/core": "0.1.0",
-    "@scure/bip32": "2.4.0",
-    "@scure/bip39": "2.4.0",
+    "@rotating-msig/keys": "0.1.0",
     "viem": "2.56.8"
-  },
-  "optionalDependencies": {
-    "@ledgerhq/hw-app-eth": "7.8.19",
-    "@ledgerhq/hw-transport-node-hid": "6.33.5"
   },
   "devDependencies": {
     "@types/node": "22.20.4",

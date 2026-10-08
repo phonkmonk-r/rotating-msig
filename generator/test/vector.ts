@@ -1,7 +1,6 @@
 import type { Address } from "viem";
 
-import { seedSource } from "../src/sources/seed.js";
-import { PATH_TEMPLATE } from "../src/sources/source.js";
+import { PATH_TEMPLATE, seedSource } from "@rotating-msig/keys";
 import { createTreeFile, leafHash, loadTreeFile, proofFor, slotConfig, stageEntries, type TreeMeta } from "@rotating-msig/core";
 
 /** Public test mnemonic. Never use it for real funds. */

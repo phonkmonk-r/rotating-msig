@@ -1,0 +1,35 @@
+{
+  "name": "@rotating-msig/keys",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Node-only key handling for rotation trees: seed and Ledger sources, signing accounts, and current-owner resolution.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --conditions=source --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@rotating-msig/core": "0.1.0",
+    "@scure/bip32": "2.4.0",
+    "@scure/bip39": "2.4.0",
+    "viem": "2.56.8"
+  },
+  "optionalDependencies": {
+    "@ledgerhq/hw-app-eth": "7.8.19",
+    "@ledgerhq/hw-transport-node-hid": "6.33.5"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.4",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}
