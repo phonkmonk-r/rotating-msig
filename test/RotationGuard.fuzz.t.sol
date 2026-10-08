@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.30;
 
+import {IRotationGuard} from "../src/interfaces/IRotationGuard.sol";
 import {RotationFixture} from "./utils/RotationFixture.sol";
 
 contract RotationGuardFuzzTest is RotationFixture {
@@ -73,5 +74,129 @@ contract RotationGuardFuzzTest is RotationFixture {
         } catch {
             for (uint256 i = 0; i < before.length; ++i) assertTrue(safe.isOwner(before[i]));
         }
+    }
+
+    struct Case {
+        uint256 threshold;
+        bool relayerExecutes;
+        bool appendExtra;
+        address executor;
+        address[] signers;
+        bytes[] sigs;
+        bool modelAccepts;
+    }
+
+    /**
+     * @dev Differential test against a reference model of the executor rule. Each of the `threshold` signers uses
+     *      ECDSA, eth_sign or a pre-validated signature (backed by `approveHash` when not the executor); the executor
+     *      may be a non-owner relayer; an extra valid signature may be appended. Safe accepts every case; the guard
+     *      must accept exactly when the model does, and then rotate exactly the signers.
+     */
+    function testFuzz_signatureEncodingsMatchModel(
+        uint8 thresholdSeed,
+        uint256 orderSeed,
+        uint8 encodingSeed,
+        bool relayerExecutes,
+        bool appendExtra
+    ) public {
+        Case memory c;
+        c.threshold = bound(thresholdSeed, 1, SLOTS);
+        if (c.threshold != THRESHOLD) {
+            assertTrue(execBySlots(call(address(safe), 0, abi.encodeCall(safe.changeThreshold, (c.threshold))), 0, 1));
+            refillAll();
+        }
+        c.relayerExecutes = relayerExecutes;
+        c.appendExtra = appendExtra && c.threshold < SLOTS;
+
+        address[] memory owners = safe.getOwners();
+        uint256 count = c.threshold + (c.appendExtra ? 1 : 0);
+        c.signers = new address[](count);
+        c.sigs = new bytes[](count);
+        for (uint256 i = 0; i < count; ++i) c.signers[i] = owners[(orderSeed % SLOTS + i) % SLOTS];
+        c.executor = relayerExecutes ? makeAddr("relayer") : c.signers[0];
+
+        SafeTx memory t = call(recipient, 1, "");
+        bytes32 hash = txHash(t);
+        bool executorPreValidated;
+        bool foreignPreValidated;
+        for (uint256 i = 0; i < count; ++i) {
+            uint256 encoding = (uint256(encodingSeed) >> (2 * i)) % 3;
+            if (i == 0 && !relayerExecutes) encoding = 2;
+            if (encoding == 2) {
+                if (c.signers[i] == c.executor) {
+                    executorPreValidated = true;
+                } else {
+                    vm.prank(c.signers[i]);
+                    safe.approveHash(hash);
+                    if (i < c.threshold) foreignPreValidated = true;
+                }
+                c.sigs[i] = preValidatedSignature(c.signers[i]);
+            } else {
+                c.sigs[i] = ecdsaSignature(c.signers[i], hash, encoding == 1);
+            }
+        }
+        c.modelAccepts = !c.appendExtra && !foreignPreValidated && executorPreValidated;
+
+        address[] memory before = new address[](SLOTS);
+        for (uint256 slot = 0; slot < SLOTS; ++slot) before[slot] = currentOwner(slot);
+        address[] memory signed = new address[](c.threshold);
+        for (uint256 i = 0; i < c.threshold; ++i) signed[i] = c.signers[i];
+
+        bytes memory packed = _packFirst(c.signers, c.sigs, c.threshold);
+        vm.prank(c.executor);
+        try safe.execTransaction(t.to, t.value, t.data, t.operation, 0, 0, 0, address(0), payable(address(0)), packed) {
+            assertTrue(c.modelAccepts, "guard accepted a case the model rejects");
+            for (uint256 slot = 0; slot < SLOTS; ++slot) {
+                bool didSign;
+                for (uint256 i = 0; i < signed.length; ++i) if (signed[i] == before[slot]) didSign = true;
+                assertEq(safe.isOwner(before[slot]), !didSign);
+            }
+        } catch {
+            assertFalse(c.modelAccepts, "guard rejected a case the model accepts");
+            for (uint256 slot = 0; slot < SLOTS; ++slot) assertTrue(safe.isOwner(before[slot]));
+        }
+    }
+
+    /// @dev Sorts the first `threshold` signatures (Safe reads only those) and appends any extras after them.
+    function _packFirst(address[] memory signers, bytes[] memory sigs, uint256 threshold) internal pure returns (bytes memory) {
+        address[] memory headSigners = new address[](threshold);
+        bytes[] memory headSigs = new bytes[](threshold);
+        for (uint256 i = 0; i < threshold; ++i) {
+            headSigners[i] = signers[i];
+            headSigs[i] = sigs[i];
+        }
+        bytes memory packed = packSignatures(headSigners, headSigs);
+        for (uint256 i = threshold; i < sigs.length; ++i) packed = bytes.concat(packed, sigs[i]);
+        return packed;
+    }
+
+    /// @dev Proofs are bound to the chain: the correct next entry built for this chain fails on any other.
+    function testFuzz_proofsBoundToChain(uint64 chainId) public {
+        vm.assume(chainId != block.chainid && chainId != 0);
+        execBySlots(call(recipient, 1, ""), 0, 1);
+        IRotationGuard.StageEntry[] memory list = entries(0, 6, 1);
+        vm.chainId(chainId);
+        vm.expectRevert(IRotationGuard.InvalidProof.selector);
+        guard.stage(address(safe), 0, list);
+    }
+
+    /// @dev Tampering with any proof element, the index or the address makes staging fail.
+    function testFuzz_tamperedProofRejected(uint256 element, bytes32 replacement, uint32 indexDelta, address other) public {
+        execBySlots(call(recipient, 1, ""), 0, 1);
+        IRotationGuard.StageEntry[] memory list = entries(0, 6, 1);
+        uint256 mode = element % 3;
+        if (mode == 0) {
+            uint256 at = (element >> 8) % list[0].proof.length;
+            vm.assume(list[0].proof[at] != replacement);
+            list[0].proof[at] = replacement;
+        } else if (mode == 1) {
+            vm.assume(indexDelta != 0);
+            list[0].index += uint32(bound(indexDelta, 1, 9));
+        } else {
+            vm.assume(other != list[0].owner);
+            list[0].owner = other;
+        }
+        vm.expectRevert();
+        guard.stage(address(safe), 0, list);
     }
 }
