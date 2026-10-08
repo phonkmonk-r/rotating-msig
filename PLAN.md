@@ -93,9 +93,13 @@ Core rule: an owner whose pubkey has been exposed must stop being an owner as qu
 
 ### Storage, keyed by Safe address
 
-- `slot -> { root, size, nextIndex, currentOwner, treeCID }`
-- `ownerToSlot[owner]`
-- `buffer[slot]`: a ring buffer of up to 5 next owners, each already proven against the root, with `head`, `count` and `lastStagedIndex`. Storage slots are never zeroed, so refills after the first fill are non-zero to non-zero writes (about 5k gas each)
+Slot state lives under a per-Safe epoch, so `initialize` can start over cleanly:
+
+- `slot -> { root, owner, size, nextStageIndex, head, count, buffer[5] }`. The first five fields pack into one storage slot. `nextIndex` (the next owner to rotate in) is derived as `nextStageIndex - count`.
+- `buffer[slot]`: a ring buffer of up to 5 next owners, each already proven against the root. Storage slots are never zeroed, so refills after the first fill are non-zero to non-zero writes.
+- `ownerToSlot[owner]`, stored as `slotId + 1` so zero means "no slot".
+- `consumedUpTo[safe][root]`, outside the epoch: the first index of a root that never held an owner, recorded whenever a root leaves a slot (`setRoot`, `removeSlot`, re-`initialize`). Any later commitment of that root must start at or above it. This closes address reuse: without it, re-committing an old tree at a low index puts already-exposed addresses back in as owners (found by the invariant suite).
+- The tree file's IPFS CID is emitted in `SlotConfigured`, not stored.
 
 ### Leaf format
 
@@ -111,35 +115,39 @@ Why stage at all: to rotate a signer, the Guard needs that slot's next address a
 `stage(safe, slot, entries[])`, with each entry `(index, address, proof)`, is permissionless. For each entry it checks:
 
 - the proof against the slot's root,
-- `index == lastStagedIndex + 1` (strictly sequential; a permissionless call that could skip would let a griefer stage index 9,999 and burn the tree; only the Safe itself may skip, through an admin function),
-- `address` is not already an owner and is not the sentinel,
+- `index == nextStageIndex` (strictly sequential; a permissionless call that could skip would let a griefer stage index 9,999 and burn the tree; only the Safe itself may skip, through an admin function),
+- `index < size`,
+- `address` is not already an owner, not already in the buffer, and not the zero address, the sentinel or the Safe,
 - the buffer is not full (capacity 5).
 
 On rotation the Guard pops the head of each signer's buffer and swaps it in; no proof or external data is needed at execution time.
 
 A stager cannot inject an address (it would fail the proof) or skip indexes, so the worst a malicious or broken stager can do is waste its own gas or fail to stage, which only delays txs until someone else stages. Anyone with the public tree file can stage.
 
-`setRoot` clears the slot's buffer and resets `lastStagedIndex`.
+`setRoot` clears the slot's buffer and sets `nextStageIndex` to the new start index.
 
 ### `checkTransaction` (receives `msgSender`)
 
 1. Recompute the safeTxHash using `nonce - 1`, since Safe has already incremented the nonce.
-2. Recover every signer in `signatures`, mirroring Safe's `checkNSignatures`:
+2. Require `signatures` to be exactly `threshold * 65` bytes. Extra signatures would be public without being rotated, so they are rejected rather than parsed.
+3. Recover every signer, mirroring Safe's `checkNSignatures`:
    - ECDSA,
    - eth_sign (v > 30, prefixed hash),
    - pre-validated (v = 1): allowed only when r = `msgSender`,
-   - contract signature (v = 0): allowed only for owners flagged as non-rotating contract signers (the future 1271 co-signer).
-3. Treat any additional parseable signatures beyond the threshold as exposed too, since they are public in calldata.
-4. Executor rule: `msgSender` must be an owner and must be among the signers through v = 1.
-5. Delegatecall is allowed only to an allowlisted MultiSendCallOnly.
-6. Store the signer set in transient storage (EIP-1153).
+   - contract signature (v = 0): rejected for now. With the exact-length rule this branch is unreachable (a contract signature needs dynamic data after the static part); it stays as defense in depth. Phase 7's hash-based 1271 co-signer will need this rule relaxed for flagged non-rotating owners.
+4. Executor rule: `msgSender` must be among the signers through v = 1 (Safe has already checked it is an owner).
+5. Delegatecall is allowed only to the allowlisted MultiSendCallOnly.
+6. Revert if a guarded transaction is already in progress for this Safe (no nested `execTransaction`).
+7. Store the signer set in transient storage (EIP-1153), keyed by Safe.
 
 ### `checkAfterExecution`
 
 1. Rotate every recorded signer regardless of `success`. A failed inner call still consumed the nonce and exposed the signatures.
-2. Each rotation pops the head of the slot's buffer and calls `execTransactionFromModule(safe, swapOwner(prev, old, next))`, then updates `nextIndex`, `currentOwner` and `ownerToSlot`, and emits `Rotated(safe, slot, oldOwner, newOwner, index)`.
-3. Revert if any signer's buffer is empty. (The executor's pre-flight simulation must catch this before broadcast; see section 5, limit 3.)
-4. Invariant: `getOwners()` equals exactly the set of current slot owners.
+2. Signers that are no longer owners (removed or force-rotated earlier in the same transaction) are skipped.
+3. Each rotation pops the head of the slot's buffer and calls `execTransactionFromModule(safe, swapOwner(prev, old, next))`, then updates the slot owner and `ownerToSlot`, and emits `OwnerRotated(safe, slot, oldOwner, newOwner, index)`.
+4. Revert if any signer's buffer is empty. (The executor's pre-flight simulation must catch this before broadcast; see section 5, limit 3.)
+5. Invariant: `getOwners()` equals exactly the set of current slot owners.
+6. Invariant: the transaction guard, module guard and module are all still this contract.
 
 ### Module guard (Safe 1.5.0)
 
@@ -147,8 +155,9 @@ Set RotationGuard as the module guard as well. It rejects module txs from any mo
 
 ### Admin functions (callable only by the Safe itself, so they need the threshold)
 
-- `addSlot(owner0, root, size, cid)` and `removeSlot(slot)`, which add or remove the owner through the module.
-- `setRoot(slot, root, size, cid)`, for an exhausted tree or a signer re-keying.
+- `initialize(oldOwners, configs)`: setup, and also a full reset under a new epoch. Records every old slot's consumed indexes first.
+- `addSlot(config, threshold)` and `removeSlot(slot, threshold)`, which add or remove the owner through the module.
+- `setRoot(slot, root, size, startIndex, cid)`, for an exhausted tree or a signer re-keying. Rejects a start index already consumed under that root.
 - `forceRotate(slots[])`, for owners exposed outside the Guard's view. Uses the slot's buffer like a normal rotation.
 - `skipTo(slot, index)`, the only way to skip indexes (for example after an address is known to be burned before use). Clears the slot's buffer.
 
@@ -159,14 +168,26 @@ Set RotationGuard as the module guard as well. It rejects module txs from any mo
 
 ### Escape hatch
 
-If the tx is exactly `setGuard(address(0))` to the Safe itself, both hooks return immediately. This must be explicit: Safe caches the guard address before execution, so `checkAfterExecution` still runs on the old guard after `setGuard(0)`. The executor rule still applies to the escape tx.
+If the tx is exactly `setGuard(address(0))` to the Safe itself (value 0, plain call), both hooks return immediately. This must be explicit: Safe caches the guard address before execution, so `checkAfterExecution` still runs on the old guard after `setGuard(0)`.
+
+The escape tx skips every check, including the executor rule and rotation, because the point of the hatch is to work even if those checks are what is broken. Its signers are exposed and not rotated, so they must be treated as burned. The module guard and module stay installed after escaping; removing them is a follow-up (now unguarded) transaction.
+
+The `to == safe` part matters: without it, any tx carrying `setGuard(0)` calldata to any address would skip rotation (caught by mutation testing).
 
 ### Gas estimates
 
-- Setup: about 20k per slot root.
-- Per rotated signer: about 40-50k (`swapOwner`, bookkeeping).
-- A 2-of-3 tx adds roughly 100k.
-- Staging: after the first fill, about 15-20k per address (non-zero SSTORE plus proof calldata and verification). A batch of 5 is roughly 100-120k gas, about 0.0002-0.0005 ETH at 2-4 gwei.
+Measured (`test/RotationGuard.gas.t.sol`, before refunds), against an identical unguarded Safe:
+
+| Safe | Unguarded | Guarded | Overhead per signer |
+|---|---|---|---|
+| 2-of-3 | 67k | 197k | 65k |
+| 3-of-5 | 71k | 278k | 69k |
+| 7-of-10 | 87k | 608k | 74k |
+| 20-of-20 | 139k | 1.79M | 82k |
+
+About 44k of each rotation is two unavoidable zero-to-nonzero writes (Safe's owner list and `ownerToSlot`); the rest is the module call through the module guard, signature recovery and bookkeeping. Overhead grows with owner count because `_prevOwner` re-reads the owner list per rotation; caching the list across rotations is a possible later optimization. No size approaches the block gas limit.
+
+Staging: after the first fill, about 15-20k per address (non-zero SSTORE plus proof calldata and verification). A batch of 5 is roughly 100-120k gas, about 0.0002-0.0005 ETH at 2-4 gwei.
 
 ## 7. Keeper and funding
 
@@ -226,29 +247,43 @@ Having the Guard pull the gas top-up from the Safe automatically during rotation
 2. Dashboard: per slot, current owner, index, addresses remaining, buffer depth, gas balance of the current owner, exposure status; keeper balance. Warns below about 10% of the tree remaining, on an empty or low buffer, and on a low keeper balance.
 3. Signing helper: tells each signer which derivation index and path to connect for the next signature, and who the designated executor is.
 4. Staging: manual "Stage" button that refills buffers from the IPFS tree file using any non-owner wallet (fallback when the keeper is down), and can also add a `stage` call to batches the app builds.
-5. Exposure tracker: scans Transaction Service confirmations, message signatures, `ApproveHash` events and owner EOA nonces; computes exposed-but-not-rotated owners; warns at threshold-2, blocks at threshold-1; offers one-click `forceRotate`.
+5. Exposure tracker: scans Transaction Service confirmations, message signatures, `ApproveHash` events, owner EOA nonces and the signers of any escape-hatch tx; computes exposed-but-not-rotated owners; warns at threshold-2, blocks at threshold-1; offers one-click `forceRotate`.
 6. Executor flow: simulate, check that every signer has a staged next owner with gas, warn if the executor already confirmed off-chain, then broadcast through a private revert-protected RPC.
 7. Admin: add or remove a signer, replace a root, force-rotate all, remove the guard (escape hatch).
+8. `approveHash` watch: an owner calling `approveHash` on-chain exposes their key, and the guard never sees it. The tracker must flag such owners and offer `forceRotate`.
 
 ## 11. Testing and assurance
 
-- Signature parsing: differential fuzz against Safe 1.5.0's `checkNSignatures` across all signature types, plus malformed and oversized inputs.
-- Fork tests against the deployed Safe 1.5.0 singleton, including the module guard interaction and the reentrant `execTransactionFromModule` call from `checkAfterExecution`.
-- Invariants (Echidna/Medusa):
-  - after any executed tx, no address that signed it is an owner,
-  - the owner set equals the set of slot owners,
-  - `nextIndex` never decreases,
-  - only an owner signing via v = 1 can execute,
-  - the escape hatch always works,
-  - an invalid proof can never be staged,
-  - permissionless staging is strictly sequential and never exceeds buffer capacity.
-- Brick tests: missing stage, exhausted tree, failed inner tx, all leave the Safe recoverable.
+Status: in place for phase 2. Run with `forge test`; fork tests read `MAINNET_RPC_URL` from `.env` (gitignored) and skip without it.
+
+- Unit tests (`test/RotationGuard.t.sol`): rotation, executor rule, every restriction, escape hatch, staging and every admin path.
+- Fork tests (`test/RotationGuard.fork.t.sol`): the full unit suite rerun against the canonical Safe 1.5.0 mainnet singleton (`0xFf51A5898e281Db6DfC7855790607438dF2ca44b`), proxy factory (`0x14F2982D601c9458F93bd70B218933A6f8165e7b`) and MultiSendCallOnly (`0xA83c336B20401Af773B6219BA5027174338D1836`) at a pinned block.
+- Fuzz (`test/RotationGuard.fuzz.t.sol`):
+  - exactly the signers rotate, for any threshold, signer subset and signature type,
+  - a differential test of every signature encoding (ECDSA, eth_sign, executor and non-executor pre-validated, relayer executor, appended extra) against a reference model of the executor rule,
+  - proofs bound to the chain and the Safe; any tampered proof element, index or address is rejected.
+- Invariants (`test/RotationGuard.invariant.t.sol`), with `fail_on_revert` on, over honest executions, staging, every admin path, careless operators re-committing old trees, adversarial Safe transactions, rogue modules and bad signature encodings:
+  - every signer of an executed tx leaves the owner set in that tx,
+  - no address that ever left the owner set comes back or is staged,
+  - the owner set equals the slot owners and the threshold stays valid,
+  - buffers stay bounded, ordered and equal to the tree addresses,
+  - honest staging never fails, dishonest staging never succeeds,
+  - no adversarial action succeeds and ETH only leaves through honest transfers,
+  - hooks stay installed,
+  - liveness: the escape hatch always works, and owners can always execute after a refill.
+  `test/HandlerCoverage.t.sol` asserts the handler really exercises every admin path.
+- Gas budgets (`test/RotationGuard.gas.t.sol`): per-signer overhead regression limits from 2-of-3 to 20-of-20.
+- Mutation testing: 35 mutants that each delete or weaken one safety check. 34 are killed; the survivor is the unreachable v = 0 branch described in section 6.
+
+Still to do:
+
+- Optional coverage-guided campaign with Echidna/Medusa.
 - External audit before any mainnet value, then a low-value mainnet canary.
 
 ## 12. Phases
 
 1. Spec and threat model (this document).
-2. Contracts: RotationGuard, Foundry tests, fuzz and invariant suite.
+2. Contracts: RotationGuard, Foundry tests, fuzz and invariant suite. Done, pending audit.
 3. Generator CLI (TypeScript): both modes, tree file format, shared leaf and proof library.
 4. Safe App: setup, dashboard, staging, exposure tracker, executor flow, admin.
 5. Keeper: buffer refills and gas top-ups.
