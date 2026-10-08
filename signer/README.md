@@ -13,7 +13,13 @@ npm run build
 npm run desktop -w signer
 ```
 
-On first launch, import your seed phrase and choose a password: the seed is encrypted (scrypt and AES-256-GCM) into the app's data folder and never stored in plain text. Each later launch asks for the password. Then choose your tree file and an RPC; the app checks your key against the chain before saving. Settings changes them later, and Lock clears the key from memory.
+On first launch, enter your seed phrase, the Safe's address and a password. That is all. The seed is encrypted (scrypt and AES-256-GCM) into the app's data folder, and the app then works out the rest itself:
+
+- the network (it looks for the Safe on Ethereum and Sepolia),
+- which signer you are, by matching the key your seed holds at each slot's current tree index against the slot's on-chain owner, so it works however many times you have already signed,
+- your rotation keys, rebuilt from the seed and checked against the root committed on-chain.
+
+It reads the chain through public RPCs; Advanced lets you set your own RPC, an execution RPC, or pin the network. Each later launch asks only for the password. Settings changes the Safe, and Lock clears the key from memory.
 
 Your seed's first account is your operator account (the wallet you were an initial owner with); your rotation keys are derived from the same seed on their own paths.
 

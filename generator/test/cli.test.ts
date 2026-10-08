@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 
 import { run, sampleIndexes, type Io } from "../src/cli.js";
 import { seedSource } from "@rotating-msig/keys";
-import type { TreeFile } from "@rotating-msig/core";
+import { defaultBase, type TreeFile } from "@rotating-msig/core";
 
 const TEST_MNEMONIC = "test test test test test test test test test test test junk";
 const SAFE = "0x1234567890123456789012345678901234567890";
@@ -88,6 +88,16 @@ describe("generate", () => {
     const flag = harness();
     assert.equal(await run(["generate", "--mnemonic", TEST_MNEMONIC], flag.io), 1);
     assert.match(flag.err(), /Unknown option/);
+  });
+});
+
+describe("default base", () => {
+  it("derives the base from the chain and Safe when --base is omitted", async () => {
+    const ws = workspace();
+    const h = harness();
+    assert.equal(await run(["generate", "--safe", SAFE, "--slot", "0", "--size", "3", "--mnemonic-file", ws.mnemonicFile, "--out", ws.tree], h.io), 0);
+    const file = JSON.parse(readFileSync(ws.tree, "utf8")) as TreeFile;
+    assert.equal(file.base, defaultBase(1, SAFE));
   });
 });
 

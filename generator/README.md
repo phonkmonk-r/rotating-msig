@@ -17,8 +17,9 @@ npm run build
 cd generator
 
 # Derive 10,000 addresses at m/44'/60'/{base+i}'/0/0 and write the tree file.
-node dist/cli.js generate --safe 0xYourSafe --slot 0 --base 100000 --out slot0.json
-node dist/cli.js generate --safe 0xYourSafe --slot 0 --base 100000 --out slot0.json --source ledger
+# The base defaults to one derived from the chain and Safe address, so each Safe gets its own key range.
+node dist/cli.js generate --safe 0xYourSafe --slot 0 --out slot0.json
+node dist/cli.js generate --safe 0xYourSafe --slot 0 --out slot0.json --source ledger
 
 # Check the file, compare with the root committed on-chain, and re-derive from your seed or device.
 node dist/cli.js verify --tree slot0.json --root 0xOnChainRoot --source seed --sample 100
@@ -33,7 +34,7 @@ node dist/cli.js proof   --tree slot0.json --index 42
 
 ## Rules for signers
 
-- **Pick a `--base` that no wallet has ever used.** Addresses depend only on your seed and the account index, not on the Safe. Low account indexes are where wallets put everyday accounts, whose keys may already be exposed, so the CLI refuses bases below 1000 unless you pass `--allow-low-base`. Use a different, non-overlapping range for every Safe.
+- **Leave `--base` at its default unless you have a reason.** Addresses depend only on your seed and the account index, not on the Safe, so every Safe needs its own range. The default is derived from the chain and Safe address (at least 100,000 and spread over a billion-wide span), which gives each Safe its own range and lets the signer app find your keys from the Safe address alone. Low account indexes are where wallets put everyday accounts, so the CLI refuses bases below 1000 unless you pass `--allow-low-base`.
 - **Never share an xpub.** Share the tree file (addresses) only.
 - **Seed mode belongs on an air-gapped machine.** The mnemonic is read from a hidden prompt or `--mnemonic-file`, never from a command-line argument. Ledger mode keeps the seed on the device; the device returns each public key with the address, and the CLI drops it immediately.
 - **The on-chain root is the trust anchor.** Before the setup transaction is signed, run `verify --root <committed root> --source ...` yourself. A wrong root would hand your slot's future ownership to whoever generated it.

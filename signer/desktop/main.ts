@@ -3,19 +3,31 @@ import { dirname, join } from "node:path";
 
 import { loadTreeFile, type TreeFile } from "@rotating-msig/core";
 import { seedSource, type AddressSource } from "@rotating-msig/keys";
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, ipcMain, shell } from "electron";
 import { isHex, type Hex } from "viem";
 
 import { createSession } from "../src/create.js";
+import { JoinError, joinSafe, type JoinProgress } from "../src/join.js";
 import type { SignerSession } from "../src/session.js";
 import { createVault, readVault, unlockVault } from "./vault.js";
 
-/** Saved between launches. The seed lives only in the encrypted vault (`vault.json`). */
+/** Saved between launches. The seed lives only in the encrypted vault (`vault.json`); the tree is public data. */
 interface Settings {
-  treePath: string;
-  rpc: string;
+  chainId: number;
+  safe: string;
+  slotId: number;
+  base: number;
+  /** Optional overrides; the default public RPCs are used otherwise. */
+  rpc?: string;
   executionRpc?: string;
   txServiceUrl?: string;
+}
+
+/** Optional overrides the signer can set under Advanced. */
+interface Advanced {
+  chainId?: number;
+  rpc?: string;
+  executionRpc?: string;
 }
 
 interface TreeSummary {
@@ -33,6 +45,8 @@ const appRoot = () => app.getAppPath();
 if (process.env.ROTATION_SIGNER_USER_DATA) app.setPath("userData", process.env.ROTATION_SIGNER_USER_DATA);
 const settingsPath = () => join(app.getPath("userData"), "settings.json");
 const vaultPath = () => join(app.getPath("userData"), "vault.json");
+const treePath = (settings: Pick<Settings, "chainId" | "safe" | "slotId">) =>
+  join(app.getPath("userData"), "trees", `${settings.chainId}-${settings.safe.toLowerCase()}-slot${settings.slotId}.json`);
 
 let session: SignerSession | undefined;
 /** Present only while the wallet is unlocked: the decrypted seed never leaves this process. */
@@ -55,9 +69,9 @@ function summarize(tree: TreeFile): TreeSummary {
 async function start(settings: Settings): Promise<void> {
   if (!source) throw new Error("unlock your wallet first");
   session = undefined;
-  const tree = loadTreeFile(readFileSync(settings.treePath, "utf8")).file;
+  const tree = loadTreeFile(readFileSync(treePath(settings), "utf8")).file;
   const { session: next } = createSession(
-    { tree, rpc: settings.rpc, executionRpc: settings.executionRpc || undefined, txServiceUrl: settings.txServiceUrl, safeApiKey: process.env.SAFE_API_KEY },
+    { tree, rpc: settings.rpc || undefined, executionRpc: settings.executionRpc || undefined, txServiceUrl: settings.txServiceUrl, safeApiKey: process.env.SAFE_API_KEY },
     source,
   );
   const status = await next.status();
@@ -75,7 +89,7 @@ async function lock() {
 /** After unlocking, resumes the saved configuration if there is one; problems are shown on the setup screen. */
 async function resume() {
   const settings = readSettings();
-  if (!settings || !existsSync(settings.treePath)) return;
+  if (!settings || settings.slotId === undefined || !existsSync(treePath(settings))) return;
   try {
     await start(settings);
   } catch (error) {
@@ -104,11 +118,35 @@ function requireHash(value: unknown): Hex {
   return value;
 }
 
+/**
+ * Joins a Safe with the unlocked wallet: finds the network and this signer's slot, rebuilds the tree, checks it
+ * against the chain, then saves everything and starts signing.
+ */
+async function joinWith(safe: string, advanced: Advanced, sendProgress: (progress: JoinProgress) => void): Promise<void> {
+  if (!source) throw new Error("unlock your wallet first");
+  const joined = await joinSafe({ source, safe, chainId: advanced.chainId || undefined, rpc: advanced.rpc || undefined, onProgress: sendProgress });
+  const settings: Settings = {
+    chainId: joined.chainId,
+    safe: joined.safe,
+    slotId: joined.slotId,
+    base: joined.base,
+    rpc: advanced.rpc || undefined,
+    executionRpc: advanced.executionRpc || undefined,
+  };
+  const existing = readSettings();
+  if (existing?.txServiceUrl) settings.txServiceUrl = existing.txServiceUrl;
+  mkdirSync(dirname(treePath(settings)), { recursive: true });
+  writeFileSync(treePath(settings), JSON.stringify(joined.tree));
+  await start(settings);
+  mkdirSync(dirname(settingsPath()), { recursive: true });
+  writeFileSync(settingsPath(), JSON.stringify(settings, null, 2));
+}
+
 handle("app:state", () => {
   const settings = readSettings();
   let tree: TreeSummary | undefined;
   try {
-    if (settings) tree = summarize(loadTreeFile(readFileSync(settings.treePath, "utf8")).file);
+    if (settings?.slotId !== undefined) tree = summarize(loadTreeFile(readFileSync(treePath(settings), "utf8")).file);
   } catch {
     // Reported through sessionError.
   }
@@ -122,7 +160,9 @@ handle("app:state", () => {
   return {
     vault,
     configured: session !== undefined,
-    settings: settings ? { treePath: settings.treePath, rpc: settings.rpc, executionRpc: settings.executionRpc ?? "" } : undefined,
+    settings: settings
+      ? { safe: settings.safe, chainId: settings.chainId, slotId: settings.slotId, rpc: settings.rpc ?? "", executionRpc: settings.executionRpc ?? "" }
+      : undefined,
     tree,
     error: sessionError,
   };
@@ -134,6 +174,11 @@ handle("vault:create", async (mnemonic: string, password: string) => {
   await resume();
   return true;
 });
+
+let mainWindow: BrowserWindow | undefined;
+function sendToWindow(channel: string, payload: unknown) {
+  mainWindow?.webContents.send(channel, payload);
+}
 
 handle("vault:unlock", async (password: string) => {
   const phrase = unlockVault(vaultPath(), String(password));
@@ -148,21 +193,12 @@ handle("vault:lock", async () => {
   return true;
 });
 
-handle("app:pickTree", async () => {
-  const picked = await dialog.showOpenDialog({ title: "Choose your tree file", properties: ["openFile"], filters: [{ name: "Tree file", extensions: ["json"] }] });
-  const path = picked.filePaths[0];
-  if (picked.canceled || !path) return undefined;
-  return { path, tree: summarize(loadTreeFile(readFileSync(path, "utf8")).file) };
-});
-
-handle("app:configure", async (input: Settings) => {
-  if (!input?.treePath || !input.rpc) throw new Error("tree file and RPC URL are both required");
-  const settings: Settings = { treePath: input.treePath, rpc: input.rpc.trim(), executionRpc: input.executionRpc?.trim() || undefined };
-  const existing = readSettings();
-  if (existing?.txServiceUrl) settings.txServiceUrl = existing.txServiceUrl;
-  await start(settings);
-  mkdirSync(dirname(settingsPath()), { recursive: true });
-  writeFileSync(settingsPath(), JSON.stringify(settings, null, 2));
+handle("app:join", async (safe: string, advanced: Advanced = {}) => {
+  try {
+    await joinWith(String(safe), advanced, (progress) => sendToWindow("app:progress", progress));
+  } catch (error) {
+    throw error instanceof JoinError ? new Error(`${error.kind}: ${error.message}`) : error;
+  }
   return true;
 });
 
@@ -178,14 +214,14 @@ handle("signer:execute", (hash: unknown) => requireSession().execute(requireHash
 handle("signer:execution", (hash: unknown) => requireSession().execution(requireHash(hash)));
 
 function createWindow() {
-  const window = new BrowserWindow({
+  const window = (mainWindow = new BrowserWindow({
     width: 980,
     height: 860,
     minWidth: 420,
     title: "Rotation Signer",
     backgroundColor: "#f6f7f8",
     webPreferences: { preload: join(appRoot(), "desktop/preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false },
-  });
+  }));
   // The UI never navigates; links (block explorers) open in the user's browser.
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("https://")) void shell.openExternal(url);
@@ -206,11 +242,12 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  // Test hook only: unlocks without the UI so smoke tests can reach the dashboard.
+  // Test hooks only: unlock (and optionally join) without the UI, so smoke tests can reach the dashboard.
   if (process.env.ROTATION_SIGNER_TEST_PASSWORD && readVault(vaultPath())) {
     try {
       source = seedSource(unlockVault(vaultPath(), process.env.ROTATION_SIGNER_TEST_PASSWORD));
-      await resume();
+      if (process.env.ROTATION_SIGNER_TEST_JOIN) await joinWith(process.env.ROTATION_SIGNER_TEST_JOIN, {}, () => undefined);
+      else await resume();
     } catch (error) {
       sessionError = (error as Error).message;
     }

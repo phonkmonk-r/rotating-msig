@@ -11,9 +11,23 @@ export interface TreeSummary {
 }
 
 export interface DesktopSettings {
-  treePath: string;
+  safe: string;
+  chainId: number;
+  slotId: number;
   rpc: string;
   executionRpc: string;
+}
+
+export interface Advanced {
+  chainId?: number;
+  rpc?: string;
+  executionRpc?: string;
+}
+
+export interface JoinProgress {
+  stage: "network" | "reading" | "finding" | "deriving" | "verifying";
+  done?: number;
+  total?: number;
 }
 
 export interface DesktopState {
@@ -29,11 +43,11 @@ type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 /** The desktop app's preload bridge (`desktop/preload.cjs`); absent when the UI runs in a browser from the CLI. */
 interface DesktopBridge {
   state(): Promise<Result<DesktopState>>;
-  pickTree(): Promise<Result<{ path: string; tree: TreeSummary } | undefined>>;
+  join(safe: string, advanced: Advanced): Promise<Result<true>>;
+  onProgress(listener: (progress: JoinProgress) => void): () => void;
   createVault(mnemonic: string, password: string): Promise<Result<true>>;
   unlock(password: string): Promise<Result<true>>;
   lock(): Promise<Result<true>>;
-  configure(settings: DesktopSettings): Promise<Result<true>>;
   reset(): Promise<Result<true>>;
   status(): Promise<Result<StatusView>>;
   queue(): Promise<Result<QueueItem[]>>;
@@ -100,11 +114,11 @@ export const api = {
 export const desktop = bridge
   ? {
       state: () => unwrap(bridge.state()),
-      pickTree: () => unwrap(bridge.pickTree()),
+      join: (safe: string, advanced: Advanced) => unwrap(bridge.join(safe, advanced)),
+      onProgress: (listener: (progress: JoinProgress) => void) => bridge.onProgress(listener),
       createVault: (mnemonic: string, password: string) => unwrap(bridge.createVault(mnemonic, password)),
       unlock: (password: string) => unwrap(bridge.unlock(password)),
       lock: () => unwrap(bridge.lock()),
-      configure: (settings: DesktopSettings) => unwrap(bridge.configure(settings)),
       reset: () => unwrap(bridge.reset()),
     }
   : undefined;

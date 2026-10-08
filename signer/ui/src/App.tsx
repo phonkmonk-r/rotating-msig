@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, canConnect, desktop, type DesktopState, type Execution, type QueueItem, type SignerView, type StatusView } from "./api";
 import { eth, explorer, short } from "./format";
-import { Setup } from "./Setup";
+import { JoinSafe } from "./JoinSafe";
 import { ImportWallet, UnlockWallet } from "./Wallet";
 
 const REFRESH_MS = 10_000;
@@ -12,6 +12,7 @@ const LOW_GAS_WEI = 5_000_000_000_000_000n;
 export function App() {
   const [desktopState, setDesktopState] = useState<DesktopState>();
   const [editing, setEditing] = useState(false);
+  const [pendingSafe, setPendingSafe] = useState<string>();
 
   const loadDesktopState = useCallback(async () => {
     if (desktop) setDesktopState(await desktop.state());
@@ -30,7 +31,16 @@ export function App() {
           <header className="header">
             <h1>Rotation Signer</h1>
           </header>
-          {desktopState.vault.exists ? <UnlockWallet operator={desktopState.vault.operator} onDone={reload} /> : <ImportWallet onDone={reload} />}
+          {desktopState.vault.exists ? (
+            <UnlockWallet operator={desktopState.vault.operator} onDone={reload} />
+          ) : (
+            <ImportWallet
+              onDone={(safe) => {
+                setPendingSafe(safe);
+                reload();
+              }}
+            />
+          )}
         </main>
       );
     }
@@ -40,10 +50,13 @@ export function App() {
           <header className="header">
             <h1>Rotation Signer</h1>
           </header>
-          <Setup
+          <JoinSafe
             initial={desktopState}
+            initialSafe={pendingSafe}
+            autoStart={pendingSafe !== undefined}
             onDone={() => {
               setEditing(false);
+              setPendingSafe(undefined);
               void loadDesktopState();
             }}
             onCancel={desktopState.configured ? () => setEditing(false) : undefined}

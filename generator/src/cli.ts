@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { getAddress, isAddress, isHex, type Address } from "viem";
 
-import { createTreeFile, loadTreeFile, proofFor, slotConfig, stageEntries, validateMeta, type TreeMeta } from "@rotating-msig/core";
+import { createTreeFile, defaultBase, loadTreeFile, proofFor, slotConfig, stageEntries, validateMeta, type TreeMeta } from "@rotating-msig/core";
 import { openLedgerSource, PATH_TEMPLATE, readSecret, seedSource, type AddressSource } from "@rotating-msig/keys";
 
 
@@ -16,10 +16,11 @@ export const MAINNET_CHAIN_ID = 1;
 const USAGE = `rotation-tree: offline generator for RotationGuard signer trees
 
 Commands:
-  generate  --safe <address> --slot <id> --base <account> --out <file>
+  generate  --safe <address> --slot <id> --out <file> [--base <account>]
             [--size ${DEFAULT_SIZE}] [--chain-id ${MAINNET_CHAIN_ID}] [--source seed|ledger] [--mnemonic-file <file>]
             [--passphrase] [--allow-low-base] [--force]
       Derives <size> addresses at ${PATH_TEMPLATE} for account = base..base+size-1 and writes the tree file.
+      The base defaults to one derived from the chain and Safe address, unique per Safe (the signer app finds it).
   verify    --tree <file> [--root <hex>] [--source seed|ledger] [--mnemonic-file <file>] [--passphrase] [--sample <n>]
       Rebuilds the root from the file, optionally compares it with an expected (on-chain) root, and optionally
       re-derives addresses from the seed or device to confirm the file is yours.
@@ -111,8 +112,9 @@ async function generate(values: Values, io: Io): Promise<number> {
     chainId: values["chain-id"] === undefined ? MAINNET_CHAIN_ID : integer(values["chain-id"], "--chain-id"),
     safe: getAddress(safe),
     slotId: integer(values.slot, "--slot"),
-    base: integer(values.base, "--base"),
+    base: 0,
   };
+  meta.base = values.base === undefined ? defaultBase(meta.chainId, meta.safe) : integer(values.base, "--base");
   const size = values.size === undefined ? DEFAULT_SIZE : integer(values.size, "--size");
   validateMeta(meta, size);
   if (meta.base < MIN_BASE && !values["allow-low-base"]) {

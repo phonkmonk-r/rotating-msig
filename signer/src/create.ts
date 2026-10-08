@@ -1,30 +1,16 @@
-import { SEPOLIA_CHAIN_ID, TxService, type TreeFile } from "@rotating-msig/core";
+import { TxService, type TreeFile } from "@rotating-msig/core";
 import type { AddressSource } from "@rotating-msig/keys";
-import { createPublicClient, http, type Chain, type PublicClient } from "viem";
-import { mainnet, sepolia } from "viem/chains";
+import { createPublicClient, fallback, http, type Chain, type PublicClient } from "viem";
 
+import { chainFor, DEFAULT_EXECUTION_RPC, DEFAULT_RPCS } from "./networks.js";
 import { SignerSession } from "./session.js";
 
-export const CHAINS: Record<number, Chain> = { 1: mainnet, [SEPOLIA_CHAIN_ID]: sepolia };
-
-/**
- * Mainnet executions default to Flashbots Protect: private, and it drops transactions that would revert instead of
- * mining them. Sepolia defaults to the read RPC: Flashbots Protect accepts Sepolia transactions but few builders
- * include them, so executions hang (seen on 2026-10-08).
- */
-export const DEFAULT_EXECUTION_RPC: Record<number, string> = {
-  1: "https://rpc.flashbots.net",
-};
-
-export function chainFor(chainId: number): Chain {
-  const chain = CHAINS[chainId];
-  if (!chain) throw new Error(`the tree is for chain ${chainId}; only mainnet and Sepolia are supported`);
-  return chain;
-}
+export { chainFor, CHAINS, DEFAULT_EXECUTION_RPC, DEFAULT_RPCS } from "./networks.js";
 
 export interface SessionConfig {
   tree: TreeFile;
-  rpc: string;
+  /** Read RPC; the default public RPCs for the chain when absent. */
+  rpc?: string;
   executionRpc?: string;
   /** Overrides the Safe Transaction Service base URL (tests and local demos). */
   txServiceUrl?: string;
@@ -34,9 +20,11 @@ export interface SessionConfig {
 /** Builds the session the CLI and the desktop app both run. */
 export function createSession(config: SessionConfig, source: AddressSource): { session: SignerSession; chain: Chain; executionRpc: string } {
   const chain = chainFor(config.tree.chainId);
-  const executionRpc = config.executionRpc ?? DEFAULT_EXECUTION_RPC[config.tree.chainId] ?? config.rpc;
+  const readUrls = config.rpc ? [config.rpc] : (DEFAULT_RPCS[config.tree.chainId] ?? []);
+  if (readUrls.length === 0) throw new Error(`no RPC known for chain ${config.tree.chainId}; set one`);
+  const executionRpc = config.executionRpc ?? DEFAULT_EXECUTION_RPC[config.tree.chainId] ?? readUrls[0]!;
   const session = new SignerSession({
-    publicClient: createPublicClient({ chain, transport: http(config.rpc) }) as PublicClient,
+    publicClient: createPublicClient({ chain, transport: fallback(readUrls.map((url) => http(url))) }) as PublicClient,
     chain,
     executionRpcUrl: executionRpc,
     txService: new TxService(config.tree.chainId, { baseUrl: config.txServiceUrl, apiKey: config.safeApiKey }),

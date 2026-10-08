@@ -14,7 +14,7 @@
     "start": "tsx --conditions=source src/cli.ts",
     "ui": "vite ui",
     "demo": "tsx --conditions=source scripts/local-demo.ts",
-    "desktop:build": "tsc -p desktop/tsconfig.json && vite build ui",
+    "desktop:build": "npm run build -w @rotating-msig/core -w @rotating-msig/keys --prefix .. && tsc -p desktop/tsconfig.json && vite build ui",
     "desktop": "npm run desktop:build && electron ."
   },
   "dependencies": {

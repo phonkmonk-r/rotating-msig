@@ -508,3 +508,40 @@ textarea {
   max-width: 460px;
   margin: 40px auto 0;
 }
+
+select {
+  font: inherit;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.advanced {
+  margin: 12px 0;
+}
+
+.advanced summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.progress-block {
+  margin-top: 14px;
+}
+
+.bar {
+  height: 6px;
+  margin-top: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.bar > div {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s;
+}
