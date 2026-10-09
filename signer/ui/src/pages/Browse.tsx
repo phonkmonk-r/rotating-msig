@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { formatEther } from "viem";
 
-import { browser, type BrowserState, type DappRequest, type ProposalResult, type StatusView } from "../api";
+import { browser, type Bookmark, type BrowserState, type DappRequest, type ProposalResult, type StatusView } from "../api";
 import { useBookmarks } from "../bookmarks";
 import { short } from "../format";
 import { IconAlert, IconBack, IconCheck, IconClose, IconForward, IconGlobe, IconPlus, IconRefresh, IconStar } from "../icons";
@@ -9,11 +9,13 @@ import { isSaved, tabLabel } from "../lib/browser";
 import { requestValue, sendingLabel, sendingNote, sendLabel } from "../lib/execution";
 import { Badge, useSoleSigner } from "../ui";
 
+/** Start page apps; `colour` paints the letter tile, since the page's CSP keeps remote icons out. */
 const SUGGESTIONS = [
-  { name: "Uniswap", url: "https://app.uniswap.org", note: "Swap tokens" },
-  { name: "CoW Swap", url: "https://swap.cow.fi", note: "Swap with MEV protection" },
-  { name: "Aave", url: "https://app.aave.com", note: "Lend and borrow" },
-  { name: "Revoke.cash", url: "https://revoke.cash", note: "Review token approvals" },
+  { name: "Uniswap", url: "https://app.uniswap.org", note: "Swap tokens", colour: "#ff007a" },
+  { name: "CoW Swap", url: "https://swap.cow.fi", note: "Swaps without MEV", colour: "#052b65" },
+  { name: "Aave", url: "https://app.aave.com", note: "Lend and borrow", colour: "linear-gradient(135deg, #b6509e, #2ebac6)" },
+  { name: "Curve", url: "https://curve.finance", note: "Stablecoin swaps", colour: "linear-gradient(135deg, #2b47e6, #e8433f)" },
+  { name: "Revoke.cash", url: "https://revoke.cash", note: "Check approvals", colour: "#1c1c1c" },
 ];
 
 const EMPTY: BrowserState = { url: "", title: "", loading: false, canGoBack: false, canGoForward: false, tabs: [] };
@@ -31,7 +33,8 @@ export function Browse({ status, request, queueMode }: { status: StatusView; req
   const [proposed, setProposed] = useState<ProposalResult>();
   const [queuedNote, setQueuedNote] = useState(false);
   const viewport = useRef<HTMLDivElement>(null);
-  const saved = isSaved(useBookmarks(), state.url);
+  const bookmarks = useBookmarks();
+  const saved = isSaved(bookmarks, state.url);
 
   useEffect(() => {
     if (!browser) return;
@@ -202,32 +205,83 @@ export function Browse({ status, request, queueMode }: { status: StatusView; req
             }}
           />
         ) : (
-          !state.url && <StartPage onOpen={(url) => void open(url)} />
+          !state.url && <StartPage saved={bookmarks} onOpen={(url) => void open(url)} />
         )}
       </div>
     </div>
   );
 }
 
-function StartPage({ onOpen }: { onOpen: (url: string) => void }) {
+function StartPage({ saved, onOpen }: { saved: Bookmark[]; onOpen: (url: string) => void }) {
   return (
     <div className="browser-start">
-      <h2>Use any dApp with your Safe</h2>
-      <p className="muted">
-        dApps opened here see the Safe as the connected wallet. Their transactions become Safe proposals that you review here and sign with your current key. Message signing is refused: it
-        would expose your key without rotating it.
-      </p>
-      <div className="suggestions">
-        {SUGGESTIONS.map((item) => (
-          <button key={item.url} type="button" className="suggestion" onClick={() => onOpen(item.url)}>
-            <span className="suggestion-name">{item.name}</span>
-            <span className="muted small">{item.note}</span>
-          </button>
-        ))}
+      <div className="start-hero">
+        <span className="start-hero-icon">
+          <IconGlobe width="22" height="22" />
+        </span>
+        <h2>Use any dApp with your Safe</h2>
+        <p className="muted">Open a dApp and it connects to your Safe. Every transaction it asks for comes back here for you to review and sign.</p>
       </div>
+      <ul className="start-points">
+        <li>
+          <IconCheck width="14" height="14" /> Connects as your Safe
+        </li>
+        <li>
+          <IconCheck width="14" height="14" /> Transactions become proposals
+        </li>
+        <li className="refused" title="Signing a message would expose your key without rotating it">
+          <IconClose width="14" height="14" /> Message signing is refused
+        </li>
+      </ul>
+      {saved.length > 0 && (
+        <section className="start-section">
+          <h3>Saved</h3>
+          <div className="suggestions">
+            {saved.map((item) => (
+              <AppTile key={item.url} name={tabLabel(item)} note={host(item.url)} icon={item.icon} onOpen={() => onOpen(item.url)} />
+            ))}
+          </div>
+        </section>
+      )}
+      <section className="start-section">
+        <h3>Popular</h3>
+        <div className="suggestions">
+          {SUGGESTIONS.map((item) => (
+            <AppTile key={item.url} name={item.name} note={item.note} colour={item.colour} onOpen={() => onOpen(item.url)} />
+          ))}
+        </div>
+      </section>
+      <p className="start-hint muted small">Or type any address in the bar above.</p>
     </div>
   );
 }
+
+function AppTile({ name, note, icon, colour, onOpen }: { name: string; note: string; icon?: string; colour?: string; onOpen: () => void }) {
+  return (
+    <button type="button" className="suggestion" onClick={onOpen}>
+      {icon ? (
+        <img className="suggestion-icon" src={icon} alt="" />
+      ) : (
+        <span className="suggestion-icon letter" style={{ background: colour ?? "var(--accent)" }}>
+          {name.charAt(0).toUpperCase()}
+        </span>
+      )}
+      <span className="suggestion-text">
+        <span className="suggestion-name">{name}</span>
+        <span className="muted small">{note}</span>
+      </span>
+      <IconForward className="suggestion-arrow" width="14" height="14" />
+    </button>
+  );
+}
+
+const host = (url: string) => {
+  try {
+    return new URL(url).host.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+};
 
 function RequestReview({
   request,
