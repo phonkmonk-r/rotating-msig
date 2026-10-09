@@ -2075,14 +2075,98 @@ button.safe-chip.open {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
   width: 100%;
 }
 
 .execution-steps .step {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  padding-bottom: 12px;
+}
+
+.execution-steps .step:last-child {
+  padding-bottom: 0;
+}
+
+/* The timeline: a faint track between steps, filled in accent as each step completes, and a pulse that runs down from the active step. */
+.execution-steps .step:not(:last-child)::before,
+.execution-steps .step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 22px;
+  bottom: 2px;
+  width: 2px;
+  border-radius: 1px;
+}
+
+.execution-steps .step:not(:last-child)::before {
+  background: currentColor;
+  opacity: 0.15;
+}
+
+.execution-steps .step.done:not(:last-child)::before {
+  background: var(--accent);
+  opacity: 1;
+  transform-origin: top;
+  animation: step-fill 0.35s ease-out;
+}
+
+.execution-steps .step.failed:not(:last-child)::before {
+  background: var(--critical);
+  opacity: 0.6;
+}
+
+.execution-steps .step.active:not(:last-child)::after {
+  background: linear-gradient(to bottom, transparent, var(--accent), transparent) no-repeat 0 -100% / 100% 60%;
+  animation: step-flow 1.2s ease-in-out infinite;
+}
+
+@keyframes step-fill {
+  from {
+    transform: scaleY(0);
+  }
+}
+
+@keyframes step-flow {
+  to {
+    background-position: 0 200%;
+  }
+}
+
+.step.done .step-icon,
+.step.failed .step-icon {
+  border-radius: 50%;
+  color: #fff;
+}
+
+.step.done .step-icon {
+  background: var(--accent);
+}
+
+.step.failed .step-icon {
+  background: var(--critical);
+}
+
+.step.done .step-icon svg,
+.step.failed .step-icon svg {
+  width: 11px;
+  height: 11px;
+  stroke-width: 2.4;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .execution-steps .step::before,
+  .execution-steps .step::after {
+    animation: none;
+  }
+
+  .execution-steps .step.active:not(:last-child)::after {
+    background: var(--accent);
+    opacity: 0.5;
+  }
 }
 
 .step-icon {

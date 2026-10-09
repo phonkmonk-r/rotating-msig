@@ -1,8 +1,9 @@
 /**
  * Captures the screenshots used in the README from the real desktop app against a local chain:
- * `npx tsx --conditions=source scripts/screenshots.ts [outDir]` (defaults to `../screenshots`). Needs anvil and `forge build`.
+ * `npm run screenshots -w @rotating-msig/signer [-- outDir]` (defaults to `../screenshots`). Needs anvil and `forge build`.
+ * With `SCREENSHOT_PAUSE=<dir>` it stops at each state until `<dir>/next` exists, for screenshots taken by hand.
  */
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -63,8 +64,23 @@ const app = await electron.launch({
 });
 const page = await app.firstWindow();
 page.setDefaultTimeout(60_000);
-await page.setViewportSize({ width: 1180, height: 760 });
-const shot = (name: string) => page.screenshot({ path: join(out, `${name}.png`) });
+await app.evaluate(({ BrowserWindow }) => {
+  const [window] = BrowserWindow.getAllWindows();
+  window!.setSize(1180, 760);
+  window!.center();
+  window!.show();
+  window!.focus();
+});
+// SCREENSHOT_PAUSE=<dir>: instead of capturing, stop at each state until `<dir>/next` appears (for screenshots taken by hand).
+const pauseDir = process.env.SCREENSHOT_PAUSE;
+const shot = async (name: string) => {
+  await page.waitForTimeout(300);
+  if (!pauseDir) return page.screenshot({ path: join(out, `${name}.png`) });
+  console.log(`ready: ${name}`);
+  const flag = join(pauseDir, "next");
+  while (!existsSync(flag)) await new Promise((resolve) => setTimeout(resolve, 500));
+  rmSync(flag);
+};
 const nav = (label: string) => page.locator(".nav").getByRole("button", { name: label }).click();
 
 await page.getByRole("button", { name: "Get started" }).waitFor();

@@ -1,8 +1,17 @@
 # Cicada
 
+[![CI](https://github.com/phonkmonk-r/rotating-msig/actions/workflows/test.yml/badge.svg)](https://github.com/phonkmonk-r/rotating-msig/actions/workflows/test.yml)
+![Solidity 0.8.30](https://img.shields.io/badge/Solidity-0.8.30-363636?logo=solidity&logoColor=white)
+![Built with Foundry](https://img.shields.io/badge/built%20with-Foundry-f26b1d)
+![Safe 1.5.0](https://img.shields.io/badge/Safe-1.5.0-12ff80?logoColor=black)
+![Ethereum Sepolia](https://img.shields.io/badge/Ethereum-Sepolia-3c3c3d?logo=ethereum&logoColor=white)
+![Node 22](https://img.shields.io/badge/Node-22-339933?logo=node.js&logoColor=white)
+![Electron 44](https://img.shields.io/badge/Electron-44-47848f?logo=electron&logoColor=white)
+![Ledger](https://img.shields.io/badge/Ledger-supported-000000?logo=ledger&logoColor=white)
+
 A Safe multisig where no owner key signs twice. Each signature is the last thing its key ever does: the key is swapped out of the owner list in the same transaction, for a fresh one that was committed in advance. Cicada is the desktop app that makes this usable, and `RotationGuard` is the contract that enforces it.
 
-![The Cicada overview page: your slot, current key, gas account and staged next keys](screenshots/overview.png)
+<img src="screenshots/overview.png" alt="The Cicada overview page: your slot, current key, gas account and staged next keys" width="800">
 
 ## The problem
 
@@ -20,13 +29,13 @@ The Safe stays a normal Safe 1.5.0. Safe{Wallet} still shows it, and the same Tr
 
 ## Screenshots
 
-![First launch](screenshots/welcome.png)
+<img src="screenshots/welcome.png" alt="First launch" width="800">
 
-![A transaction another signer proposed and confirmed, waiting for you to execute](screenshots/transactions.png)
+<img src="screenshots/transactions.png" alt="A transaction another signer proposed and confirmed, waiting for you to execute" width="800">
 
-![After executing: simulation, gas for the signing key, inclusion, rotation, unused gas returned](screenshots/executed.png)
+<img src="screenshots/executed.png" alt="After executing: simulation, gas for the signing key, inclusion, rotation, unused gas returned" width="800">
 
-![Every slot of the Safe, with its current key index, staged keys and gas](screenshots/signers.png)
+<img src="screenshots/signers.png" alt="Every slot of the Safe, with its current key index, staged keys and gas" width="800">
 
 ## How it works
 
