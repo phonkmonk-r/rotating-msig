@@ -14,6 +14,13 @@ export interface Action {
   summary: string;
   to: Address;
   value: bigint;
+  /** The call's data as sent. */
+  data: Hex;
+  operation: 0 | 1;
+  /** The function the data was decoded as, when a known ABI matched. */
+  functionName?: string;
+  /** The data's first four bytes, when it has any. */
+  selector?: Hex;
 }
 
 export interface DecodeContext {
@@ -46,13 +53,13 @@ export function unpackMultiSend(packed: Hex): MetaTx[] {
 export function decodeActions(tx: Pick<MetaTx, "to" | "value" | "data" | "operation">, context: DecodeContext): Action[] {
   if (tx.operation === 1) {
     if (!isAddressEqual(tx.to, context.multiSendCallOnly)) {
-      return [{ kind: "blocked", summary: `Delegatecall to ${short(tx.to)}: the guard only allows MultiSendCallOnly and will reject this`, to: tx.to, value: tx.value }];
+      return [{ kind: "blocked", summary: `Delegatecall to ${short(tx.to)}: the guard only allows MultiSendCallOnly and will reject this`, ...callFields(tx) }];
     }
     try {
       const { args } = decodeFunctionData({ abi: multiSendCallOnlyAbi, data: tx.data });
       return unpackMultiSend(args[0]).flatMap((call) => decodeActions(call, context));
     } catch {
-      return [{ kind: "blocked", summary: "Unreadable MultiSend batch", to: tx.to, value: tx.value }];
+      return [{ kind: "blocked", summary: "Unreadable MultiSend batch", ...callFields(tx) }];
     }
   }
   return [decodeCall(tx, context)];
@@ -89,8 +96,12 @@ function describeGuardCall(name: string, args: readonly unknown[]): string | und
   }
 }
 
+function callFields(tx: Pick<MetaTx, "to" | "value" | "data"> & Partial<Pick<MetaTx, "operation">>): Pick<Action, "to" | "value" | "data" | "operation" | "selector"> {
+  return { to: tx.to, value: tx.value, data: tx.data, operation: tx.operation === 1 ? 1 : 0, selector: size(tx.data) >= 4 ? sliceHex(tx.data, 0, 4) : undefined };
+}
+
 function decodeCall(tx: Pick<MetaTx, "to" | "value" | "data">, context: DecodeContext): Action {
-  const base = { to: tx.to, value: tx.value };
+  const base = callFields(tx);
   if (tx.data === "0x" || size(tx.data) === 0) {
     return { ...base, kind: "transfer", summary: `Send ${formatEther(tx.value)} ETH to ${short(tx.to)}` };
   }
@@ -98,13 +109,14 @@ function decodeCall(tx: Pick<MetaTx, "to" | "value" | "data">, context: DecodeCo
   if (isAddressEqual(tx.to, context.safe)) {
     try {
       const decoded = decodeFunctionData({ abi: safeAbi, data: tx.data });
+      const named = { ...base, functionName: decoded.functionName };
       if (decoded.functionName === "setGuard" && isAddressEqual(decoded.args[0] as Address, ZERO_ADDRESS)) {
-        return { ...base, kind: "escape", summary: "Escape hatch: remove the transaction guard. Signers of this transaction are not rotated; treat them as burned" };
+        return { ...named, kind: "escape", summary: "Escape hatch: remove the transaction guard. Signers of this transaction are not rotated; treat them as burned" };
       }
       if (decoded.functionName === "changeThreshold") {
-        return { ...base, kind: "safe-admin", summary: `Require ${decoded.args[0]} signature(s) to execute` };
+        return { ...named, kind: "safe-admin", summary: `Require ${decoded.args[0]} signature(s) to execute` };
       }
-      return { ...base, kind: "safe-admin", summary: `Safe: ${decoded.functionName}(${formatArgs(decoded.args)})` };
+      return { ...named, kind: "safe-admin", summary: `Safe: ${decoded.functionName}(${formatArgs(decoded.args)})` };
     } catch {
       return { ...base, kind: "call", summary: `Unknown call to the Safe itself (selector ${tx.data.slice(0, 10)})` };
     }
@@ -114,8 +126,9 @@ function decodeCall(tx: Pick<MetaTx, "to" | "value" | "data">, context: DecodeCo
     try {
       const decoded = decodeFunctionData({ abi: rotationGuardAbi, data: tx.data });
       const friendly = describeGuardCall(decoded.functionName, decoded.args as readonly unknown[]);
-      if (friendly) return { ...base, kind: "guard-admin", summary: friendly };
-      return { ...base, kind: "guard-admin", summary: `Rotation guard: ${decoded.functionName}(${formatArgs(decoded.args, decoded.functionName === "stage")})` };
+      const named = { ...base, functionName: decoded.functionName };
+      if (friendly) return { ...named, kind: "guard-admin", summary: friendly };
+      return { ...named, kind: "guard-admin", summary: `Rotation guard: ${decoded.functionName}(${formatArgs(decoded.args, decoded.functionName === "stage")})` };
     } catch {
       return { ...base, kind: "call", summary: `Unknown call to the rotation guard (selector ${tx.data.slice(0, 10)})` };
     }
@@ -125,11 +138,11 @@ function decodeCall(tx: Pick<MetaTx, "to" | "value" | "data">, context: DecodeCo
     const decoded = decodeFunctionData({ abi: erc20Abi, data: tx.data });
     if (decoded.functionName === "transfer") {
       const [recipient, amount] = decoded.args as [Address, bigint];
-      return { ...base, kind: "token", summary: `Transfer ${amount} units of token ${short(tx.to)} to ${short(recipient)}` };
+      return { ...base, functionName: "transfer", kind: "token", summary: `Transfer ${amount} units of token ${short(tx.to)} to ${short(recipient)}` };
     }
     if (decoded.functionName === "approve") {
       const [spender, amount] = decoded.args as [Address, bigint];
-      return { ...base, kind: "token", summary: `Approve ${short(spender)} to spend ${amount} units of token ${short(tx.to)}` };
+      return { ...base, functionName: "approve", kind: "token", summary: `Approve ${short(spender)} to spend ${amount} units of token ${short(tx.to)}` };
     }
   } catch {
     // Not an ERC-20 call.

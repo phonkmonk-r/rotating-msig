@@ -8,6 +8,7 @@ import { Avatar, Badge, PageHeader } from "../ui";
 import { NewTransaction } from "./NewTransaction";
 import { QueueCard } from "./QueueCard";
 import { Recover } from "./Recover";
+import { TxDetails } from "./TxDetails";
 
 const EXECUTION_POLL_MS = 3_000;
 
@@ -201,6 +202,8 @@ function TxCard({
           {short(item.safeTxHash)}
         </span>
       </div>
+
+      <TxDetails item={item} status={status} />
 
       {warnings.map((w) => (
         <div key={w} className="note warning">

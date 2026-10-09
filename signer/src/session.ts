@@ -176,6 +176,9 @@ export interface QueueItem {
   submissionDate?: string;
   /** This signer's execution of it, when one is out (also after a restart). */
   attempt?: Execution;
+  /** The Safe transaction as proposed, for the details view. */
+  tx: { to: Address; value: string; data: Hex; operation: 0 | 1; safeTxGas: string };
+  proposer?: Address;
 }
 
 export interface ProposalResult {
@@ -594,6 +597,8 @@ export class SignerSession {
       const verdict = owner ? this.evaluate(state, tx, pending, owner) : undefined;
       return {
         attempt: this.openAttempt(tx.safeTxHash)?.record,
+        tx: { to: tx.tx.to, value: wei(tx.tx.value), data: tx.tx.data, operation: tx.tx.operation, safeTxGas: wei(tx.tx.safeTxGas) },
+        proposer: tx.proposer,
         safeTxHash: tx.safeTxHash,
         nonce: tx.tx.nonce.toString(),
         actions: verdict?.actions ?? [],
