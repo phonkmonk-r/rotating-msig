@@ -81,6 +81,16 @@ abstract contract RotationFixture is Test {
         keyOf[account] = key;
     }
 
+    /// @dev The slot whose current owner is `owner`, by scanning the configuration's slots (the guard has no view for it).
+    function slotOf(address owner) internal view returns (bool found, uint256 slotId) {
+        if (owner == address(0)) return (false, 0);
+        (, uint32 slotCount, ) = guard.getConfig(address(safe));
+        for (uint256 id = 0; id < slotCount; ++id) {
+            if (guard.getSlot(address(safe), id).owner == owner) return (true, id);
+        }
+        return (false, 0);
+    }
+
     function currentOwner(uint256 slot) internal view returns (address) {
         return guard.getSlot(address(safe), slot).owner;
     }

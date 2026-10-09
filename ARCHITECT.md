@@ -150,7 +150,7 @@ The other low-level detail is `_readAddress`: the guard reads the Safe's guard a
 **`checkTransaction(to, value, data, operation, …, signatures, msgSender)`**, called by the Safe before executing:
 
 1. Revert `NestedExecution` if this Safe already has a guarded transaction in progress.
-2. If the transaction is exactly the escape hatch (3.8), snapshot the owners, threshold, module guard and module into transient storage, mark `TX_ESCAPE` and return: nothing else is checked here.
+2. If the transaction is exactly the escape hatch (3.8), snapshot the owner set into transient storage, mark `TX_ESCAPE` and return: nothing else is checked here.
 3. Revert `NotInitialized` if the Safe never called `initialize`.
 4. Allow delegatecall only to `MULTI_SEND_CALL_ONLY` (`DelegateCallNotAllowed`). Batches therefore go through MultiSendCallOnly, which cannot itself delegatecall.
 5. Require `safeTxGas` or `gasPrice` to be non-zero (`SafeTxGasRequired`). With both zero, Safe reverts the whole `execTransaction` when the inner call fails, which would undo the rotation while the signatures stay public in the reverted calldata. With `safeTxGas` set, a failing inner call burns the nonce and the signers still rotate. The app sizes `safeTxGas` from a simulation, or uses a generous default; the executor pays only for gas used.
@@ -166,7 +166,7 @@ The other low-level detail is `_readAddress`: the guard reads the Safe's guard a
 
 **`checkAfterExecution(hash, success)`**, called by the Safe after executing:
 
-1. If `TX_ESCAPE`, clear it, then require the guard slot to be empty and the owners, threshold, module guard and module to match the snapshot (`InvalidEscape`). A genuine escape changes nothing but the guard, so this costs it nothing.
+1. If `TX_ESCAPE`, clear it, then require the guard slot to be empty and the owner set to match the snapshot (`InvalidEscape`). A genuine escape changes nothing but the guard, so this costs it nothing. Threshold, module guard and module are not in the snapshot: changing them is reachable anyway, through a normal transaction or by the owners after the escape, so including them would buy nothing and cost bytecode.
 2. Read and clear the signer list.
 3. For every signer still an owner, find its slot and rotate it, **whether or not the inner call succeeded**: a failed call still used the nonce and exposed the signatures. Signers no longer owners (removed or force-rotated by this very transaction) are skipped. A signer with no slot is `UnmanagedOwner`, unreachable while the owner-set check below holds, pinned by a test that corrupts storage.
 4. `_checkOwnerSet`: the Safe's owner list must have exactly `activeSlots` entries and each owner must be some slot's owner. Owners are distinct and each slot has one owner, so with equal counts this is a one-to-one match. Any direct `addOwner`, `removeOwner` or `swapOwner` that bypasses the guard breaks it and reverts the whole transaction.
@@ -215,7 +215,7 @@ The hooks cannot tell the Safe's genuine calls from calls the Safe makes from in
 
 ### 3.9 Views and events
 
-`getSlot` returns a slot's root, owner, size, current index (`nextIndex`), next stage index and staged addresses in order. `getConfig`, `consumedUpTo`, `slotOf` and `leaf` expose the rest. Events (`Initialized`, `SlotConfigured`, `SlotRemoved`, `OwnerStaged`, `OwnerRotated`, `IndexSkipped`) are what off-chain tools index; Keyturn's collision alarm reads `OwnerStaged` and `OwnerRotated` (section 7.2).
+`getSlot` returns a slot's root, owner, size, current index (`nextIndex`), next stage index and staged addresses in order. `getConfig` and `leaf` expose the rest; a signer's slot is found off-chain by matching `getSlot(...).owner`, and the consumed marks are enforced on-chain only (`RootIndexConsumed`), both dropped as views to keep the guard under Sepolia's per-transaction deploy gas cap. Events (`Initialized`, `SlotConfigured`, `SlotRemoved`, `OwnerStaged`, `OwnerRotated`, `IndexSkipped`) are what off-chain tools index; Keyturn's collision alarm reads `OwnerStaged` and `OwnerRotated` (section 7.2).
 
 ### 3.10 Contract tests
 
@@ -395,7 +395,7 @@ Joining tries them in that order. Each derivation step has a fixed cost regardle
 | A retired key comes back | `_consumedUpTo` per root; staging requires strictly sequential indexes. |
 | Owners changed around the guard | Owner-set check after every transaction; module guard blocks other modules. |
 | Guard removed silently | Hooks-installed check; only the exact escape transaction skips it. |
-| Hooks replayed from inside a transaction | Escape requires the guard removed and owners, threshold, module guard and module unchanged since `checkTransaction`; non-escape re-arm needs current owners' signatures. |
+| Hooks replayed from inside a transaction | Escape requires the guard removed and the owner set unchanged since `checkTransaction`; non-escape re-arm needs current owners' signatures. |
 | A failing call undoes the rotation | `safeTxGas` or `gasPrice` must be non-zero, so Safe never reverts the whole transaction on inner failure. |
 | Off-chain confirmations exposing too many keys | Rules engine: at most threshold − 1 confirmations, exposure checked across the queue. |
 | Seed theft from disk | Encrypted vault (scrypt, AES-256-GCM), unlocked per session, wiped on lock. |

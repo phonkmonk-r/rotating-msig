@@ -194,10 +194,6 @@ describe("core against a local chain", { skip }, () => {
     await client.waitForTransactionReceipt({ hash: await keeper.sendTransaction({ to: stage.to, data: stage.data }) });
     const refilled = await readSafeState(client, safe);
     assert.equal(refilled.slots[0]!.staged.length, 5);
-    assert.equal(
-      await client.readContract({ address: guard, abi: rotationGuardAbi, functionName: "consumedUpTo", args: [safe, file.root] }),
-      0,
-    );
   });
 
   it("flags empty and low buffers, and names the guard's revert", async () => {

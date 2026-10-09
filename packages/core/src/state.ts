@@ -81,21 +81,25 @@ export async function readSafeState(client: PublicClient, safe: Address, guardAd
   ]);
   const installed = moduleEnabled && isAddressEqual(guard, target) && isAddressEqual(moduleGuard, target);
 
+  // The guard has no owner-to-slot view; every slot of the configuration is read and matched by its owner.
+  const views = await Promise.all(
+    Array.from({ length: Number(config[1]) }, (_, slotId) =>
+      client.readContract({ address: target, abi: rotationGuardAbi, functionName: "getSlot", args: [safe, BigInt(slotId)] }),
+    ),
+  );
   const slots: SlotState[] = [];
   const unmanagedOwners: Address[] = [];
   await Promise.all(
     owners.map(async (owner) => {
-      const [found, slotId] = await client.readContract({ address: target, abi: rotationGuardAbi, functionName: "slotOf", args: [safe, owner] });
-      if (!found) {
+      const slotId = views.findIndex((view) => isAddressEqual(view.owner, owner));
+      if (slotId < 0) {
         unmanagedOwners.push(owner);
         return;
       }
-      const [view, ownerBalance] = await Promise.all([
-        client.readContract({ address: target, abi: rotationGuardAbi, functionName: "getSlot", args: [safe, slotId] }),
-        client.getBalance({ address: owner }),
-      ]);
+      const view = views[slotId]!;
+      const ownerBalance = await client.getBalance({ address: owner });
       slots.push({
-        slotId: Number(slotId),
+        slotId,
         root: view.root,
         owner: view.owner,
         size: view.size,

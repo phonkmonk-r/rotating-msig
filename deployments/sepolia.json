@@ -1,10 +1,10 @@
 {
   "chainId": 11155111,
-  "rotationGuard": "0x0f912AC33a58094622dF7508C6D2Ce9Dc4aa3391",
-  "deployTx": "0x1f4cc687a7ec55151aa115f813baed9f989017d30605fbe490b045a99f9d0aba",
+  "rotationGuard": "0x34d129296B3AeB1EE839778D974E586BB1339973",
+  "deployTx": "0x35891178116107b49a72704245dd1c0d24e68a09a17b3d235dd6dad6f62166bf",
   "multiSendCallOnly": "0xA83c336B20401Af773B6219BA5027174338D1836",
   "testSafe": "0x7aC0Ac669d32Bd739eAA892bcFD2C6dF9946Ed02",
-  "note": "Current guard (no owner-to-slot mapping, MAX_SLOTS 32), deployed from the ops seed's first account. New Safes use it; the guard serves any Safe 1.5.0 on Sepolia.",
+  "note": "Current guard, with the 2026-10-08 security review fixes: escape hatch verified against an owner-set snapshot, safeTxGas required, initialize checks the hooks, signers must be owners. The slotOf and consumedUpTo views were dropped to fit under the 2^24 per-transaction gas cap (10,471 bytes). Deployed with cast send from the deployer account at the cap gas limit. New Safes use it; the guard serves any Safe 1.5.0 on Sepolia.",
   "appCreatedSafe": {
     "safe": "0x9Ed45FdF1598295CF7804719A4E3BB1719aEd1BD",
     "deployTx": "0xc61dc48f98dfaa4d49e29d85de25973eeb2d57936e5e51217de8ee3cdbf61b1c",
@@ -13,14 +13,20 @@
   },
   "previousGuards": [
     {
+      "rotationGuard": "0x0f912AC33a58094622dF7508C6D2Ce9Dc4aa3391",
+      "deployTx": "0x1f4cc687a7ec55151aa115f813baed9f989017d30605fbe490b045a99f9d0aba",
+      "block": 11874061,
+      "note": "Second deployment, without the owner-to-slot mapping (MAX_SLOTS 32). Safe 0xa14D…015cB (measuredSafe) uses it."
+    },
+    {
       "rotationGuard": "0xbE621d916B9a75Ace3ff47Cc8b24aF22c0c05E36",
       "deployTx": "0x6551d72151d6ab1e9958c7c5ce55f2bcbfe30e416add46206f195da9ebc609fa",
       "block": 11872066,
-      "note": "First deployment, with the owner-to-slot mapping. Safes 0x7aC0\u2026Ed02 and 0x9Ed4\u2026d1BD use it."
+      "note": "First deployment, with the owner-to-slot mapping. Safes 0x7aC0…Ed02 and 0x9Ed4…d1BD use it."
     }
   ],
-  "deployBlock": 11874061,
-  "deployGas": 16106927,
+  "deployBlock": 11874570,
+  "deployGas": 16402276,
   "measuredSafe": {
     "safe": "0xa14D468F959c1736Bb13f67D50aeCFdD1e4015cB",
     "guard": "0x0f912AC33a58094622dF7508C6D2Ce9Dc4aa3391",

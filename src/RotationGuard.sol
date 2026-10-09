@@ -28,14 +28,14 @@ import {IRotationGuard} from "./interfaces/IRotationGuard.sol";
  *      the hooks must still be installed. The only exception is the escape hatch: a transaction that is exactly
  *      `setGuard(address(0))` on the Safe itself skips the signature rules and the rotation. Since the Safe itself can
  *      call these hooks from inside a transaction (through a batch or a fallback handler), the escape path does not
- *      trust the state machine alone: it snapshots owners, threshold, module guard and module before execution and
- *      requires them unchanged, and the guard removed, afterwards.
+ *      trust the state machine alone: it snapshots the owner set before execution and requires it unchanged, and the
+ *      guard removed, afterwards.
  */
 contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
     /// @notice Capacity of each slot's staging ring buffer.
     uint256 public constant BUFFER_SIZE = 5;
-    /// @notice Slot IDs one configuration can hand out; bounds the owner-to-slot scan. `initialize` starts over.
-    uint256 public constant MAX_SLOTS = 32;
+    /// @dev Slot IDs one configuration can hand out; bounds the owner-to-slot scan. `initialize` starts over.
+    uint256 internal constant MAX_SLOTS = 32;
 
     /// @notice The only delegatecall target allowed in guarded transactions.
     address public immutable MULTI_SEND_CALL_ONLY;
@@ -77,8 +77,12 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
     }
 
     modifier onlyInitialized() {
-        if (_configs[msg.sender].epoch == 0) revert NotInitialized(msg.sender);
+        _requireInitialized();
         _;
+    }
+
+    function _requireInitialized() internal view {
+        if (_configs[msg.sender].epoch == 0) revert NotInitialized(msg.sender);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -156,8 +160,8 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
     /**
      * @inheritdoc ITransactionGuard
      * @dev Rotates every recorded signer that is still an owner, whether or not the inner call succeeded, then checks
-     *      the owner set and hook invariants. For the escape hatch, requires the guard removed and everything the
-     *      invariants protect unchanged since `checkTransaction`.
+     *      the owner set and hook invariants. For the escape hatch, requires the guard removed and the owner set
+     *      unchanged since `checkTransaction`.
      */
     function checkAfterExecution(bytes32, bool) external override {
         address safe = msg.sender;
@@ -393,16 +397,6 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
         return (config.epoch, config.slotCount, config.activeSlots);
     }
 
-    /// @inheritdoc IRotationGuard
-    function consumedUpTo(address safe, bytes32 root) external view override returns (uint32) {
-        return _consumedUpTo[safe][root];
-    }
-
-    /// @inheritdoc IRotationGuard
-    function slotOf(address safe, address owner) external view override returns (bool found, uint256 slotId) {
-        return _findSlot(safe, _configs[safe].epoch, owner);
-    }
-
     /*//////////////////////////////////////////////////////////////
                               INTERNALS
     //////////////////////////////////////////////////////////////*/
@@ -497,17 +491,10 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
         ) revert HooksRemoved();
     }
 
-    /// @dev Everything the post-execution checks protect, hashed; an escape transaction may change none of it.
+    /// @dev The owner set, hashed; an escape transaction may not change it. Threshold, module guard and module are
+    ///      not included: changing them is reachable anyway, through a normal transaction or after the escape.
     function _escapeSnapshot(address safe) internal view returns (bytes32) {
-        ISafe target = _safe(safe);
-        return keccak256(
-            abi.encode(
-                target.getOwners(),
-                target.getThreshold(),
-                _readAddress(safe, MODULE_GUARD_STORAGE_SLOT),
-                target.isModuleEnabled(address(this))
-            )
-        );
+        return keccak256(abi.encode(_safe(safe).getOwners()));
     }
 
     function _isEscape(

@@ -127,7 +127,7 @@ interface IRotationGuard {
     /// @notice A recovered signer is not an owner. Unreachable from the Safe's own hook call, which follows its
     ///         signature check; rejects the hook being replayed from inside the transaction.
     error SignerNotOwner(address signer);
-    /// @notice An escape transaction did not remove the guard, or changed owners, threshold, module guard or module.
+    /// @notice An escape transaction did not remove the guard, or changed the owner set.
     error InvalidEscape();
     /// @notice The signatures are not exactly `threshold` static 65-byte signatures.
     error UnexpectedSignatureLength(uint256 length, uint256 expected);
@@ -251,21 +251,4 @@ interface IRotationGuard {
      */
     function getConfig(address safe) external view returns (uint64 epoch, uint32 slotCount, uint32 activeSlots);
 
-    /**
-     * @notice Returns the first index of a root that has never held an owner, as recorded when the root last left a
-     *         slot. Any later commitment of the root must start at or above it.
-     * @param safe The Safe.
-     * @param root The Merkle root.
-     * @return The first unconsumed index recorded for the root.
-     */
-    function consumedUpTo(address safe, bytes32 root) external view returns (uint32);
-
-    /**
-     * @notice Returns the slot of an owner in a Safe's current epoch.
-     * @param safe The Safe.
-     * @param owner The owner.
-     * @return found Whether the owner holds a slot.
-     * @return slotId The slot, zero when not found.
-     */
-    function slotOf(address safe, address owner) external view returns (bool found, uint256 slotId);
 }

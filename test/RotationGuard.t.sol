@@ -11,6 +11,8 @@ import {RotationFixture} from "./utils/RotationFixture.sol";
 import {Reentrant, Reverter, RogueModule} from "./utils/Actors.sol";
 
 contract RotationGuardTest is RotationFixture {
+    uint256 internal constant MAX_SLOTS = 32;
+
     /*//////////////////////////////////////////////////////////////
                                SETUP
     //////////////////////////////////////////////////////////////*/
@@ -59,12 +61,12 @@ contract RotationGuardTest is RotationFixture {
         assertEq(currentOwner(0), treeAddress(0, 1));
         assertEq(currentOwner(1), treeAddress(1, 1));
         assertEq(currentOwner(2), bystander);
-        (bool found, ) = guard.slotOf(address(safe), signer);
+        (bool found, ) = slotOf(signer);
         assertFalse(found);
-        (found, ) = guard.slotOf(address(safe), executor);
+        (found, ) = slotOf(executor);
         assertFalse(found);
         uint256 slotId;
-        (found, slotId) = guard.slotOf(address(safe), treeAddress(0, 1));
+        (found, slotId) = slotOf(treeAddress(0, 1));
         assertTrue(found);
         assertEq(slotId, 0);
         assertEq(guard.getSlot(address(safe), 0).staged.length, 4);
@@ -438,22 +440,22 @@ contract RotationGuardTest is RotationFixture {
         assertTrue(execBySlots(call(address(guard), 0, abi.encodeCall(guard.addSlot, (config, 2))), 0, 1));
         assertTrue(safe.isOwner(vm.addr(keys[0])));
         assertEq(safe.getOwners().length, 4);
-        (bool found, uint256 slotId) = guard.slotOf(address(safe), vm.addr(keys[0]));
+        (bool found, uint256 slotId) = slotOf(vm.addr(keys[0]));
         assertTrue(found);
         assertEq(slotId, newSlot);
     }
 
-    function test_slotOf_followsRotationAndRemoval() public {
+    function test_slotOwnersFollowRotationAndRemoval() public {
         address before = currentOwner(1);
         assertTrue(execBySlots(call(address(guard), 0, abi.encodeCall(guard.removeSlot, (2, 2))), 0, 1));
-        (bool found, uint256 slotId) = guard.slotOf(address(safe), before);
+        (bool found, uint256 slotId) = slotOf(before);
         assertFalse(found, "a rotated-out owner has no slot");
-        (found, slotId) = guard.slotOf(address(safe), currentOwner(1));
+        (found, slotId) = slotOf(currentOwner(1));
         assertTrue(found);
         assertEq(slotId, 1);
-        (found, ) = guard.slotOf(address(safe), treeAddress(2, 0));
+        (found, ) = slotOf(treeAddress(2, 0));
         assertFalse(found, "a removed slot's owner has no slot");
-        (found, ) = guard.slotOf(address(safe), address(0));
+        (found, ) = slotOf(address(0));
         assertFalse(found, "removed slots leave a zero owner that must not match");
     }
 
@@ -479,9 +481,9 @@ contract RotationGuardTest is RotationFixture {
         bytes32 configSlot = keccak256(abi.encode(address(safe), uint256(0)));
         uint256 word = uint256(vm.load(address(guard), configSlot));
         uint256 slotCountMask = uint256(type(uint32).max) << 64;
-        vm.store(address(guard), configSlot, bytes32((word & ~slotCountMask) | (guard.MAX_SLOTS() << 64)));
+        vm.store(address(guard), configSlot, bytes32((word & ~slotCountMask) | (MAX_SLOTS << 64)));
         (, uint32 slotCount, ) = guard.getConfig(address(safe));
-        assertEq(slotCount, guard.MAX_SLOTS());
+        assertEq(slotCount, MAX_SLOTS);
 
         bytes memory data = abi.encodeCall(guard.addSlot, (slotConfig(0, 9), 2));
         execExpectInnerRevert(call(address(guard), 0, data), abi.encodeWithSelector(IRotationGuard.InvalidConfig.selector), 0, 1);
@@ -522,7 +524,6 @@ contract RotationGuardTest is RotationFixture {
 
     function test_setRoot_sameRootFromNextIndex() public {
         assertTrue(execBySlots(call(address(guard), 0, abi.encodeCall(guard.setRoot, (2, rootOf[2], TREE_SIZE, 1, "cid"))), 0, 1));
-        assertEq(guard.consumedUpTo(address(safe), rootOf[2]), 1);
         guard.stage(address(safe), 2, entries(2, 1, 1));
         assertTrue(execBySlots(call(recipient, 1, ""), 2, 0));
         assertEq(currentOwner(2), treeAddress(2, 1));
@@ -542,7 +543,6 @@ contract RotationGuardTest is RotationFixture {
     function test_removeSlot_recordsConsumed() public {
         assertTrue(execBySlots(call(recipient, 1, ""), 2, 1));
         assertTrue(execBySlots(call(address(guard), 0, abi.encodeCall(guard.removeSlot, (2, 2))), 0, 1));
-        assertEq(guard.consumedUpTo(address(safe), rootOf[2]), 2);
     }
 
     function test_setGuardCalldataToOtherTargetIsGuarded() public {

@@ -281,7 +281,7 @@ contract RotationHandler is Test {
         ok = true;
         bool refillable = true;
         for (uint256 i = 0; i < owners.length; ++i) {
-            (, uint256 slotId) = guard.slotOf(address(safe), owners[i]);
+            (, uint256 slotId) = _slotOf(owners[i]);
             if (guard.getSlot(address(safe), slotId).staged.length == 0) refillable = false;
         }
         if (refillable) ok = _exec(1, false, recipient, 1, "", Enum.Operation.Call, SAFE_TX_GAS);
@@ -306,7 +306,7 @@ contract RotationHandler is Test {
     function _refillAll() internal {
         address[] memory owners = safe.getOwners();
         for (uint256 i = 0; i < owners.length; ++i) {
-            (, uint256 slotId) = guard.slotOf(address(safe), owners[i]);
+            (, uint256 slotId) = _slotOf(owners[i]);
             _stageSlot(slotId, guard.BUFFER_SIZE(), address(this));
         }
     }
@@ -382,7 +382,16 @@ contract RotationHandler is Test {
 
     function _randomSlot(uint256 seed) internal view returns (uint256 slotId) {
         address[] memory owners = safe.getOwners();
-        (, slotId) = guard.slotOf(address(safe), owners[seed % owners.length]);
+        (, slotId) = _slotOf(owners[seed % owners.length]);
+    }
+
+    function _slotOf(address owner) internal view returns (bool found, uint256 slotId) {
+        if (owner == address(0)) return (false, 0);
+        (, uint32 slotCount, ) = guard.getConfig(address(safe));
+        for (uint256 id = 0; id < slotCount; ++id) {
+            if (guard.getSlot(address(safe), id).owner == owner) return (true, id);
+        }
+        return (false, 0);
     }
 
     function _hash(address to, uint256 value, bytes memory data, Enum.Operation operation, uint256 safeTxGas)
@@ -500,7 +509,7 @@ contract RotationGuardInvariantTest is RotationFixture {
     function invariant_noRetiredAddressStaged() public view {
         address[] memory owners = safe.getOwners();
         for (uint256 i = 0; i < owners.length; ++i) {
-            (, uint256 slotId) = guard.slotOf(address(safe), owners[i]);
+            (, uint256 slotId) = slotOf(owners[i]);
             address[] memory staged = guard.getSlot(address(safe), slotId).staged;
             for (uint256 j = 0; j < staged.length; ++j) assertFalse(handler.retired(staged[j]));
         }
@@ -512,7 +521,7 @@ contract RotationGuardInvariantTest is RotationFixture {
         (, , uint32 activeSlots) = guard.getConfig(address(safe));
         assertEq(owners.length, activeSlots);
         for (uint256 i = 0; i < owners.length; ++i) {
-            (bool found, uint256 slotId) = guard.slotOf(address(safe), owners[i]);
+            (bool found, uint256 slotId) = slotOf(owners[i]);
             assertTrue(found);
             assertEq(guard.getSlot(address(safe), slotId).owner, owners[i]);
         }
@@ -524,7 +533,7 @@ contract RotationGuardInvariantTest is RotationFixture {
     function invariant_buffersConsistent() public view {
         address[] memory owners = safe.getOwners();
         for (uint256 i = 0; i < owners.length; ++i) {
-            (, uint256 slotId) = guard.slotOf(address(safe), owners[i]);
+            (, uint256 slotId) = slotOf(owners[i]);
             IRotationGuard.SlotView memory view_ = guard.getSlot(address(safe), slotId);
             assertLe(view_.staged.length, guard.BUFFER_SIZE());
             assertEq(view_.nextIndex + view_.staged.length, view_.nextStageIndex);

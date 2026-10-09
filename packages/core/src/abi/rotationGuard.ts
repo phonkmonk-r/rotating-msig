@@ -26,19 +26,6 @@ export const rotationGuardAbi = [
   },
   {
     "type": "function",
-    "name": "MAX_SLOTS",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "MULTI_SEND_CALL_ONLY",
     "inputs": [],
     "outputs": [
@@ -237,30 +224,6 @@ export const rotationGuardAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "consumedUpTo",
-    "inputs": [
-      {
-        "name": "safe",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "root",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -512,35 +475,6 @@ export const rotationGuardAbi = [
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "slotOf",
-    "inputs": [
-      {
-        "name": "safe",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "found",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "slotId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
