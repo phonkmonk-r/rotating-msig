@@ -55,6 +55,11 @@ describe("managing signers from the app", { skip }, () => {
     const context = { client: chain.client, chain: foundry, keyChecker: new KeyChecker([chain.client]) };
     const prepared = await prepareNewSlot(context, seedSource(NEWCOMER), chain.safe, undefined, 12);
     assert.equal(prepared.package.slotId, 3);
+    assert.equal(prepared.package.operator, await seedSource(NEWCOMER).address(0));
+    await assert.rejects(
+      sessions[0]!.propose({ kind: "add-signer", package: encodePackage({ ...prepared.package, signature: undefined }), threshold: 2 }, true),
+      /not signed by its signer address/,
+    );
     const proposal = await run({ kind: "add-signer", package: encodePackage(prepared.package), threshold: 2 });
     assert.match(proposal.actions[0]!.summary, /Add a signer whose first key is/);
 

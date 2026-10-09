@@ -8,7 +8,7 @@ import {
   encodePackage,
   loadTreeFile,
   readSafeState,
-  verifyPackages,
+  verifySignedPackages,
   type SafeInvite,
   type SlotPackage,
   type TreeFile,
@@ -344,14 +344,14 @@ handle("create:accept", async (code: unknown) => {
   return true;
 });
 
-handle("create:add", (code: unknown) => {
+handle("create:add", async (code: unknown) => {
   const creating = readCreating();
   if (creating?.role !== "creator") throw new Error("there is no Safe being created");
   const pkg = decodePackage(String(code));
   if (!Number.isInteger(pkg.slotId) || pkg.slotId < 0 || pkg.slotId >= creating.invite.owners.length) throw new Error("this package is for a slot this Safe does not have");
   const trial = creating.invite.owners.map((_, slot) => (slot === pkg.slotId ? pkg : (creating.packages[slot] ?? null)));
   const prefix = `slot ${pkg.slotId}:`;
-  const errors = verifyPackages(creating.invite, trial as SlotPackage[]).filter((error) => error.startsWith(prefix) && !error.endsWith("missing"));
+  const errors = (await verifySignedPackages(creating.invite, trial as SlotPackage[])).filter((error) => error.startsWith(prefix) && !error.endsWith("missing"));
   if (errors.length > 0) throw new Error(errors.map((error) => error.slice(prefix.length).trim()).join("; "));
   creating.packages = trial;
   writeCreating(creating);

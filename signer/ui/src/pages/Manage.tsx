@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 
 import { api, type ProposalInput, type ProposalResult, type StatusView } from "../api";
 import { IconAlert, IconCheck } from "../icons";
+import { Address } from "../ui";
 
 type Action = "add" | "remove" | "threshold" | "escape";
 
@@ -192,18 +193,53 @@ function Proposal({
   );
 }
 
+/** The signer address and slot a pasted package claims, for the owner to confirm; signatures are checked in the session. */
+function packagePreview(code: string): { operator: string; slotId: number } | undefined {
+  const text = code.trim();
+  if (!text.startsWith("rotation-slot:")) return undefined;
+  try {
+    const json = atob(text.slice("rotation-slot:".length).replace(/-/g, "+").replace(/_/g, "/"));
+    const pkg = JSON.parse(json) as { operator?: string; slotId?: number };
+    return typeof pkg.operator === "string" && typeof pkg.slotId === "number" ? { operator: pkg.operator, slotId: pkg.slotId } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function AddSigner({ owners, threshold, queue, onClose }: { owners: number; threshold: number; queue: QueueProps; onClose: () => void }) {
   const [code, setCode] = useState("");
   const [next, setNext] = useState(threshold);
+  const [confirmed, setConfirmed] = useState(false);
+  const preview = packagePreview(code);
   return (
-    <Proposal input={() => ({ kind: "add-signer", package: code.trim(), threshold: next })} ready={code.trim().startsWith("rotation-slot:")} queue={queue} onClose={onClose}>
+    <Proposal input={() => ({ kind: "add-signer", package: code.trim(), threshold: next })} ready={preview !== undefined && confirmed} queue={queue} onClose={onClose}>
       <p className="muted small">
         The new signer opens this app, chooses "I'm being added to a Safe" with this Safe's address, and sends you their slot package.
       </p>
       <label className="field">
         <span className="field-label">Their slot package</span>
-        <textarea rows={3} spellCheck={false} placeholder="rotation-slot:…" value={code} onChange={(e) => setCode(e.target.value)} />
+        <textarea
+          rows={3}
+          spellCheck={false}
+          placeholder="rotation-slot:…"
+          value={code}
+          onChange={(e) => {
+            setCode(e.target.value);
+            setConfirmed(false);
+          }}
+        />
       </label>
+      {code.trim() !== "" && !preview && <div className="note critical">This is not a slot package.</div>}
+      {preview && (
+        <div className="package-signer">
+          <span className="muted small">Signed by this signer address (it becomes slot {preview.slotId}):</span>
+          <Address address={preview.operator} full />
+          <label className="checkbox">
+            <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+            <span>I confirmed this address with the new signer directly (a call or in person), not only through the message that carried the package.</span>
+          </label>
+        </div>
+      )}
       <label className="field">
         <span className="field-label">Signatures needed afterwards</span>
         <ThresholdSelect value={next} max={owners + 1} onChange={setNext} />

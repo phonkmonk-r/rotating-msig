@@ -10,6 +10,8 @@ import {
   isAddressEqual,
   keccak256,
   pad,
+  recoverMessageAddress,
+  stringToHex,
   type Address,
   type Hex,
 } from "viem";
@@ -66,6 +68,11 @@ export interface SlotPackage {
   base: number;
   config: SlotConfig;
   stage: StageEntry[];
+  /**
+   * Signature by `operator` (EIP-191 personal message) over `packageMessage`: proves the package comes from the person
+   * who controls that address, so a package cannot be swapped for someone else's on its way to the creator or owner.
+   */
+  signature?: Hex;
 }
 
 function encode(prefix: string, value: unknown): string {
@@ -80,6 +87,51 @@ function decode<T>(prefix: string, code: string, what: string): T {
   } catch {
     throw new Error(`${what} is damaged; copy it again`);
   }
+}
+
+/** A fingerprint of everything in the package except its signature, in a fixed field order. */
+export function packageDigest(pkg: SlotPackage): Hex {
+  const canonical = [
+    pkg.v,
+    pkg.chainId,
+    pkg.safe.toLowerCase(),
+    pkg.slotId,
+    pkg.operator.toLowerCase(),
+    pkg.base,
+    [pkg.config.root, pkg.config.size, pkg.config.startIndex, pkg.config.owner.toLowerCase(), pkg.config.proof, pkg.config.cid],
+    pkg.stage.map((entry) => [entry.index, entry.owner.toLowerCase(), entry.proof]),
+  ];
+  return keccak256(stringToHex(JSON.stringify(canonical)));
+}
+
+/** The text the signer signs, readable on a hardware wallet's screen. */
+export function packageMessage(pkg: SlotPackage): string {
+  return [
+    "Keyturn slot package",
+    `Signer for slot ${pkg.slotId} of Safe ${getAddress(pkg.safe)} on chain ${pkg.chainId}.`,
+    `First key: ${getAddress(pkg.config.owner)}`,
+    `Key list root: ${pkg.config.root}`,
+    `Package: ${packageDigest(pkg)}`,
+  ].join("\n");
+}
+
+/** Whether the package carries a valid signature by its own `operator`. */
+export async function packageSignedByOperator(pkg: SlotPackage): Promise<boolean> {
+  if (!pkg.signature) return false;
+  try {
+    return isAddressEqual(await recoverMessageAddress({ message: packageMessage(pkg), signature: pkg.signature }), pkg.operator);
+  } catch {
+    return false;
+  }
+}
+
+/** `verifyPackages` plus every package's signature by the operator the invite lists for its slot. */
+export async function verifySignedPackages(invite: SafeInvite, packages: readonly SlotPackage[]): Promise<string[]> {
+  const errors = verifyPackages(invite, packages);
+  for (const [slot, pkg] of packages.entries()) {
+    if (pkg && !(await packageSignedByOperator(pkg))) errors.push(`slot ${slot}: the package is not signed by ${pkg.operator}`);
+  }
+  return errors;
 }
 
 export const encodeInvite = (invite: SafeInvite) => encode(INVITE_PREFIX, invite);

@@ -15,6 +15,8 @@ import {
   safeProxyFactoryAbi,
   verifyInvite,
   createSlotPackage,
+  packageMessage,
+  verifySignedPackages,
   BRANCH_PATH_TEMPLATE,
   INSTALL_STAGE_COUNT,
   slotConfig,
@@ -91,7 +93,8 @@ export async function prepareSlot(
   const keyPath = safeKeyPath(invite.chainId, invite.safe);
   const meta = { chainId: invite.chainId, safe: invite.safe, slotId, base: keyPath.account, branch: keyPath.branch };
   const tree = await generateTree(source, meta, size, onProgress);
-  return { tree, package: createSlotPackage(invite, loadTreeFile(JSON.stringify(tree)), await freshStart(context, tree)) };
+  const pkg = createSlotPackage(invite, loadTreeFile(JSON.stringify(tree)), await freshStart(context, tree));
+  return { tree, package: await signPackage(source, pkg) };
 }
 
 export type CreationStage = "deploying" | "installing" | "done";
@@ -116,6 +119,8 @@ export async function createSafe(
 ): Promise<CreationResult> {
   const { client, chain } = context;
   const deployments = deploymentsOf(context);
+  const signatureErrors = await verifySignedPackages(invite, packages);
+  if (signatureErrors.length > 0) throw new Error(signatureErrors.join("; "));
   const install = installFromPackages(invite, packages, deployments);
   const operator = await source.signer(OPERATOR_ACCOUNT);
   if (!invite.owners.some((owner) => isAddressEqual(owner, operator.address))) throw new Error("only one of the Safe's signers can create it");
@@ -184,7 +189,7 @@ export async function prepareNewSlot(
   const start = await freshStart(context, tree);
   return {
     tree,
-    package: {
+    package: await signPackage(source, {
       v: 1,
       chainId: tree.chainId,
       safe: tree.safe,
@@ -193,6 +198,12 @@ export async function prepareNewSlot(
       base: tree.base,
       config: slotConfig(loaded.tree, tree, start, ""),
       stage: stageEntries(loaded.tree, tree, start + 1, INSTALL_STAGE_COUNT),
-    },
+    }),
   };
+}
+
+/** Signs a package with the signer's operator account, so whoever receives it can check who made it. */
+async function signPackage(source: AddressSource, pkg: SlotPackage): Promise<SlotPackage> {
+  const operator = await source.signer(OPERATOR_ACCOUNT);
+  return { ...pkg, signature: await operator.signMessage({ message: packageMessage(pkg) }) };
 }

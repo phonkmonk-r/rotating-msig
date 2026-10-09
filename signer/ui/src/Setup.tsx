@@ -27,7 +27,7 @@ export function Setup({ state, onDone, onCancel, onSwitchProfile }: { state: Des
   }, [reload]);
 
   if (creating === undefined || adding === undefined) return null;
-  if (adding) return <AddedRoom view={adding} onChange={() => void reload()} onDone={onDone} />;
+  if (adding) return <AddedRoom view={adding} signer={state.vault.operator} onChange={() => void reload()} onDone={onDone} />;
   if (creating?.role === "creator") return <CreatorRoom view={creating} onChange={() => void reload()} onDone={onDone} />;
   if (creating?.role === "signer") return <SignerRoom view={creating} onChange={() => void reload()} onDone={onDone} />;
 
@@ -494,7 +494,7 @@ function AddedForm({ onBack, onPrepared }: { onBack: () => void; onPrepared: () 
   );
 }
 
-function AddedRoom({ view, onChange, onDone }: { view: AddingView; onChange: () => void; onDone: () => void }) {
+function AddedRoom({ view, signer, onChange, onDone }: { view: AddingView; signer?: string; onChange: () => void; onDone: () => void }) {
   const [error, setError] = useState<string>();
   const [checking, setChecking] = useState(false);
   const { percent, progress } = useDeriving();
@@ -532,7 +532,13 @@ function AddedRoom({ view, onChange, onDone }: { view: AddingView; onChange: () 
         <dt>Your slot</dt>
         <dd>{view.slotId}</dd>
       </dl>
-      <CopyBox label="Your slot package" value={view.myPackage} hint="Holds only addresses and proofs, never keys." />
+      <CopyBox label="Your slot package" value={view.myPackage} hint="Holds only addresses and proofs, never keys, and is signed by your signer address." />
+      {signer && (
+        <div className="operator-box">
+          <span className="muted small">Tell the signer adding you this address directly, so they can check the package is yours:</span>
+          <Address address={signer} full />
+        </div>
+      )}
       <div className="note pending">
         <span className="spinner" />
         <span>Waiting for the signers to add you</span>

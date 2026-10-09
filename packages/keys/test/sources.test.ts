@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { getAddress, hexToSignature, keccak256, concatHex, parseTransaction, recoverTransactionAddress, recoverTypedDataAddress, type Hex } from "viem";
+import { getAddress, hashMessage, hexToSignature, recoverMessageAddress, keccak256, concatHex, parseTransaction, recoverTransactionAddress, recoverTypedDataAddress, type Hex } from "viem";
 import { privateKeyToAccount, sign } from "viem/accounts";
 
 import { plainSafeTx, safeTxTypedData } from "@rotating-msig/core";
@@ -31,6 +31,11 @@ function fakeLedger(privateKey: Hex, calls: string[] = []): LedgerEth {
       calls.push(`signTransaction ${path}`);
       const { r, s, v } = await sign({ hash: keccak256(`0x${rawTxHex}`), privateKey });
       return { r: r.slice(2), s: s.slice(2), v: Number(v).toString(16) };
+    },
+    async signPersonalMessage(path, messageHex) {
+      calls.push(`signPersonalMessage ${path}`);
+      const { r, s, v } = await sign({ hash: hashMessage({ raw: `0x${messageHex}` }), privateKey });
+      return { r: r.slice(2), s: s.slice(2), v: Number(v) };
     },
   };
 }
@@ -103,8 +108,13 @@ describe("ledger source", () => {
     assert.equal(parseTransaction(signed).nonce, 3);
   });
 
-  it("refuses to sign messages", async () => {
-    const ledger = await ledgerSource(fakeLedger(KEY), async () => {}).signer(7);
-    await assert.rejects(ledger.signMessage({ message: "hello" }), /only sign Safe transactions/);
+  it("refuses to sign messages with owner keys, and signs them only with the operator account", async () => {
+    const source = ledgerSource(fakeLedger(KEY), async () => {});
+    for (const owner of [await source.signer(7), await source.signer(5, 3, 9)]) {
+      await assert.rejects(owner.signMessage({ message: "hello" }), /only sign Safe transactions/);
+    }
+    const operator = await source.signer(0);
+    const signature = await operator.signMessage({ message: "Keyturn slot package" });
+    assert.equal(await recoverMessageAddress({ message: "Keyturn slot package", signature }), operator.address);
   });
 });

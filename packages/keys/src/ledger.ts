@@ -1,5 +1,7 @@
 import {
+  bytesToHex,
   getAddress,
+  stringToHex,
   getTypesForEIP712Domain,
   hashDomain,
   hashStruct,
@@ -12,13 +14,14 @@ import {
 } from "viem";
 import { toAccount } from "viem/accounts";
 
-import { derivationPath, type AddressSource } from "./source.js";
+import { derivationPath, OPERATOR_ACCOUNT, type AddressSource } from "./source.js";
 
 /** The subset of `@ledgerhq/hw-app-eth` this source uses. */
 export interface LedgerEth {
   getAddress(path: string, display?: boolean): Promise<{ address: string; publicKey: string }>;
   signEIP712HashedMessage(path: string, domainSeparatorHex: string, hashStructMessageHex: string): Promise<{ v: number; r: string; s: string }>;
   signTransaction(path: string, rawTxHex: string, resolution?: null): Promise<{ v: string; r: string; s: string }>;
+  signPersonalMessage(path: string, messageHex: string): Promise<{ v: number; r: string; s: string }>;
 }
 
 const strip = (hex: Hex) => hex.slice(2);
@@ -42,8 +45,14 @@ export function ledgerSource(eth: LedgerEth, close: () => Promise<void>): Addres
       const owner = await address(account, index, branch);
       return toAccount({
         address: owner,
-        async signMessage() {
-          throw new Error("message signing is not supported: owner keys only sign Safe transactions");
+        async signMessage({ message }) {
+          // Only the operator (gas) account signs messages, for slot packages; owner keys only sign Safe transactions.
+          if (account !== OPERATOR_ACCOUNT || index !== 0 || branch !== undefined) {
+            throw new Error("message signing is not supported: owner keys only sign Safe transactions");
+          }
+          const hex = typeof message === "string" ? stringToHex(message) : typeof message.raw === "string" ? message.raw : bytesToHex(message.raw);
+          const { v, r, s } = await eth.signPersonalMessage(path, strip(hex));
+          return signatureToHex({ r: prefix(r), s: prefix(s), v: BigInt(v) });
         },
         async signTypedData(typedData) {
           const { domain = {}, types, primaryType, message } = typedData as never as {

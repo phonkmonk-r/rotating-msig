@@ -3,7 +3,7 @@ import { after, before, describe, it } from "node:test";
 import { createWalletClient, http, numberToHex, parseEther, type Address } from "viem";
 import { foundry } from "viem/chains";
 
-import { safeKeyPath, decodeInvite, decodePackage, encodeInvite, encodePackage, readSafeState, verifyPackages, type SafeDeployments, type SlotPackage } from "@rotating-msig/core";
+import { packageMessage, verifySignedPackages, safeKeyPath, decodeInvite, decodePackage, encodeInvite, encodePackage, readSafeState, verifyPackages, type SafeDeployments, type SlotPackage } from "@rotating-msig/core";
 import { seedSource } from "@rotating-msig/keys";
 
 import { joinSafe } from "../src/join.js";
@@ -99,5 +99,16 @@ describe("creating a new Safe from the app", { skip }, () => {
     const other = await planSafe(context, operators, 2);
     assert.match(verifyPackages(other, packages).join(), /another Safe/);
     await assert.rejects(createSafe(context, sources[0]!, invite, packages.slice(0, 2)), /2 of 3 slot packages/);
+
+    // Signatures: every package is signed by the operator the invite lists for its slot.
+    assert.deepEqual(await verifySignedPackages(invite, packages), []);
+    const outsider = await seedSource(OUTSIDER).signer(0);
+    const impostor = { ...packages[2]!, operator: outsider.address };
+    impostor.signature = await outsider.signMessage({ message: packageMessage(impostor) });
+    assert.match((await verifySignedPackages(invite, [packages[0]!, packages[1]!, impostor])).join(), /slot 2: the package is from 0x/, "a re-signed package names the wrong signer");
+    const reSigned = { ...packages[2]!, signature: await outsider.signMessage({ message: packageMessage(packages[2]!) }) };
+    assert.match((await verifySignedPackages(invite, [packages[0]!, packages[1]!, reSigned])).join(), /slot 2: the package is not signed by/);
+    const unsigned = { ...packages[2]!, signature: undefined };
+    await assert.rejects(createSafe(context, sources[0]!, invite, [packages[0]!, packages[1]!, unsigned]), /not signed by/);
   });
 });

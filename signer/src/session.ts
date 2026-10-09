@@ -5,6 +5,7 @@ import {
   decodeActions,
   checkPackage,
   decodePackage,
+  packageSignedByOperator,
   packageKeys,
   deploymentsFor,
   describeRevert,
@@ -475,6 +476,7 @@ export class SignerSession {
       const errors = checkPackage(pkg, { chainId: state.chainId, safe: state.safe, slotId: state.slotCount });
       const known = new Set([...state.owners, ...state.slots.flatMap((slot) => slot.staged)].map((address) => address.toLowerCase()));
       if (packageKeys(pkg).some((entry) => known.has(entry.owner.toLowerCase()))) errors.push("the package reuses an address of a current signer");
+      if (!(await packageSignedByOperator(pkg))) errors.push(`it is not signed by its signer address ${pkg.operator}`);
       if (errors.length > 0) throw new Error(`the new signer's package does not fit: ${errors.join("; ")}`);
       checkThreshold(input.threshold, owners + 1);
     }

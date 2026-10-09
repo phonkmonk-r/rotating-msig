@@ -1998,3 +1998,26 @@ button.safe-chip.open {
   flex: none;
   white-space: nowrap;
 }
+
+.package-signer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.checkbox {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.checkbox input {
+  width: auto;
+  margin-top: 2px;
+  accent-color: var(--accent);
+}

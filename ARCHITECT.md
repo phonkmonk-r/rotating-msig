@@ -85,7 +85,7 @@ A Safe 1.5.0 can attach three kinds of extensions. RotationGuard is all three at
 | **Module** | Safe executes calls the guard makes through `execTransactionFromModule` | Changing owners is an owner-only operation; as a module the guard can call `swapOwner`, `addOwnerWithThreshold` and `removeOwner` on the Safe. |
 | **Module guard** | `checkModuleTransaction` before every module call | So that no other module can ever bypass the guard, and the guard itself can only do owner management. |
 
-It is a **singleton**: deployed once per network (`script/DeployGuard.s.sol`, Sepolia `0xbE62…5E36`), with no owner, no admin and no upgrade path. Every Safe that installs it uses the same code; all per-Safe data is keyed by the Safe's address, and every state-changing function takes the Safe to be `msg.sender` (the Safe calling its own guard) except `stage`, which is permissionless but proof-gated. So one Safe can never touch another Safe's configuration, and creating a Safe never deploys a guard. The only constructor argument is the allowed MultiSendCallOnly address (immutable).
+It is a **singleton**: deployed once per network (`script/DeployGuard.s.sol`; on Sepolia the current guard is `0x0f91…3391`, the first one `0xbE62…5E36` still serves the earliest Safes), with no owner, no admin and no upgrade path. Every Safe that installs it uses the same code; all per-Safe data is keyed by the Safe's address, and every state-changing function takes the Safe to be `msg.sender` (the Safe calling its own guard) except `stage`, which is permissionless but proof-gated. So one Safe can never touch another Safe's configuration, and creating a Safe never deploys a guard. The only constructor argument is the allowed MultiSendCallOnly address (immutable).
 
 A new version is a new deployment at a new address; a Safe moves to it by removing the old guard (escape hatch) and installing the new one.
 
@@ -245,7 +245,7 @@ No keys and no Electron. Everything that both the UI, the session and the tools 
 | `txservice.ts` | Minimal client for Safe's Transaction Service: `pending` (queue, every hash recomputed locally), `propose`, `confirm`. |
 | `proposals.ts` | What the app can propose (`ProposalInput`): ETH and ERC-20 transfers, force-rotate, dApp calls, threshold, add and remove signer, escape, skip used keys, and queued batches. `buildProposal` turns each into the Safe call; `dappCall` refuses dApp calls to the Safe or the guard; `batchCalls` flattens a queue into plain calls. |
 | `setup.ts` | Installing on an existing Safe: `readGuardInfo`, `validateInstall` (every reason not to install), `planInstall`. `INSTALL_STAGE_COUNT` (5). |
-| `create.ts` | Creating a new Safe: invites (`createInvite`, `verifyInvite`, encode and decode), CREATE2 address prediction (`predictSafeAddress`, `safeInitializer`, `creationCall`), slot packages (`createSlotPackage`, `checkPackage`, `verifyPackages`, `packageKeys`), and `installFromPackages`. |
+| `create.ts` | Creating a new Safe: invites (`createInvite`, `verifyInvite`, encode and decode), CREATE2 address prediction (`predictSafeAddress`, `safeInitializer`, `creationCall`), slot packages (`createSlotPackage`, `checkPackage`, `verifyPackages`, `packageKeys`), package signatures (`packageMessage`, `packageDigest`, `packageSignedByOperator`, `verifySignedPackages`), and `installFromPackages`. |
 | `errors.ts` | `describeRevert`: turns raw revert data into the guard's or Safe's error names. |
 
 ## 5. packages/keys: keys and derivation
@@ -256,7 +256,7 @@ Keys never leave this package's sources: the seed stays in process memory, Ledge
 |---|---|
 | `source.ts` | `AddressSource`: the interface every key source implements (`address(account, index?, branch?)`, `signer(...)`, `close`). `derivationPath`, `OPERATOR_ACCOUNT` (account 0, the gas account). |
 | `seed.ts` | `seedSource(mnemonic)`: BIP-39 seed, BIP-32 derivation with @scure, private keys wiped after each signer is built. |
-| `ledger.ts` | `ledgerSource`/`openLedgerSource`: the same interface over Ledger's USB transport and Ethereum app. Typed data is signed from its domain and message hashes. |
+| `ledger.ts` | `ledgerSource`/`openLedgerSource`: the same interface over Ledger's USB transport and Ethereum app. Typed data is signed from its domain and message hashes. Messages may only be signed by the operator account (for slot packages); owner keys refuse them. |
 | `owner.ts` | `resolveCurrentOwner(source, tree, state)`: reads the slot's current index from the chain and derives exactly that key, refusing if it is not the on-chain owner. The signer never picks an account; the chain does. |
 | `discover.ts` | `discoverSlot`: finds which slot of a Safe belongs to a seed by deriving each slot's current key under each candidate path layout. `generateTree`: derives a full tree with progress. |
 | `prompt.ts` | `readSecret`: hidden terminal input for the command-line tools. |
@@ -370,7 +370,9 @@ Joining tries them in that order. Each derivation step has a fixed cost regardle
 
 **Signing and executing.** A proposer signs the Safe transaction hash with their current key (`propose`); others confirm until threshold − 1 confirmations exist (`confirm`); the last signer executes with the confirmations plus their own v = 1 signature (`execute`). The guard rotates every signer; each signer's app refills its buffer.
 
-**Being added.** The newcomer's app generates a tree for the next slot ID and a package; an owner proposes `addSlot` plus staging in one batch; after execution, the newcomer's app sees the slot and joins.
+**Being added.** The newcomer's app generates a tree for the next slot ID and a package signed by their signer address; the owner confirms that address with the newcomer directly, then proposes `addSlot` plus staging in one batch; after execution, the newcomer's app sees the slot and joins.
+
+**Signed packages.** Every slot package (creating or being added) is signed by the signer's gas address. When creating, each signature must come from the address the creator listed for that slot; when adding, the owner confirms the address out of band. A package swapped in transit is rejected or shows an address the owner does not recognize.
 
 **Queueing.** With the queue on, actions collect locally; the queue is simulated as the Safe would run it and proposed as one transaction, so each signer signs and rotates once.
 
@@ -388,6 +390,7 @@ Joining tries them in that order. Each derivation step has a fixed cost regardle
 | A web page | dApp view sandboxed, own storage, no permissions, review hidden from the page, no message signing, no calls to Safe or guard. |
 | The UI itself | Sandboxed renderer; every action re-checked in the session against chain state. |
 | Keys reused across Safes or wallets | Two-level per-Safe path, nonce and guard-history checks, skip used keys. |
+| A swapped slot package | Packages signed by the signer's gas address; checked against the invite's owner list, or confirmed by the owner out of band. |
 
 ## 11. Where to change what
 
