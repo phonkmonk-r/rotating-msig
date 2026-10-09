@@ -6,7 +6,7 @@ import { api, type ProposalInput, type ProposalResult, type QueueItem, type Stat
 import { LOW_GAS_WEI } from "../data";
 import { eth } from "../format";
 import { IconAlert, IconTransactions } from "../icons";
-import { nextStep, sendLabel } from "../lib/execution";
+import { nextStep, sendingLabel, sendLabel } from "../lib/execution";
 import { Address, Avatar, Badge, Dots, PageHeader, useSoleSigner } from "../ui";
 
 export function Overview({ status, queue, onOpenTransactions }: { status: StatusView; queue: QueueItem[]; onOpenTransactions: () => void }) {
@@ -157,7 +157,7 @@ function SkipUsedKeys() {
               })
             }
           >
-            {working ? "Signing…" : sendLabel(sole)}
+            {working ? sendingLabel(sole) : sendLabel(sole)}
           </button>
         ) : (
           <button

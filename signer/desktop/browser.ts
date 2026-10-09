@@ -9,6 +9,12 @@ import type { DraftItem, ProposalResult, SignerSession } from "../src/session.js
 const PARTITION = "persist:dapps";
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
+/** A page the user saved for quick access. */
+export interface Bookmark {
+  url: string;
+  title: string;
+}
+
 /** One open page; a new tab has no URL until something is opened in it. */
 export interface BrowserTab {
   id: number;

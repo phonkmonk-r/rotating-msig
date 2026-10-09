@@ -26,7 +26,7 @@ import { detectChains, JoinError, joinSafe, readClient, type JoinProgress } from
 import { chainFor, registerLocalChain } from "../src/networks.js";
 import { createSafe, planSafe, prepareNewSlot, prepareSlot, type NewSafeContext } from "../src/newsafe.js";
 import type { SignerSession } from "../src/session.js";
-import { clearDappStorage, DappBrowser, type Bounds } from "./browser.js";
+import { browsableUrl, clearDappStorage, DappBrowser, type Bookmark, type Bounds } from "./browser.js";
 import { ProfileStore, type ProfileEntry } from "./profiles.js";
 import { readVault, unlockVault } from "./vault.js";
 
@@ -106,6 +106,8 @@ const settingsPath = () => join(profileDir(), "settings.json");
 const vaultPath = () => join(profileDir(), "vault.json");
 const creatingPath = () => join(profileDir(), "creating.json");
 const addingPath = () => join(profileDir(), "adding.json");
+/** Pages saved for quick access in the dApp browser, per profile. */
+const bookmarksPath = () => join(profileDir(), "bookmarks.json");
 /** A renewed key list proposed but not yet executed, kept beside the slot's tree until the chain shows its root. */
 const renewedTreePath = (settings: Pick<SafeEntry, "chainId" | "safe" | "slotId">, root: string) =>
   join(profileDir(), "trees", `${settings.chainId}-${settings.safe.toLowerCase()}-slot${settings.slotId}-renewed-${root.slice(2, 18)}.json`);
@@ -724,6 +726,31 @@ handle("browser:newTab", (url: unknown) => requireBrowser().newTab(typeof url ==
 handle("browser:selectTab", (id: unknown) => requireBrowser().selectTab(Number(id)));
 handle("browser:closeTab", (id: unknown) => requireBrowser().closeTab(Number(id)));
 handle("browser:bounds", (bounds: Bounds | null) => browser?.setBounds(bounds) ?? null);
+
+function readBookmarks(): Bookmark[] {
+  if (!activeId) return [];
+  try {
+    const list = JSON.parse(readFileSync(bookmarksPath(), "utf8")) as Bookmark[];
+    return Array.isArray(list) ? list.filter((item) => typeof item?.url === "string" && typeof item.title === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeBookmarks(list: Bookmark[]): Bookmark[] {
+  mkdirSync(dirname(bookmarksPath()), { recursive: true });
+  writeFileSync(bookmarksPath(), JSON.stringify(list, null, 2));
+  sendToWindow("bookmarks:state", list);
+  return list;
+}
+
+handle("bookmarks:list", () => readBookmarks());
+handle("bookmarks:add", (url: unknown, title: unknown) => {
+  const target = browsableUrl(String(url));
+  const list = readBookmarks().filter((item) => item.url !== target);
+  return writeBookmarks([...list, { url: target, title: typeof title === "string" ? title.trim().slice(0, 120) : "" }]);
+});
+handle("bookmarks:remove", (url: unknown) => writeBookmarks(readBookmarks().filter((item) => item.url !== String(url))));
 handle("browser:navigate", (action: unknown) => {
   if (action === "back" || action === "forward" || action === "reload" || action === "stop") browser?.navigate(action);
   return null;

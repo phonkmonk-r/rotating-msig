@@ -43,6 +43,9 @@ contextBridge.exposeInMainWorld("signer", {
   skipUsedKeys: call("signer:skipUsedKeys"),
   renewKeys: call("signer:renewKeys"),
   browserOpen: call("browser:open"),
+  bookmarksList: call("bookmarks:list"),
+  bookmarksAdd: call("bookmarks:add"),
+  bookmarksRemove: call("bookmarks:remove"),
   browserNewTab: call("browser:newTab"),
   browserSelectTab: call("browser:selectTab"),
   browserCloseTab: call("browser:closeTab"),
@@ -77,4 +80,5 @@ contextBridge.exposeInMainWorld("signer", {
   onCreateStage: (listener) => subscribe("create:stage", listener),
   onBrowserState: (listener) => subscribe("browser:state", listener),
   onBrowserRequest: (listener) => subscribe("browser:request", listener),
+  onBookmarks: (listener) => subscribe("bookmarks:state", listener),
 });

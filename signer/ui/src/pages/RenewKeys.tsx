@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import { api, desktop, type JoinProgress, type ProposalInput, type ProposalResult } from "../api";
 import { IconAlert, IconCheck } from "../icons";
-import { sendLabel } from "../lib/execution";
+import { sendingLabel, sendLabel } from "../lib/execution";
 import { useSoleSigner } from "../ui";
 
 /**
@@ -95,7 +95,7 @@ export function RenewKeys({ compact = false }: { compact?: boolean }) {
                 Cancel
               </button>
               <button type="button" className="primary" onClick={() => void propose()} disabled={stage === "signing"}>
-                {stage === "signing" ? "Signing…" : sendLabel(sole)}
+                {stage === "signing" ? sendingLabel(sole) : sendLabel(sole)}
               </button>
             </>
           ) : (

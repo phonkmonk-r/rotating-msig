@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { eth, explorer, short, signedAmount, UNLIMITED_APPROVAL } from "../src/format.js";
-import { tabLabel } from "../src/lib/browser.js";
-import { executionInFlight, executionTone, nextStep, requestValue, sendLabel } from "../src/lib/execution.js";
+import { isSaved, tabLabel } from "../src/lib/browser.js";
+import { executionInFlight, executionTone, nextStep, requestValue, sendingLabel, sendingNote, sendLabel } from "../src/lib/execution.js";
 import { profileFormProblems, seedWordCount, type ProfileForm } from "../src/lib/profileForm.js";
 import { packagePreview } from "../src/lib/slotPackage.js";
 
@@ -114,6 +114,10 @@ describe("the only signer", () => {
     assert.equal(sendLabel(true), "Execute");
     assert.match(nextStep(false), /Another signer executes it/);
     assert.match(nextStep(true), /only signer, so it is executing now/);
+    assert.equal(sendingLabel(true), "Simulating…", "nothing is signed before the simulation passes");
+    assert.equal(sendingLabel(false), "Signing…");
+    assert.match(sendingNote(true), /^Simulating the transaction, then sending/);
+    assert.match(sendingNote(false), /^Simulating the transaction, then signing/);
   });
 });
 
@@ -124,5 +128,14 @@ describe("browser tabs", () => {
     assert.equal(tabLabel({ title: "https://curve.finance/", url: "https://curve.finance/" }), "curve.finance", "a title that is just the URL");
     assert.equal(tabLabel({ title: "", url: "" }), "New tab");
     assert.equal(tabLabel({ title: "", url: "about:blank" }), "New tab");
+  });
+});
+
+describe("saved pages", () => {
+  it("knows whether the open page is saved", () => {
+    const saved = [{ url: "https://app.uniswap.org/", title: "Uniswap" }];
+    assert.equal(isSaved(saved, "https://app.uniswap.org/"), true);
+    assert.equal(isSaved(saved, "https://app.aave.com/"), false);
+    assert.equal(isSaved(saved, ""), false, "an empty tab is never saved");
   });
 });

@@ -2,10 +2,11 @@ import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "re
 import { formatEther } from "viem";
 
 import { browser, type BrowserState, type DappRequest, type ProposalResult, type StatusView } from "../api";
+import { useBookmarks } from "../bookmarks";
 import { short } from "../format";
-import { IconAlert, IconBack, IconCheck, IconClose, IconForward, IconGlobe, IconPlus, IconRefresh } from "../icons";
-import { tabLabel } from "../lib/browser";
-import { requestValue, sendLabel } from "../lib/execution";
+import { IconAlert, IconBack, IconCheck, IconClose, IconForward, IconGlobe, IconPlus, IconRefresh, IconStar } from "../icons";
+import { isSaved, tabLabel } from "../lib/browser";
+import { requestValue, sendingLabel, sendingNote, sendLabel } from "../lib/execution";
 import { Badge, useSoleSigner } from "../ui";
 
 const SUGGESTIONS = [
@@ -30,6 +31,7 @@ export function Browse({ status, request, queueMode }: { status: StatusView; req
   const [proposed, setProposed] = useState<ProposalResult>();
   const [queuedNote, setQueuedNote] = useState(false);
   const viewport = useRef<HTMLDivElement>(null);
+  const saved = isSaved(useBookmarks(), state.url);
 
   useEffect(() => {
     if (!browser) return;
@@ -137,6 +139,17 @@ export function Browse({ status, request, queueMode }: { status: StatusView; req
             onBlur={() => setEditing(false)}
             onChange={(e) => setAddress(e.target.value)}
           />
+          <button
+            type="button"
+            className={`icon-button browser-star ${saved ? "saved" : ""}`}
+            aria-label={saved ? "Remove from saved pages" : "Save this page"}
+            aria-pressed={saved}
+            title={saved ? "Remove from saved pages" : "Save this page"}
+            disabled={!state.url}
+            onClick={() => void (saved ? browser!.removeBookmark(state.url) : browser!.addBookmark(state.url, state.title)).catch((caught: Error) => setError(caught.message))}
+          >
+            <IconStar width="16" height="16" />
+          </button>
         </div>
         <span className="browser-account" title={`dApps see the Safe ${status.safe} on ${status.chainName}`}>
           Safe {short(status.safe)}
@@ -311,7 +324,12 @@ function RequestReview({
           </ul>
         </div>
       ) : (
-        !error && <p className="muted">Checking…</p>
+        !error && (
+          <div className="note pending" role="status">
+            <span className="spinner" />
+            <span>Simulating the transaction against the chain…</span>
+          </div>
+        )
       )}
 
       {request.readsOwnRpc && request.method === "eth_sendTransaction" && (
@@ -330,6 +348,12 @@ function RequestReview({
           <span>{error.charAt(0).toUpperCase() + error.slice(1)}</span>
         </div>
       )}
+      {working && (
+        <div className="note pending" role="status">
+          <span className="spinner" />
+          <span>{sendingNote(sole)}</span>
+        </div>
+      )}
 
       <div className="tx-footer">
         <button type="button" onClick={() => void browser!.reject(request.id)} disabled={working}>
@@ -345,7 +369,7 @@ function RequestReview({
           Add to queue
         </button>
         <button type="button" className={queueFirst ? "" : "primary"} onClick={() => void approve()} disabled={working || !preview}>
-          {working ? "Signing…" : sendLabel(sole)}
+          {working ? sendingLabel(sole) : sendLabel(sole)}
         </button>
       </div>
     </section>

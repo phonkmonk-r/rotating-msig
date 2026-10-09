@@ -6,6 +6,12 @@ import type { Simulation } from "../../src/simulate.js";
 
 export type { DappCall, DappRequest, DraftItem, DraftView, Execution, Exposure, ProposalInput, ProposalResult, QueueItem, Refill, Simulation, SignerView, StatusView, TokenInfo };
 
+/** A page the user saved for quick access in the dApp browser. */
+export interface Bookmark {
+  url: string;
+  title: string;
+}
+
 /** One open page in the dApp browser; a new tab has no URL until something is opened in it. */
 export interface BrowserTab {
   id: number;
@@ -179,6 +185,9 @@ interface DesktopBridge {
   draftSimulate(): Promise<Result<Simulation>>;
   draftPropose(preview: boolean): Promise<Result<ProposalResult>>;
   browserOpen(url: string): Promise<Result<BrowserState>>;
+  bookmarksList(): Promise<Result<Bookmark[]>>;
+  bookmarksAdd(url: string, title: string): Promise<Result<Bookmark[]>>;
+  bookmarksRemove(url: string): Promise<Result<Bookmark[]>>;
   browserNewTab(url?: string): Promise<Result<BrowserState>>;
   browserSelectTab(id: number): Promise<Result<BrowserState>>;
   browserCloseTab(id: number): Promise<Result<BrowserState>>;
@@ -204,6 +213,7 @@ interface DesktopBridge {
   onCreateStage(listener: (stage: CreateStage) => void): () => void;
   onBrowserState(listener: (state: BrowserState) => void): () => void;
   onBrowserRequest(listener: (request: DappRequest | null) => void): () => void;
+  onBookmarks(listener: (list: Bookmark[]) => void): () => void;
 }
 
 const bridge = (window as unknown as { signer?: DesktopBridge }).signer;
@@ -318,6 +328,10 @@ export const browser = bridge
   ? {
       open: (url: string) => unwrap(bridge.browserOpen(url)),
       newTab: (url?: string) => unwrap(bridge.browserNewTab(url)),
+      bookmarks: () => unwrap(bridge.bookmarksList()),
+      addBookmark: (url: string, title: string) => unwrap(bridge.bookmarksAdd(url, title)),
+      removeBookmark: (url: string) => unwrap(bridge.bookmarksRemove(url)),
+      onBookmarks: (listener: (list: Bookmark[]) => void) => bridge.onBookmarks(listener),
       selectTab: (id: number) => unwrap(bridge.browserSelectTab(id)),
       closeTab: (id: number) => unwrap(bridge.browserCloseTab(id)),
       bounds: (bounds: Bounds | null) => unwrap(bridge.browserBounds(bounds)),

@@ -4,7 +4,7 @@ import { formatUnits, isAddress, parseEther, parseUnits } from "viem";
 import { api, type DappCall, type ProposalInput, type ProposalResult, type StatusView, type TokenInfo } from "../api";
 import { eth } from "../format";
 import { IconAlert, IconCheck } from "../icons";
-import { sendLabel } from "../lib/execution";
+import { sendingLabel, sendLabel } from "../lib/execution";
 import { Avatar, Badge, Dots, useSoleSigner } from "../ui";
 import { ContractCall } from "./ContractCall";
 
@@ -267,7 +267,7 @@ export function NewTransaction({
               Back
             </button>
             <button type="button" className="primary" onClick={() => void submit(false)} disabled={working}>
-              {working ? "Signing…" : sendLabel(sole)}
+              {working ? sendingLabel(sole) : sendLabel(sole)}
             </button>
           </>
         ) : (

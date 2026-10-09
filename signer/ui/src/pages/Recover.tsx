@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { api, type Exposure, type ProposalResult } from "../api";
 import { IconAlert } from "../icons";
-import { sendLabel } from "../lib/execution";
+import { sendingLabel, sendLabel } from "../lib/execution";
 import { useSoleSigner } from "../ui";
 
 /**
@@ -71,7 +71,7 @@ export function Recover({ exposure, onProposed }: { exposure: Exposure; onPropos
               })
             }
           >
-            {working ? "Signing…" : sendLabel(sole)}
+            {working ? sendingLabel(sole) : sendLabel(sole)}
           </button>
         ) : (
           <button type="button" className="primary" disabled={working} onClick={() => void run(async () => setReview(await api.recover(true)))}>

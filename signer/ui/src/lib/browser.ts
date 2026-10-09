@@ -1,4 +1,4 @@
-import type { BrowserTab } from "../api";
+import type { Bookmark, BrowserTab } from "../api";
 
 /** A tab's name in the tab strip: the page title, else its host, else "New tab". */
 export function tabLabel(tab: Pick<BrowserTab, "title" | "url">): string {
@@ -11,4 +11,9 @@ export function tabLabel(tab: Pick<BrowserTab, "title" | "url">): string {
     // Not a URL yet: a new tab.
   }
   return "New tab";
+}
+
+/** Whether `url` is saved; both come from the main process, which normalizes every URL it stores or reports. */
+export function isSaved(saved: readonly Bookmark[], url: string): boolean {
+  return url !== "" && saved.some((item) => item.url === url);
 }

@@ -3,7 +3,7 @@ import { useState, type ReactNode } from "react";
 import { api, type ProposalInput, type ProposalResult, type StatusView } from "../api";
 import { IconAlert, IconCheck } from "../icons";
 import { packagePreview } from "../lib/slotPackage";
-import { nextStep, sendLabel } from "../lib/execution";
+import { nextStep, sendingLabel, sendLabel } from "../lib/execution";
 import { Address, useSoleSigner } from "../ui";
 
 type Action = "add" | "remove" | "threshold" | "escape";
@@ -177,7 +177,7 @@ function Proposal({
         </button>
         {review ? (
           <button type="button" className="primary" disabled={working} onClick={() => void submit(false)}>
-            {working ? "Signing…" : sendLabel(sole)}
+            {working ? sendingLabel(sole) : sendLabel(sole)}
           </button>
         ) : (
           <>

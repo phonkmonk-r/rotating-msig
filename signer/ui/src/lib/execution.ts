@@ -27,3 +27,16 @@ export function sendLabel(soleSigner: boolean): string {
 export function nextStep(soleSigner: boolean): string {
   return soleSigner ? "You are the only signer, so it is executing now; follow it on Transactions." : "Another signer executes it from Transactions.";
 }
+
+/**
+ * The button while an action is being sent. Both kinds first re-check and simulate the transaction; the only signer then
+ * starts the execution (nothing is signed until it is sent), others sign their confirmation.
+ */
+export function sendingLabel(soleSigner: boolean): string {
+  return soleSigner ? "Simulating…" : "Signing…";
+}
+
+/** What the app is doing while an action is being sent, in a sentence. */
+export function sendingNote(soleSigner: boolean): string {
+  return soleSigner ? "Simulating the transaction, then sending it from your current key…" : "Simulating the transaction, then signing your confirmation…";
+}

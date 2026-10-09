@@ -157,6 +157,10 @@ describe("Cicada desktop app", { skip, timeout: 5 * TIMEOUT }, () => {
         res.end(`<!doctype html><title>Opener</title><body><script>window.open("/popup", "_blank");</script></body>`);
         return;
       }
+      if (req.url === "/plain") {
+        res.end(`<!doctype html><title>Plain page</title><body>A page worth saving.</body>`);
+        return;
+      }
       if (req.url === "/popup") {
         res.end(`<!doctype html><title>Popup</title><body><script>
           document.title = "Popup " + (window.opener ? "with opener" : "without opener") + " " + typeof window.ethereum;
@@ -196,10 +200,37 @@ describe("Cicada desktop app", { skip, timeout: 5 * TIMEOUT }, () => {
     await popup.waitFor({ state: "detached" });
     assert.equal(await page.getByRole("tab", { name: "Opener" }).getAttribute("aria-selected"), "true");
 
-    await page.getByRole("button", { name: "New tab" }).click();
+    await page.getByRole("button", { name: "New tab", exact: true }).click();
     await page.getByRole("tab", { name: "New tab" }).waitFor();
     await page.getByRole("heading", { name: "Use any dApp with your Safe" }).waitFor();
     assert.equal(await page.getByRole("tab").count(), 2);
+  });
+
+  it("saves a page for quick access from the sidebar, opens it in a new tab, and removes it", async () => {
+    await page.getByRole("button", { name: "New tab", exact: true }).click();
+    const address = page.getByPlaceholder(/Enter a dApp address/);
+    await address.fill(`${dappUrl}plain`);
+    await address.press("Enter");
+    await page.locator('[role="tab"][aria-selected="true"]', { hasText: "Plain page" }).waitFor();
+    await page.getByRole("button", { name: "Save this page" }).click();
+    await page.getByRole("button", { name: "Remove from saved pages" }).waitFor();
+
+    const tabs = await page.getByRole("tab").count();
+    await page.getByRole("button", { name: "Saved pages", exact: true }).click();
+    const saved = page.getByRole("list", { name: "Saved pages" });
+    await saved.getByRole("button", { name: "Plain page", exact: true }).click();
+    await page.waitForFunction((count) => document.querySelectorAll('[role="tab"]').length === count, tabs + 1);
+    const opened = page.getByRole("tab").last();
+    await page.waitForFunction(() => {
+      const all = document.querySelectorAll('[role="tab"]');
+      const last = all[all.length - 1];
+      return last?.getAttribute("aria-selected") === "true" && last.textContent?.includes("Plain page");
+    });
+    assert.equal(await opened.getAttribute("aria-selected"), "true", "the saved page opens in a new, selected tab");
+
+    await saved.getByRole("button", { name: "Remove Plain page" }).click();
+    await page.getByText("Save a page with the star").waitFor();
+    assert.equal(await page.getByRole("button", { name: "Save this page" }).getAttribute("aria-pressed"), "false");
   });
 
   it("removes the profile and its files from this computer", async () => {

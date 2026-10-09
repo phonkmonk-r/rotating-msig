@@ -4,7 +4,7 @@ import { formatUnits } from "viem";
 import { api, type DraftView, type ProposalResult, type Simulation } from "../api";
 import { short, signedAmount, UNLIMITED_APPROVAL } from "../format";
 import { IconAlert, IconCheck } from "../icons";
-import { sendLabel } from "../lib/execution";
+import { sendingLabel, sendLabel } from "../lib/execution";
 import { Badge, useSoleSigner } from "../ui";
 
 /**
@@ -187,7 +187,7 @@ export function QueueCard({ draft, pending, onChanged }: { draft: DraftView; pen
         </button>
         {review ? (
           <button type="button" className="primary" disabled={working} onClick={() => void propose(false)}>
-            {working ? "Signing…" : `${sendLabel(sole)} ${draft.items.length} action${draft.items.length === 1 ? "" : "s"}`}
+            {working ? sendingLabel(sole) : `${sendLabel(sole)} ${draft.items.length} action${draft.items.length === 1 ? "" : "s"}`}
           </button>
         ) : (
           <button type="button" className="primary" disabled={working || blocked !== undefined || failed >= 0} onClick={() => void propose(true)}>

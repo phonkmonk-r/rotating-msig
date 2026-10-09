@@ -291,7 +291,7 @@ function Review({
           Cancel
         </button>
         <button type="button" className="primary" disabled={working} onClick={onRun}>
-          {working ? (action === "confirm" ? "Signing…" : "Sending…") : action === "confirm" ? "Sign" : "Execute"}
+          {working ? (action === "confirm" ? "Signing…" : "Simulating…") : action === "confirm" ? "Sign" : "Execute"}
         </button>
       </div>
     </div>

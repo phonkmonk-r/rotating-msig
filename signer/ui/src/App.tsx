@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
 import { browser, canConnect, desktop, type DappRequest, type DesktopState } from "./api";
+import { useBookmarks } from "./bookmarks";
 import { useSignerData } from "./data";
 import { short } from "./format";
-import { IconGlobe, IconLock, IconOverview, IconRefresh, IconSettings, IconSigners, IconTransactions, Logo } from "./icons";
+import { IconChevronDown, IconGlobe, IconLock, IconOverview, IconRefresh, IconSettings, IconSigners, IconTransactions, Logo } from "./icons";
 import { JoinSafe } from "./JoinSafe";
 import { SafeSwitcher } from "./SafeSwitcher";
+import { SavedPages } from "./SavedPages";
 import { Setup } from "./Setup";
 import { OverviewSkeleton } from "./Skeleton";
 import { Welcome } from "./Welcome";
@@ -181,6 +183,22 @@ function Shell({
   const { status, queue, refresh } = data;
   const waiting = queue.filter((item) => item.verdict.action !== "none").length;
   const [dappRequest, setDappRequest] = useState<DappRequest | null>(null);
+  const saved = useBookmarks();
+  const [savedOpen, setSavedOpen] = useState(() => {
+    try {
+      return localStorage.getItem("cicada.savedOpen") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleSaved = (open: boolean) => {
+    setSavedOpen(open);
+    try {
+      localStorage.setItem("cicada.savedOpen", open ? "1" : "0");
+    } catch {
+      // A remembered preference only; nothing else depends on it.
+    }
+  };
 
   useEffect(() => {
     if (!browser) return;
@@ -219,13 +237,34 @@ function Shell({
         )}
 
         <nav className="nav">
-          {nav.map((item) => (
-            <button key={item.id} type="button" className={page === item.id ? "nav-item active" : "nav-item"} onClick={() => setPage(item.id)}>
-              {item.icon}
-              <span>{item.label}</span>
-              {item.count !== undefined && item.count > 0 && <span className="count">{item.count}</span>}
-            </button>
-          ))}
+          {nav.map((item) => {
+            const button = (
+              <button key={item.id} type="button" className={page === item.id ? "nav-item active" : "nav-item"} onClick={() => setPage(item.id)}>
+                {item.icon}
+                <span>{item.label}</span>
+                {item.count !== undefined && item.count > 0 && <span className="count">{item.count}</span>}
+              </button>
+            );
+            if (item.id !== "browse") return button;
+            return (
+              <div key={item.id} className="nav-group">
+                <div className="nav-row">
+                  {button}
+                  <button
+                    type="button"
+                    className={`icon-button nav-toggle ${savedOpen ? "open" : ""}`}
+                    aria-label="Saved pages"
+                    aria-expanded={savedOpen}
+                    title="Saved pages"
+                    onClick={() => toggleSaved(!savedOpen)}
+                  >
+                    <IconChevronDown width="16" height="16" />
+                  </button>
+                </div>
+                {savedOpen && <SavedPages saved={saved} onOpened={() => setPage("browse")} />}
+              </div>
+            );
+          })}
         </nav>
 
         <div className="sidebar-bottom">

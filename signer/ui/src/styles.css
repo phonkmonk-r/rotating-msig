@@ -516,6 +516,79 @@ button.large {
   color: var(--accent);
 }
 
+.nav-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.nav-row .nav-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.nav-toggle {
+  width: 28px;
+  height: 28px;
+  justify-content: center;
+}
+
+.nav-toggle svg {
+  transition: transform 0.15s ease;
+}
+
+.nav-toggle.open svg {
+  transform: rotate(180deg);
+}
+
+.saved-list {
+  list-style: none;
+  margin: 2px 0 6px;
+  padding: 0 0 0 30px;
+}
+
+.saved-item {
+  display: flex;
+  align-items: center;
+}
+
+.saved-open {
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-start;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.saved-item .saved-open:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.saved-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.saved-remove {
+  opacity: 0;
+}
+
+.saved-item:hover .saved-remove,
+.saved-remove:focus-visible {
+  opacity: 1;
+}
+
+.saved-empty {
+  margin: 2px 0 6px;
+  padding: 0 10px 0 38px;
+}
+
 .count {
   margin-left: auto;
   min-width: 20px;
@@ -1512,6 +1585,14 @@ button.large {
   border-radius: 9px;
   background: var(--surface-2);
   color: var(--muted);
+}
+
+.browser-star.saved {
+  color: var(--accent);
+}
+
+.browser-star.saved svg {
+  fill: currentColor;
 }
 
 .browser-address:focus-within {
