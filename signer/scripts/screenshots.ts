@@ -115,6 +115,30 @@ await page.getByText("3 slots · 2 needed to execute").waitFor();
 await page.waitForTimeout(1500);
 await shot("signers");
 
+// The dApp browser, with the page saved and the saved pages open in the sidebar. Window captures leave out the dApp's
+// own view, so its page is captured on its own and painted into the viewport before the window is captured.
+await nav("Browse dApps");
+const address = page.getByPlaceholder(/Enter a dApp address/);
+await address.fill("app.uniswap.org");
+await address.press("Enter");
+await page.locator('[role="tab"][aria-selected="true"]', { hasText: "Uniswap" }).waitFor();
+// Saved once the page has settled: Uniswap redirects to /swap after loading.
+await page.waitForTimeout(8000);
+await page.getByRole("button", { name: "Save this page" }).click();
+await page.getByRole("button", { name: "Saved pages", exact: true }).click();
+await page.mouse.move(0, 0);
+const dappImage = await app.evaluate(async ({ webContents }) => {
+  const contents = webContents.getAllWebContents().find((candidate) => candidate.getURL().startsWith("https://app.uniswap.org"));
+  return contents ? (await contents.capturePage()).toDataURL() : undefined;
+});
+if (dappImage) {
+  await page.evaluate((url) => {
+    const viewport = document.querySelector<HTMLElement>(".browser-viewport");
+    if (viewport) viewport.style.background = `url(${url}) top left / 100% 100% no-repeat`;
+  }, dappImage);
+}
+await shot("browser");
+
 await app.close();
 await service.stop();
 chain.stop();

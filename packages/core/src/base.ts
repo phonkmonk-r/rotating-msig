@@ -24,8 +24,8 @@ export function safeKeyPath(chainId: number, safe: Address, generation = 0): { a
   const hash = BigInt(
     keccak256(
       generation === 0
-        ? encodeAbiParameters([{ type: "uint256" }, { type: "address" }, { type: "string" }], [BigInt(chainId), getAddress(safe), "keyturn/two-level"])
-        : encodeAbiParameters([{ type: "uint256" }, { type: "address" }, { type: "string" }, { type: "uint256" }], [BigInt(chainId), getAddress(safe), "keyturn/two-level", BigInt(generation)]),
+        ? encodeAbiParameters([{ type: "uint256" }, { type: "address" }, { type: "string" }], [BigInt(chainId), getAddress(safe), "cicada/two-level"])
+        : encodeAbiParameters([{ type: "uint256" }, { type: "address" }, { type: "string" }, { type: "uint256" }], [BigInt(chainId), getAddress(safe), "cicada/two-level", BigInt(generation)]),
     ),
   );
   return { account: MIN_TREE_BASE + Number(hash % SAFE_ACCOUNT_SPAN), branch: Number((hash >> 128n) % 2n ** 31n) };
@@ -37,7 +37,7 @@ export function safeKeyPath(chainId: number, safe: Address, generation = 0): { a
  * share an account with probability about 1 in 2 billion.
  */
 export function safeAccount(chainId: number, safe: Address): number {
-  const hash = keccak256(encodeAbiParameters([{ type: "uint256" }, { type: "address" }, { type: "string" }], [BigInt(chainId), getAddress(safe), "keyturn/per-safe"]));
+  const hash = keccak256(encodeAbiParameters([{ type: "uint256" }, { type: "address" }, { type: "string" }], [BigInt(chainId), getAddress(safe), "cicada/per-safe"]));
   return MIN_TREE_BASE + Number(BigInt(hash) % SAFE_ACCOUNT_SPAN);
 }
 
