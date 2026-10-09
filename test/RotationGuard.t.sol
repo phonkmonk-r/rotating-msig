@@ -595,23 +595,32 @@ contract RotationGuardTest is RotationFixture {
         guard.stage(address(safe), 2, list);
     }
 
-    function test_revert_stage_duplicateAddressInTree() public {
+    /// @dev A tree that repeats an address can stage it twice; the second copy is already the owner when its turn
+    ///      comes, so rotation skips it instead of reverting the slot's transactions.
+    function test_stage_duplicateAddressInTreeIsSkipped() public {
         uint256 newSlot = SLOTS;
-        address dup = vm.addr(0xD0D0);
+        address first = _register(0xA0A0);
+        address dup = _register(0xD0D0);
+        address last = _register(0xB0B0);
         bytes32[] memory leaves = new bytes32[](4);
-        leaves[0] = guard.leaf(address(safe), newSlot, 0, vm.addr(0xA0A0));
+        leaves[0] = guard.leaf(address(safe), newSlot, 0, first);
         leaves[1] = guard.leaf(address(safe), newSlot, 1, dup);
         leaves[2] = guard.leaf(address(safe), newSlot, 2, dup);
-        leaves[3] = guard.leaf(address(safe), newSlot, 3, vm.addr(0xB0B0));
-        IRotationGuard.SlotConfig memory config =
-            IRotationGuard.SlotConfig(_root(leaves), 4, 0, vm.addr(0xA0A0), _proof(leaves, 0), "cid");
+        leaves[3] = guard.leaf(address(safe), newSlot, 3, last);
+        IRotationGuard.SlotConfig memory config = IRotationGuard.SlotConfig(_root(leaves), 4, 0, first, _proof(leaves, 0), "cid");
         assertTrue(execBySlots(call(address(guard), 0, abi.encodeCall(guard.addSlot, (config, 2))), 0, 1));
 
-        IRotationGuard.StageEntry[] memory list = new IRotationGuard.StageEntry[](2);
+        IRotationGuard.StageEntry[] memory list = new IRotationGuard.StageEntry[](3);
         list[0] = IRotationGuard.StageEntry(1, dup, _proof(leaves, 1));
         list[1] = IRotationGuard.StageEntry(2, dup, _proof(leaves, 2));
-        vm.expectRevert(abi.encodeWithSelector(IRotationGuard.InvalidOwner.selector, dup));
+        list[2] = IRotationGuard.StageEntry(3, last, _proof(leaves, 3));
         guard.stage(address(safe), newSlot, list);
+
+        assertTrue(execBySlots(call(recipient, 1, ""), newSlot, 0));
+        assertEq(currentOwner(newSlot), dup);
+        assertTrue(execBySlots(call(recipient, 1, ""), newSlot, 1));
+        assertEq(currentOwner(newSlot), last, "past the second copy");
+        assertEq(guard.getSlot(address(safe), newSlot).nextIndex, 4);
     }
 
     function test_revert_addSlot_invalidProof() public {

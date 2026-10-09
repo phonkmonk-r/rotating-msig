@@ -98,11 +98,9 @@ contract RotationGuardPoCTest is RotationFixture {
         assertFalse(safe.isOwner(executor));
     }
 
-    /// @dev Re-arming to a non-escape state needs `threshold` signatures from current owners over this transaction's
-    ///      hash. The real signatures cannot be embedded (the hash covers the payload that would carry them), and
-    ///      the real signers were just rotated out by the inner after-hook, so any such signature fails
-    ///      `SignerNotOwner`. The inner batch reverts, which also rolls back the inner after-hook's state reset, so
-    ///      the Safe's real after-hook runs with the original signers and every check.
+    /// @dev Re-arming to a non-escape state with signatures copied from elsewhere fails like any replay: the second
+    ///      `checkTransaction` for the same Safe nonce reverts. The inner batch reverts, which also rolls back the inner
+    ///      after-hook's state reset, so the Safe's real after-hook runs with the original signers and every check.
     function test_finding1_reArmWithStaleSignaturesFails() public {
         address signer = currentOwner(0);
         address executor = currentOwner(1);

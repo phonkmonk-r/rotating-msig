@@ -129,11 +129,6 @@ interface IRotationGuard {
     /// @notice The gas refund names a gas token or a refund receiver; a failing refund would revert the whole
     ///         transaction, so refunds are paid only in ETH to the executor.
     error RefundNotAllowed();
-    /// @notice A recovered signer is not an owner. Unreachable from the Safe's own hook call, which follows its
-    ///         signature check; rejects the hook being replayed from inside the transaction.
-    error SignerNotOwner(address signer);
-    /// @notice An escape transaction did not remove the guard.
-    error InvalidEscape();
     /// @notice The signatures are not exactly `threshold` static 65-byte signatures.
     error UnexpectedSignatureLength(uint256 length, uint256 expected);
     /// @notice A contract (EIP-1271) signature was supplied.

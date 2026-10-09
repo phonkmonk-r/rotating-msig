@@ -810,11 +810,6 @@ export const rotationGuardAbi = [
   },
   {
     "type": "error",
-    "name": "InvalidEscape",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidOwner",
     "inputs": [
       {
@@ -917,17 +912,6 @@ export const rotationGuardAbi = [
     "type": "error",
     "name": "SafeTxGasRequired",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SignerNotOwner",
-    "inputs": [
-      {
-        "name": "signer",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",

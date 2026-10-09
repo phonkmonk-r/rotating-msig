@@ -14,24 +14,29 @@ import {IRotationGuard} from "./interfaces/IRotationGuard.sol";
 
 /**
  * @title RotationGuard
- * @notice Singleton transaction guard, module guard and module for Safe 1.5.0 that rotates out every owner who signs a
- *         guarded transaction, replacing it with the next pre-staged address committed under that owner's Merkle root.
- * @dev A Safe must enable this contract as a module, set it as both transaction guard and module guard, and call
- *      `initialize` in a single setup batch. Guarded transactions must then satisfy:
- *      - exactly `threshold` static signatures, no contract signatures;
- *      - the executor (`msg.sender` of `execTransaction`) is an owner signing through a pre-validated (v = 1) signature,
- *        and no other pre-validated signatures;
- *      - delegatecalls only to the allowlisted MultiSendCallOnly;
- *      - `safeTxGas` and `gasPrice` both non-zero: Safe then never reverts the whole transaction on a failing inner call
- *        and gives that call at most `safeTxGas`, so neither a reverting nor a gas-burning callee can undo the rotation
- *        while the signatures stay public in the reverted calldata;
- *      - the gas refund paid in ETH to the executor (`tx.origin`), with no gas token or refund receiver, so a refund
- *        cannot fail by design.
- *      After execution every signer still an owner is rotated, the owner set must equal the slot owners exactly, and
- *      the hooks must still be installed. The only exception is the escape hatch: a transaction that is exactly
- *      `setGuard(address(0))` on the Safe itself skips the signature rules and the rotation. The Safe itself can call
- *      these hooks from inside a transaction (through a batch or a fallback handler), so `checkTransaction` runs at most
- *      once per Safe nonce: a call replayed from inside the transaction sees the same nonce and is rejected.
+ * @notice Singleton transaction guard, module guard and module for Safe 1.5.0 that replaces every owner who signs a
+ *         guarded transaction with the next key that owner committed to under a Merkle root, in the same transaction.
+ * @dev A Safe enables this contract as a module, sets it as transaction guard and module guard, and calls
+ *      `initialize`, in one setup batch. The guard then holds three properties:
+ *      1. Rotation: every owner whose signature a guarded transaction carries is no longer an owner when it ends,
+ *         replaced by the next pre-staged key of its slot. Everything that can expose a key is part of that set: exactly
+ *         `threshold` static signatures (no extra, unrotated ones), the executor among them through a pre-validated
+ *         (v = 1) signature (sending exposes its key), and no other pre-validated signature (`approveHash` exposes a key
+ *         in another transaction). Rotation happens whether or not the inner call succeeds, and nobody but the
+ *         executor can make the transaction revert once its signatures exist: `safeTxGas` and `gasPrice` must both be
+ *         non-zero, so Safe neither reverts on a failing inner call nor hands it more than `safeTxGas`; refunds go only
+ *         in ETH to the executor; and a staged key that meanwhile became an owner is skipped.
+ *      2. Owner set: outside a transaction the Safe's owners are exactly the slots' current keys. Owners change only
+ *         through this contract, as the module (the module guard admits no other module and only owner calls); after
+ *         every guarded transaction the owner set must still match and all three hooks must still be installed;
+ *         delegatecalls go only to MultiSendCallOnly.
+ *      3. No reuse: a key enters the staging buffer only in sequence, proven against its slot's root, and an index of a
+ *         root that has held an owner can never be committed again.
+ *      The hooks trust their transient state because `checkTransaction` runs at most once per Safe nonce: the Safe can
+ *      call the hooks itself from inside a transaction (a batch, a fallback handler), and such a replay sees the nonce
+ *      the genuine call already used. The one exception to all of the above is the escape hatch: a transaction that
+ *      is exactly `setGuard(address(0))` on the Safe itself skips the rules and the rotation, and its signers' keys must
+ *      be treated as burned.
  */
 contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
     /// @notice Capacity of each slot's staging ring buffer.
@@ -156,8 +161,6 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
             } else {
                 signer = ecrecover(txHash, v, r, s);
             }
-            // Always true when the Safe calls this hook; rejects a replay of the hook from inside the transaction.
-            if (!_safe(safe).isOwner(signer)) revert SignerNotOwner(signer);
             _tstore(base + 2 + i, uint256(uint160(signer)));
         }
         if (!executorSigned) revert ExecutorMustSign(msgSender);
@@ -169,7 +172,8 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
     /**
      * @inheritdoc ITransactionGuard
      * @dev Rotates every recorded signer that is still an owner, whether or not the inner call succeeded, then checks
-     *      the owner set and hook invariants. For the escape hatch, requires the guard removed.
+     *      the owner set and hook invariants. The escape hatch has nothing to check: its inner call is exactly
+     *      `setGuard(address(0))`.
      */
     function checkAfterExecution(bytes32, bool) external override {
         address safe = msg.sender;
@@ -177,7 +181,6 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
         uint256 state = _tload(base);
         if (state == TX_ESCAPE) {
             _tstore(base, TX_NONE);
-            if (_readAddress(safe, GUARD_STORAGE_SLOT) != address(0)) revert InvalidEscape();
             return;
         }
         if (state != TX_ACTIVE) revert NoTransactionInProgress();
@@ -355,9 +358,6 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
             if (entry.index != nextStageIndex) revert NonSequentialIndex(entry.index, nextStageIndex);
             if (entry.index >= size) revert IndexOutOfRange(entry.index);
             if (!_isValidNewOwner(safe, entry.owner)) revert InvalidOwner(entry.owner);
-            for (uint256 j = 0; j < count; ++j) {
-                if (slot.buffer[(head + j) % BUFFER_SIZE] == entry.owner) revert InvalidOwner(entry.owner);
-            }
             if (!MerkleProof.verifyCalldata(entry.proof, root, _leaf(safe, slotId, entry.index, entry.owner))) {
                 revert InvalidProof();
             }

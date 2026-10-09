@@ -164,13 +164,13 @@ The other low-level detail is `_readAddress`: the guard reads the Safe's guard a
    - `v == 1` (pre-validated, "approved hash"): allowed only if the signer is `msgSender`, the account executing. Any other v = 1 signature would rely on an earlier on-chain `approveHash`, which exposed that owner in a separate transaction (`ApprovedHashNotAllowed`).
    - `v > 30`: eth_sign over the prefixed hash.
    - otherwise: plain ECDSA over the hash.
-   Every recovered signer must be a current owner (`SignerNotOwner`). Safe already guarantees this for its own hook call; the check rejects a replay of the hook from inside the transaction (see 3.8).
+   Safe's own signature check, which runs before this hook, has already verified that every signer is a current owner; a call replayed from inside the transaction with made-up signatures cannot get here (the nonce lock, step 1).
 8. **Executor rule:** the executor must be one of the signers, through v = 1 (`ExecutorMustSign`). Sending a transaction exposes the sender's public key, so the sender must be rotated too.
 9. Store the signers and their count, set `TX_ACTIVE`.
 
 **`checkAfterExecution(hash, success)`**, called by the Safe after executing:
 
-1. If `TX_ESCAPE`, clear it and require the guard slot to be empty (`InvalidEscape`). Only a genuine escape reaches this state (the nonce lock stops a replay from inside a transaction), and it changes nothing but the guard.
+1. If `TX_ESCAPE`, clear it and return. Only a genuine escape reaches this state (the nonce lock stops a replay from inside a transaction), and its inner call is exactly `setGuard(address(0))`, so there is nothing to check.
 2. Read and clear the signer list.
 3. For every signer still an owner, find its slot and rotate it, **whether or not the inner call succeeded**: a failed call still used the nonce and exposed the signatures. Signers no longer owners (removed or force-rotated by this very transaction) are skipped. A signer with no slot is `UnmanagedOwner`, unreachable while the owner-set check below holds, pinned by a test that corrupts storage.
 4. `_checkOwnerSet`: the Safe's owner list must have exactly `activeSlots` entries and each owner must be some slot's owner. Owners are distinct and each slot has one owner, so with equal counts this is a one-to-one match. Any direct `addOwner`, `removeOwner` or `swapOwner` that bypasses the guard breaks it and reverts the whole transaction.
@@ -188,7 +188,7 @@ The buffer holds 5 addresses (`BUFFER_SIZE`). It exists because rotation happens
 
 - be the slot's next index exactly (`NonSequentialIndex`): no skipping, no reordering;
 - be below the tree size (`IndexOutOfRange`);
-- not be a current owner, the Safe, the zero address or Safe's sentinel `0x1`, and not already be in the buffer (`InvalidOwner`);
+- not be a current owner, the Safe, the zero address or Safe's sentinel `0x1` (`InvalidOwner`). A key repeated in the tree, or staged by two slots, is not rejected here: rotation skips a staged key that is already an owner when its turn comes (3.5);
 - carry a Merkle proof against the slot's root (`InvalidProof`);
 - fit in the buffer (`BufferFull`).
 
