@@ -157,7 +157,7 @@ The other low-level detail is `_readAddress`: the guard reads the Safe's guard a
    - with both zero, Safe reverts the whole transaction when the inner call fails;
    - with `gasPrice` zero, Safe hands the inner call all remaining gas (63/64 of it reaches the callee), so a callee that burns it leaves too little for `checkAfterExecution`; with `gasPrice` set, Safe caps the inner call at `safeTxGas`;
    - a refund to a receiver that rejects ETH, or in a token that fails, reverts the whole transaction (GS011, GS012); a refund in ETH to `tx.origin`, an account, cannot fail by design.
-   The app signs `gasPrice` = 1 wei, so Safe refunds the executor `(gasUsed + baseGas) × min(gasPrice, tx.gasprice)`, a few hundred thousand wei, and the Safe must keep that much ETH after the inner call (GS011 otherwise, caught by the execution's simulation). It sizes `safeTxGas` from a simulation (1.5x, at least 100k) or uses 1M, and sends executions with a gas limit covering the simulated cost plus the whole `safeTxGas`, so the rotation keeps its gas even if the inner call uses all of it on-chain. The escape hatch keeps both at zero: it cannot fail and needs no refund, so it works even when the Safe holds no ETH.
+   Why `gasPrice` matters, what the refund it brings is, how the app pays it, and why this rules out proposing from Safe{Wallet}: section 3.9.
 6. Require `signatures.length == threshold * 65` exactly (`UnexpectedSignatureLength`). Extra signatures would be public without being rotated, so they are rejected rather than ignored.
 7. Recompute the Safe transaction hash with `nonce - 1` (Safe has already incremented the nonce) and recover each signer the same way Safe does:
    - `v == 0` (contract signature): rejected. With the exact-length rule this is unreachable (a contract signature needs dynamic data after the static part); kept as defense in depth.
@@ -217,11 +217,31 @@ The escape hatch is a transaction that is exactly `setGuard(address(0))` on the 
 
 The hooks cannot tell the Safe's genuine calls from calls the Safe makes from inside a transaction: a MultiSendCallOnly batch, or a fallback handler, runs with the Safe as `msg.sender`. Such a batch could call `checkAfterExecution` (rotating and resetting the state), change the owners, then call `checkTransaction` with escape-shaped arguments, and the real after-hook would then skip every check. Decoding the payload cannot close this, because of the fallback handler path. The first review's fix snapshotted the owner set in the escape `checkTransaction`, but a batch could change the owners before that call (second review, 2026-10-09). The guard now runs `checkTransaction` at most once per Safe nonce, tracked in transient storage: Safe increments its nonce before calling the hook, so the genuine call always sees a fresh nonce and any replay inside the same Safe transaction sees the same nonce and reverts with `NestedExecution`. The batch then fails as a whole and the real after-hook rotates the signers and checks everything; a lone fake `checkAfterExecution` leaves nothing for the real one (`NoTransactionInProgress`), which reverts the transaction. Pinned by `test/RotationGuard.poc.t.sol`.
 
-### 3.9 Views and events
+### 3.9 Gas price, the gas refund, and why Safe{Wallet} cannot propose
+
+The guard requires every guarded transaction to sign `gasPrice` above zero (step 5 of 3.4). In Safe 1.5.0 that one field controls two things at once, and there is no way to get the first without the second.
+
+1. **How much gas the transaction's call gets.**
+   - With `gasPrice` 0, Safe hands the call almost all the remaining gas (63/64 of it reaches the callee). A malicious or broken contract can burn it all, leaving too little to rotate the signers, so the whole transaction reverts with every signature public and nobody rotated. With `safeTxGas` also 0, Safe goes further and re-raises any failure of the call, reverting everything.
+   - With `gasPrice` above 0, Safe caps the call at `safeTxGas` and never reverts the whole transaction because the call failed, so the rotation always keeps its gas. This is the property the guard wants.
+2. **A gas refund.** Safe's refund feature exists so a relayer can execute a transaction for someone and be paid back. Whenever `gasPrice` is above 0, Safe pays whoever sent the transaction (`tx.origin`) `(gasUsed + baseGas) × min(gasPrice, tx.gasprice)`, out of the Safe's own ETH, after the call. If the Safe cannot pay it, Safe reverts the whole transaction (GS011), which undoes the rotation like any other revert. A refund in a token or to another receiver could fail the same way, so the guard allows neither (`RefundNotAllowed`).
+
+**How the app handles it.** Cicada signs `gasPrice` = 1 wei and `baseGas` = 0, so the refund is gas used × 1 wei, effectively nothing. It sizes `safeTxGas` from a simulation (1.5x, at least 100k) or uses 1M, and sends each execution with a gas limit covering the simulated cost plus the whole `safeTxGas`, so the rotation keeps its gas even if the call uses all of it on-chain. Because `execTransaction` is payable, the executor also sends the most the refund can be, gas limit × `gasPrice`, along with the transaction (`refundCover` in `signer/src/session.ts`):
+
+```
+executor ──(gas limit × 1 wei)──▶ Safe
+Safe     ──(gas used  × 1 wei)──▶ executor   (the refund)
+```
+
+The refund is then covered whatever the Safe holds, an empty Safe included; the difference, (gas limit − gas used) wei, stays in the Safe. Simulations run at gas price 0, where the refund is 0, so they could not catch an unpayable refund themselves: that is how an empty 1-of-1 Safe on Sepolia reverted every execution before this (PLAN.md 4j-22). The escape hatch keeps `safeTxGas` and `gasPrice` at 0: its call (`setGuard(0)`) cannot fail and it needs no refund.
+
+**Why Safe{Wallet} cannot propose.** A proposal is not a description of calls: the proposer signs the exact Safe transaction, and its hash covers every field, `safeTxGas` and `gasPrice` included. Safe{Wallet} proposes with both at 0 (as far as we know it offers no way to set `gasPrice`). The guard rejects such a transaction when it is executed, and Cicada cannot raise the fields afterwards, because any change gives a new hash and voids every signature already collected. So proposals must be made in Cicada, which signs `gasPrice` = 1 wei; Safe{Wallet} still shows the Safe, its balances and its history, and lists Cicada's proposals, since both use the same Transaction Service. Cicada's rules engine marks a proposal with either field at 0 as blocked ("propose it again from this app"). The alternative, accepting 0/0 again and relying on the executor sending through a relay that drops reverting transactions, was considered and set aside: the guard cannot check which RPC was used, testnets have no such relay, and it would bring back the gas-burning case above.
+
+### 3.10 Views and events
 
 `getSlot` returns a slot's root, owner, size, current index (`nextIndex`), next stage index and staged addresses in order. `getConfig` and `leaf` expose the rest; a signer's slot is found off-chain by matching `getSlot(...).owner`, and the consumed marks are enforced on-chain only (`RootIndexConsumed`), both dropped as views to keep the guard under Sepolia's per-transaction deploy gas cap. Events (`Initialized`, `SlotConfigured`, `SlotRemoved`, `OwnerStaged`, `OwnerRotated`, `IndexSkipped`) are what off-chain tools index; Cicada's collision alarm reads `OwnerStaged` and `OwnerRotated` (section 7.2).
 
-### 3.10 Contract tests
+### 3.11 Contract tests
 
 | File | What it covers |
 |---|---|
@@ -411,7 +431,7 @@ Joining tries them in that order. Each derivation step has a fixed cost regardle
 | Guard removed silently | Hooks-installed check; only the exact escape transaction skips it. |
 | Hooks replayed from inside a transaction | `checkTransaction` runs at most once per Safe nonce (transient nonce lock), so a replay reverts. Cicada also blocks transactions that call the hooks or change owners or hooks directly. |
 | A failing or gas-burning call undoes the rotation | `safeTxGas` and `gasPrice` must both be non-zero: Safe never reverts the whole transaction on inner failure and caps the inner call at `safeTxGas`; the app's gas limit covers all of `safeTxGas` plus the rotation. |
-| A failing refund undoes the rotation | Refunds only in ETH to the executor (`RefundNotAllowed`); the Safe keeps a little ETH. |
+| A failing refund undoes the rotation | Refunds only in ETH to the executor (`RefundNotAllowed`), and the executor sends the refund's upper bound with the transaction, so even an empty Safe can pay it (3.9). |
 | Another slot rotates into a staged address | Rotation skips staged entries that are already owners. |
 | Off-chain confirmations exposing too many keys | Rules engine: at most threshold − 1 confirmations, exposure checked across the queue. |
 | Seed theft from disk | Encrypted vault (scrypt, AES-256-GCM), unlocked per session, wiped on lock. |
