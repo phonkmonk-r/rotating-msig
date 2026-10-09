@@ -7,11 +7,15 @@ Status: phases 1-3 done, phase 4 (Safe App) in progress. Last updated 2026-10-08
 | Phase | State | Where |
 |---|---|---|
 | 1. Spec and threat model | Done | this file |
-| 2. Contracts | Done, pending external audit | `src/`, `test/` (127 Solidity tests: unit, mainnet fork, fuzz, invariants, gas budgets; mutation-tested) |
-| 3. Generator CLI | Done; Ledger mode still needs one run on a real device | `generator/` (26 TypeScript tests), cross-checked by `test/GeneratorVector.t.sol` |
+| 2. Contracts | Done, pending external audit. Owner-to-slot mapping dropped for gas (2026-10-08); the cheaper guard is not yet deployed on Sepolia | `src/`, `test/` (186 Solidity tests: unit, mainnet fork, SafeL2, fuzz, invariants, gas budgets; mutation-tested) |
+| 3. Generator CLI | Done; defaults to the two-level key path (section 14); Ledger mode still needs one run on a real device | `generator/` (9 tests), cross-checked by `test/GeneratorVector.t.sol` |
 | Demo | Done | `demo/run.sh`: Anvil mainnet fork, real Safe 1.5.0 contracts, 2-of-3 Safe rotating through generated trees |
-| 4. Safe App and rotation signer | In progress: 4a-4d done (shared core, app shell, dashboard, setup wizard); Sepolia validation under way (guard deployed, Safe and trees ready), then 4i rotation signer | `app/`, `packages/core/`, `deployments/sepolia.json` (see section 12) |
-| 5-8 | Not started | |
+| 4. Safe App and Keyturn | v1 app done and tested on Sepolia (4a-4j, see section 12): Keyturn desktop app with profiles (seed or Ledger), several Safes per profile, create and join Safes, propose, confirm, execute with live steps, gas account with just-in-time funding and sweep, self-staging, used-key and collision checks, signer management, transaction queue with simulation, dApp browser. Open: Ledger on a real device, renewing a slot's tree, packaging and code signing | `signer/`, `packages/`, `app/`, `deployments/sepolia.json`, `ARCHITECT.md` |
+| 5. Keeper | Mostly superseded: each Keyturn refills its own slot and pays its own gas (4j-4); a separate keeper is only needed for signers who never open the app | |
+| 6-8 | Not started (audit, mainnet canary, EIP-1271 co-signer, option B) | |
+| v2 | Planned, not scheduled (section 13) | |
+
+Test counts (2026-10-08): `packages/core` 75, `packages/keys` 12, `generator` 9, `signer` 48, Solidity 186. `ARCHITECT.md` describes every package, file and function as built.
 
 How to run everything:
 
@@ -205,16 +209,16 @@ The `to == safe` part matters: without it, any tx carrying `setGuard(0)` calldat
 
 ### Gas estimates
 
-Measured (`test/RotationGuard.gas.t.sol`, before refunds), against an identical unguarded Safe:
+Measured (`test/RotationGuard.gas.t.sol`, local, Prague rules, before refunds), against an identical unguarded Safe, after the owner-to-slot mapping was dropped (2026-10-08):
 
-| Safe | Unguarded | Guarded | Overhead per signer |
-|---|---|---|---|
-| 2-of-3 | 67k | 197k | 65k |
-| 3-of-5 | 71k | 278k | 69k |
-| 7-of-10 | 87k | 608k | 74k |
-| 20-of-20 | 139k | 1.79M | 82k |
+| Safe | Unguarded | Guarded | Overhead per signer | Before the change |
+|---|---|---|---|---|
+| 2-of-3 | 67k | 154k | 43.5k | 197k, 65.1k per signer |
+| 3-of-5 | 71k | 216k | 48.2k | 278k, 68.9k |
+| 7-of-10 | 87k | 477k | 55.8k | 608k, 74.5k |
+| 20-of-20 | 139k | 1.49M | 67.5k | 1.79M, 82.4k |
 
-About 22k of each rotation is the one unavoidable zero-to-nonzero write (Safe's owner list entry for the new owner); before `ownerToSlot` was dropped it was two such writes, about 44k; the rest is the module call through the module guard, signature recovery and bookkeeping. Overhead grows with owner count because `_prevOwner` re-reads the owner list per rotation; caching the list across rotations is a possible later optimization. No size approaches the block gas limit.
+The test budgets are pinned at 50k, 55k, 62k and 75k per signer. About 22k of each rotation is the one unavoidable zero-to-nonzero write (Safe's owner list entry for the new owner); the rest is the module call through the module guard, signature recovery, the slot scan and bookkeeping. Overhead grows with owner count because `_prevOwner` re-reads the owner list per rotation and `_findSlot` scans more slots. Under Sepolia's repricing (expected on mainnet later) a 2-of-3 rotating transfer measured about 650k gas with the earlier guard; the cheaper guard is still to be measured there.
 
 Staging: after the first fill, about 15-20k per address (non-zero SSTORE plus proof calldata and verification). A batch of 5 is roughly 100-120k gas, about 0.0002-0.0005 ETH at 2-4 gwei.
 
@@ -261,7 +265,7 @@ Having the Guard pull the gas top-up from the Safe automatically during rotation
 
 ## 9. Off-chain key management
 
-- Hardened derivation only, for example Ledger Live style `m/44'/60'/{base+i}'/0/0`, with a distinct `base` per Safe. Never share an xpub; a non-hardened xpub reveals every child pubkey. Share addresses only.
+- Each Safe's keys live under their own hardened path, `m/44'/60'/{account}'/{branch}'/{i}`, with account and branch derived from the chain and Safe address (section 14). Earlier trees used `m/44'/60'/{base+i}'/0/0` and `m/44'/60'/{account}'/0/{i}`; joining still recognizes both. Never share an xpub: an extended public key reveals every child public key below it. Share addresses only.
 - Generator modes:
   - Seed on an air-gapped machine: fast, but the seed sits in software.
   - Hardware wallet `getAddress` loop: about 100 ms per address, so roughly 17 minutes for 10,000, and the seed never leaves the device.
@@ -579,3 +583,67 @@ This keeps the audited vault and Safe{Wallet} as a viewer, at the cost of Safe's
 5. v2-5. Sepolia with independent test signers.
 6. v2-6. Audit.
 7. v2-7. Migration tooling and mainnet canary.
+
+## 14. Key derivation and the collision analysis
+
+Added 2026-10-08. Where a signer's keys for each Safe live, and why two Safes of one seed sharing a key is no longer a practical concern.
+
+### 14.1 The threat
+
+A seed (or Ledger) can sign for several Safes, possibly from different computers that never talk to each other. If two of those Safes used the same key at some position, a key exposed by signing in Safe A could later be rotated into Safe B as a fresh owner: a silent break of B's guarantee for that signer's slot. Only the same seed can collide with itself: different seeds derive independent keys, and two distinct keys sharing an address is a 160-bit hash collision (about 2^-160).
+
+### 14.2 The three layouts
+
+| Layout | Key `i` at | Where the numbers come from | Status |
+|---|---|---|---|
+| Ranged | `m/44'/60'/{base + i}'/0/0` | `base = 100,000 + keccak(chain, Safe) mod 10^9` | First Sepolia Safes |
+| One-level per Safe | `m/44'/60'/{a}'/0/{i}` | `a = 100,000 + h mod S`, `S = 2^31 - 2^20 - 100,000 = 2,146,335,072` | Briefly on 2026-10-08 |
+| Two-level per Safe | `m/44'/60'/{a}'/{b}'/{i}` | `h = keccak(chain, Safe, "keyturn/two-level")`; `a = 100,000 + h mod S`; `b = (h >> 128) mod 2^31` | Current, all new Safes |
+
+Every device computes `a` and `b` from the chain and Safe address alone, so no coordination or shared registry is needed, which is what makes the result hold across computers.
+
+### 14.3 Collisions with ordinary wallets and with earlier layouts: impossible by construction
+
+BIP-32 derives each child from its parent with a distinct index, and two different child indexes under the same parent give different keys except with probability around 2^-256 (it would take an HMAC-SHA512 collision). Compare the fourth level of each path:
+
+- ordinary wallets (Ledger Live, MetaMask, any BIP-44 account) use `/0/` there, a non-hardened index 0;
+- the ranged and one-level layouts also use `/0/` there, but differ from wallets in the account level (at least 100,000) and from each other per Safe;
+- the two-level layout uses `{b}'`, a hardened index, which is always at least 2^31 and therefore never equal to the non-hardened 0.
+
+So a two-level key can never equal a key of an ordinary wallet path or of either earlier layout, whatever account numbers they use. It could only meet another two-level key, which requires both `a` and `b` to match.
+
+### 14.4 Collisions between two-level Safes: the bound
+
+Model keccak as a random function. `a` takes one of `S = 2,146,335,072` values (modulo bias at most `S / 2^256`, about 2^-225) and `b` one of `2^31 = 2,147,483,648` values (exactly uniform: the low 31 bits of a 128-bit value), so `(a, b)` is uniform over
+
+`N = S × 2^31 = 4,609,219,470,248,902,656 ≈ 4.61 × 10^18`
+
+pairs. Two different Safes of one seed collide with probability `1/N`. For one seed in `n` Safes, the union bound over the `n(n-1)/2` pairs gives
+
+`P(any collision) ≤ n(n-1) / (2N)`
+
+| Safes per seed | Two-level (now) | One-level | Ranged |
+|---|---|---|---|
+| 2 | ≤ 2.2 × 10^-19 (1 in 4.6 × 10^18) | 4.7 × 10^-10 | 2 × 10^-5 (1 in 50,000) |
+| 10 | ≤ 9.8 × 10^-18 | 2.1 × 10^-8 | 9 × 10^-4 |
+| 100 | ≤ 1.1 × 10^-15 | 2.3 × 10^-6 | about 0.1 |
+| 1,000 | ≤ 1.1 × 10^-13 | 2.3 × 10^-4 | about 1 |
+| 10,000 | ≤ 1.1 × 10^-11 | about 0.02 | about 1 |
+| 1,000,000 | ≤ 1.1 × 10^-7 | certain | certain |
+
+(Ranged: two 10,000-key ranges in a span of 10^9 overlap when their starts are within 10,000, about `2 × 10,000 / 10^9` per pair.)
+
+Across a whole user base: a billion seeds, each signing for 10 Safes, expect about `10^9 × 9.8 × 10^-18 ≈ 10^-8` colliding seeds in total. For scale, that is far below the chance of an undetected hardware fault corrupting a signature, and no larger than other risks the design already accepts.
+
+What this does and does not claim: a collision is not mathematically impossible, but with fewer than about 10,000 Safes per seed it is below 10^-11, and with any realistic count it is negligible by many orders of magnitude. Against ordinary wallets and the earlier layouts (14.3) it is impossible outright.
+
+### 14.5 Defenses on top of the math
+
+- **Guard history:** before installing or staging, Keyturn reads the guard's `OwnerStaged` and `OwnerRotated` events (from the first deployment, in 45,000-block chunks, cached) and refuses any key already staged or rotated to for another Safe. This is on-chain, so it covers other computers too. It cannot see a slot's very first key, and is best effort if an RPC refuses the search.
+- **Nonce check:** a key that has sent a transaction on the Safe's network or on mainnet is never installed or staged.
+- **Fresh starts:** slot packages begin at the first run of six unused keys; `skipTo` (Skip used keys) moves a slot past a key found used later.
+
+### 14.6 Cost
+
+Each path level is one fixed-cost derivation step, whatever its number, and every layout has five levels, so the two-level path costs the same per address on a seed or a Ledger. The time on a Ledger is its public-key computation and USB round trip (roughly 30 to 100 ms per address, several minutes for 10,000). The app does not speed this up by exporting an extended public key, since that would put a whole slot's future public keys in one place. Open item: confirm on a real Ledger that the Ethereum app accepts the hardened fourth level without refusing it.
+
