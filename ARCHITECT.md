@@ -405,7 +405,7 @@ Joining tries them in that order. Each derivation step has a fixed cost regardle
 | A retired key comes back | `_consumedUpTo` per root; staging requires strictly sequential indexes. |
 | Owners changed around the guard | Owner-set check after every transaction; module guard blocks other modules. |
 | Guard removed silently | Hooks-installed check; only the exact escape transaction skips it. |
-| Hooks replayed from inside a transaction | `checkTransaction` runs at most once per Safe nonce (transient nonce lock), so a replay reverts. Keyturn also blocks transactions that call the hooks or change owners or hooks directly. |
+| Hooks replayed from inside a transaction | `checkTransaction` runs at most once per Safe nonce (transient nonce lock), so a replay reverts. Cicada also blocks transactions that call the hooks or change owners or hooks directly. |
 | A failing or gas-burning call undoes the rotation | `safeTxGas` and `gasPrice` must both be non-zero: Safe never reverts the whole transaction on inner failure and caps the inner call at `safeTxGas`; the app's gas limit covers all of `safeTxGas` plus the rotation. |
 | A failing refund undoes the rotation | Refunds only in ETH to the executor (`RefundNotAllowed`); the Safe keeps a little ETH. |
 | Another slot rotates into a staged address | Rotation skips staged entries that are already owners. |

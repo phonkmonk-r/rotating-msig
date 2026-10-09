@@ -114,7 +114,7 @@ describe("ledger source", () => {
       await assert.rejects(owner.signMessage({ message: "hello" }), /only sign Safe transactions/);
     }
     const operator = await source.signer(0);
-    const signature = await operator.signMessage({ message: "Keyturn slot package" });
-    assert.equal(await recoverMessageAddress({ message: "Keyturn slot package", signature }), operator.address);
+    const signature = await operator.signMessage({ message: "Cicada slot package" });
+    assert.equal(await recoverMessageAddress({ message: "Cicada slot package", signature }), operator.address);
   });
 });

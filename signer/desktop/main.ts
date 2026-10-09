@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import {
@@ -76,11 +76,7 @@ app.setName(APP_NAME);
 if (process.env.ROTATION_SIGNER_USER_DATA) {
   app.setPath("userData", process.env.ROTATION_SIGNER_USER_DATA);
 } else {
-  // Data from before a rename (the Keyturn folder, or the one Electron derived from the package name) moves to the new folder once.
-  const current = join(app.getPath("appData"), APP_NAME);
-  const previous = [join(app.getPath("appData"), "Keyturn"), join(app.getPath("appData"), "@rotating-msig", "signer")].find(existsSync);
-  if (!existsSync(current) && previous) renameSync(previous, current);
-  app.setPath("userData", current);
+  app.setPath("userData", join(app.getPath("appData"), APP_NAME));
 }
 /**
  * Test hook: a development chain (anvil) with its contracts and a local Transaction Service, so end-to-end tests can
