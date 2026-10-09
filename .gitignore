@@ -28,3 +28,5 @@ node_modules/
 .sepolia/
 .claude/
 .solidity-auditor/
+# Local macOS app bundle the desktop app runs from (scripts/run-desktop.cjs)
+signer/.app/
