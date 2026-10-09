@@ -7,6 +7,9 @@ evm_version = "prague"
 optimizer = true
 optimizer_runs = 200
 via_ir = true
+# Foundry 1.8 runs each top-level test call as its own transaction by default; the gas budgets and the handler coverage
+# test assume calls share one transaction.
+isolate = false
 fs_permissions = [{ access = "read", path = "./test/vectors" }, { access = "read-write", path = "./demo/out" }]
 remappings = [
     "@safe/=lib/safe-smart-account/contracts/",

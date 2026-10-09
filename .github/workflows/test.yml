@@ -21,6 +21,9 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          # Pinned so a new Foundry release cannot change gas results or defaults under the tests; upgrade with local.
+          version: v1.7.1
 
       - name: Show Forge version
         run: forge --version
@@ -45,6 +48,9 @@ jobs:
       # Anvil runs the signer's and core's integration tests; they read the contracts from Foundry's build output.
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          # Pinned so a new Foundry release cannot change gas results or defaults under the tests; upgrade with local.
+          version: v1.7.1
 
       - name: Build contracts
         run: forge build
@@ -80,6 +86,9 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          # Pinned so a new Foundry release cannot change gas results or defaults under the tests; upgrade with local.
+          version: v1.7.1
 
       - name: Build contracts
         run: forge build
