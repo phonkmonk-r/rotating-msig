@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-import { api, browser, canConnect, desktop, type DappRequest, type DesktopState } from "./api";
+import { browser, canConnect, desktop, type DappRequest, type DesktopState } from "./api";
 import { useSignerData } from "./data";
 import { short } from "./format";
 import { IconGlobe, IconLock, IconOverview, IconRefresh, IconSettings, IconSigners, IconTransactions, Logo } from "./icons";
@@ -239,9 +239,7 @@ function Shell({
                 type="checkbox"
                 role="switch"
                 checked={data.draft.enabled}
-                onChange={(e) => {
-                  void api.draftMode(e.target.checked).then(() => data.refresh());
-                }}
+                onChange={(e) => void data.setQueueMode(e.target.checked)}
               />
               <span className="switch" aria-hidden="true" />
             </label>

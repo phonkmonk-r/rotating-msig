@@ -15,6 +15,8 @@ export interface SignerData {
   refresh: () => Promise<void>;
   /** Pauses polling while a signing action runs, then refreshes. */
   setBusy: (busy: boolean) => void;
+  /** Turns queue mode on or off. The switch flips at once; the server's reply replaces it, or the old value returns on failure. */
+  setQueueMode: (enabled: boolean) => Promise<void>;
 }
 
 /** Polls status and queue; every page reads the same snapshot. */
@@ -59,7 +61,21 @@ export function useSignerData(): SignerData {
     [refresh],
   );
 
-  return { status, queue, draft, error, updatedAt, refreshing, refresh, setBusy };
+  const setQueueMode = useCallback(async (enabled: boolean) => {
+    let previous: DraftView | undefined;
+    setDraft((current) => {
+      previous = current;
+      return { ...current, enabled };
+    });
+    try {
+      setDraft(await api.draftMode(enabled));
+    } catch (caught) {
+      if (previous) setDraft(previous);
+      setError((caught as Error).message);
+    }
+  }, []);
+
+  return { status, queue, draft, error, updatedAt, refreshing, refresh, setBusy, setQueueMode };
 }
 
 export const LOW_GAS_WEI = 5_000_000_000_000_000n;
