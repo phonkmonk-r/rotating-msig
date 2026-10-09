@@ -18,7 +18,7 @@ function explain(message: string): string {
     case "not-installed":
       return "This Safe doesn't have rotation set up yet. If someone is creating it with you, go back and use their invite.";
     case "not-owner":
-      return "This seed isn't a signer of this Safe. Check the seed phrase and the address.";
+      return "This seed isn't a signer of this Safe yet. If its signers are adding you, go back and choose \"I'm being added to a Safe\"; otherwise check the seed phrase and the address.";
     case "no-safe":
     case "ambiguous-chain":
     case "invalid-address":
@@ -135,7 +135,7 @@ export function JoinSafe({
       <div className="form-actions">
         {onCancel && (
           <button type="button" onClick={onCancel} disabled={working}>
-            Cancel
+            Back
           </button>
         )}
         <button type="submit" className="primary" disabled={working || safe.trim() === ""}>

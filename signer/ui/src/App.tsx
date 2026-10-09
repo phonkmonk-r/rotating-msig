@@ -94,6 +94,10 @@ export function App() {
               void reload();
             }}
             onCancel={desktopState.configured ? () => setChangingSafe(false) : undefined}
+            onSwitchProfile={() => {
+              setChangingSafe(false);
+              void desktop!.deselectProfile().then(() => reload());
+            }}
           />
         </AuthLayout>
       );
@@ -109,7 +113,11 @@ export function App() {
             setPendingSafe(undefined);
             void reload();
           }}
-          onCancel={desktopState.configured ? () => setChangingSafe(false) : undefined}
+          onCancel={() => {
+            // Back to the setup choices (or to the app, if a Safe is already connected).
+            setPendingSafe(undefined);
+            setChangingSafe(false);
+          }}
         />
       </AuthLayout>
     );

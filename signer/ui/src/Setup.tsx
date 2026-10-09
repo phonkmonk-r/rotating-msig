@@ -12,7 +12,7 @@ const SEPOLIA = 11155111;
 type Choice = "join" | "create" | "invite" | "added";
 
 /** First connection: join an existing Safe, create a new one, or prepare a slot from an invite. */
-export function Setup({ state, onDone, onCancel }: { state: DesktopState; onDone: () => void; onCancel?: () => void }) {
+export function Setup({ state, onDone, onCancel, onSwitchProfile }: { state: DesktopState; onDone: () => void; onCancel?: () => void; onSwitchProfile?: () => void }) {
   const [choice, setChoice] = useState<Choice>();
   const [creating, setCreating] = useState<CreatingView | null>();
   const [adding, setAdding] = useState<AddingView | null>();
@@ -58,6 +58,11 @@ export function Setup({ state, onDone, onCancel }: { state: DesktopState; onDone
             Cancel
           </button>
         </div>
+      )}
+      {onSwitchProfile && (
+        <button type="button" className="link-button" onClick={onSwitchProfile}>
+          Use another profile
+        </button>
       )}
     </div>
   );
