@@ -37,9 +37,14 @@ export function Overview({ status, queue, onOpenTransactions }: { status: Status
                 {me.index.toLocaleString()} <span className="muted">/ {me.treeSize.toLocaleString()}</span>
               </span>
             </div>
-            <div className={`metric ${lowGas ? "warning" : ""}`} title={gasAccount ? `Paid from ${gasAccount.address}, your seed's first account` : undefined}>
+            <div className={`metric ${lowGas ? "warning" : ""}`} title={gasAccount ? `Your executions and staging are paid from ${gasAccount.address}, your seed's first account: send ETH there` : undefined}>
               <span className="metric-label">{gasAccount ? "Gas account" : "Gas"}</span>
               <span className="metric-value">{eth(gasAccount ? gasAccount.balance : me.balance)}</span>
+              {gasAccount && (
+                <span className="metric-detail">
+                  <Address address={gasAccount.address} chainId={status.chainId} />
+                </span>
+              )}
             </div>
             <div className={`metric ${me.staged === 0 ? "critical" : me.staged < 2 ? "warning" : ""}`}>
               <span className="metric-label">

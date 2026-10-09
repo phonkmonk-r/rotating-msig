@@ -97,6 +97,12 @@ export async function prepareSlot(
   return { tree, package: await signPackage(source, pkg) };
 }
 
+/** A plain explanation when the gas account cannot pay for a creation transaction; other errors unchanged. */
+function explainFunds(error: Error, gasAccount: Address): Error {
+  if (!/insufficient funds/i.test(error.message)) return error;
+  return new Error(`your gas account ${gasAccount} does not have enough ETH to pay for creating the Safe; send it some ETH and try again`);
+}
+
 /** Per-transaction gas cap (EIP-7825). */
 const TRANSACTION_GAS_CAP = 16_777_216n;
 
@@ -139,7 +145,9 @@ export async function createSafe(
     } catch (error) {
       throw new Error(`creating the Safe would fail: ${describeRevert(error)}`);
     }
-    deployTx = await wallet.sendTransaction({ ...call, chain });
+    deployTx = await wallet.sendTransaction({ ...call, chain }).catch((error: Error) => {
+      throw explainFunds(error, operator.address);
+    });
     const receipt = await client.waitForTransactionReceipt({ hash: deployTx });
     if (receipt.status !== "success") throw new Error(`creating the Safe reverted (${deployTx})`);
   }
@@ -174,7 +182,9 @@ export async function createSafe(
   }
   if (!data) throw new Error(`installing would fail: ${describeRevert(failure) ?? "it does not fit in one transaction"}`);
   const limit = (gas * 12n) / 10n < TRANSACTION_GAS_CAP ? (gas * 12n) / 10n : TRANSACTION_GAS_CAP;
-  const installTx = await wallet.sendTransaction({ to: invite.safe, data, gas: limit, chain });
+  const installTx = await wallet.sendTransaction({ to: invite.safe, data, gas: limit, chain }).catch((error: Error) => {
+    throw explainFunds(error, operator.address);
+  });
   const receipt = await client.waitForTransactionReceipt({ hash: installTx });
   if (receipt.status !== "success") throw new Error(`the install reverted (${installTx})`);
 

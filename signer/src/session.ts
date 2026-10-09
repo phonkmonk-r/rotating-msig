@@ -573,7 +573,7 @@ export class SignerSession {
         const [operatorBalance, gasPrice] = await Promise.all([this.options.publicClient.getBalance({ address }), this.options.publicClient.getGasPrice()]);
         operator = { address, balance: wei(operatorBalance) };
         if (operatorBalance < EXECUTION_GAS_ALLOWANCE * gasPrice * 2n) {
-          findings.push({ severity: "warning", slotId: owner.slot.slotId, message: "Your gas account is low: executions are paid from it" });
+          findings.push({ severity: "warning", slotId: owner.slot.slotId, message: `Your gas account ${address} is low: send it ETH, since your executions and staging are paid from it` });
         }
       }
       for (const key of this.keyAlert?.usedKeys ?? []) {

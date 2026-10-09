@@ -302,6 +302,38 @@ const STAGE_LABEL: Record<CreateStage, string> = {
   joining: "Connecting",
 };
 
+const BALANCE_CHECK_MS = 5_000;
+
+/**
+ * The creator's gas account: the first account of their seed or Ledger, which sends both creation transactions. Shows
+ * where to send ETH and how much, and turns green once the balance covers the estimate.
+ */
+function GasAccountBox({ address, chainId, balance, estimatedCost }: { address: string; chainId: number; balance?: string; estimatedCost?: string }) {
+  if (balance === undefined || estimatedCost === undefined) {
+    return (
+      <div className="note pending column">
+        <span className="field-label">Gas account</span>
+        <Address address={address} chainId={chainId} full />
+        <span className="small">Creating the Safe is paid from this address. Its balance could not be read right now.</span>
+      </div>
+    );
+  }
+  const missing = BigInt(estimatedCost) - BigInt(balance);
+  const enough = missing <= 0n;
+  return (
+    <div className={`note ${enough ? "ok" : "warning"} column gas-account-box`}>
+      <span className="field-label">Gas account</span>
+      <Address address={address} chainId={chainId} full />
+      <span className="small">
+        Holds {formatEther(BigInt(balance)).slice(0, 10)} ETH; creating the Safe costs about {formatEther(BigInt(estimatedCost)).slice(0, 10)} ETH.
+      </span>
+      <strong className="small">
+        {enough ? "Enough to create the Safe." : `Send at least ${formatEther(missing).slice(0, 10)} ETH to this address to create the Safe.`}
+      </strong>
+    </div>
+  );
+}
+
 function CreatorRoom({ view, onChange, onDone }: { view: CreatingView; onChange: () => void; onDone: () => void }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string>();
@@ -310,6 +342,12 @@ function CreatorRoom({ view, onChange, onDone }: { view: CreatingView; onChange:
   const { percent } = useDeriving();
 
   useEffect(() => desktop!.onCreateStage(setStage), []);
+  // The gas account's balance is re-read every few seconds, so funding it shows up without leaving the screen.
+  useEffect(() => {
+    if (working) return;
+    const timer = setInterval(onChange, BALANCE_CHECK_MS);
+    return () => clearInterval(timer);
+  }, [working, onChange]);
 
   async function add() {
     setError(undefined);
@@ -335,6 +373,7 @@ function CreatorRoom({ view, onChange, onDone }: { view: CreatingView; onChange:
   }
 
   const waiting = view.slots.filter((slot) => !slot.received).length;
+  const me = view.slots.find((slot) => slot.isMe);
   const short = view.balance !== undefined && view.estimatedCost !== undefined && BigInt(view.balance) < BigInt(view.estimatedCost);
   return (
     <div className="auth-card wide">
@@ -371,13 +410,7 @@ function CreatorRoom({ view, onChange, onDone }: { view: CreatingView; onChange:
         </div>
       )}
 
-      {view.ready && view.balance !== undefined && (
-        <div className={`note ${short ? "warning" : "ok"}`}>
-          <span>
-            Your address pays the gas: about {formatEther(BigInt(view.estimatedCost ?? "0")).slice(0, 8)} ETH; it holds {formatEther(BigInt(view.balance)).slice(0, 8)} ETH.
-          </span>
-        </div>
-      )}
+      {me && <GasAccountBox address={me.operator} chainId={view.chainId} balance={view.balance} estimatedCost={view.estimatedCost} />}
       {working && <Progress label={stage ? STAGE_LABEL[stage] : "Starting"} percent={stage === "joining" ? percent : undefined} />}
       {error && <div className="note critical">{error.charAt(0).toUpperCase() + error.slice(1)}</div>}
 
@@ -391,7 +424,13 @@ function CreatorRoom({ view, onChange, onDone }: { view: CreatingView; onChange:
         >
           Discard
         </button>
-        <button type="button" className="primary" disabled={!view.ready || working} onClick={() => void launch()}>
+        <button
+          type="button"
+          className="primary"
+          disabled={!view.ready || working || short}
+          title={short ? "Your gas account needs more ETH first" : !view.ready ? "Waiting for every signer's slot package" : undefined}
+          onClick={() => void launch()}
+        >
           {working ? "Creating…" : "Create Safe"}
         </button>
       </div>

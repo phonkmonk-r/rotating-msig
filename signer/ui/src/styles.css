@@ -2541,3 +2541,13 @@ button.safe-chip.open {
   gap: 10px;
   margin-top: 8px;
 }
+
+.metric-detail {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.gas-account-box .field-label {
+  margin: 0;
+}
