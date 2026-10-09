@@ -66,7 +66,11 @@ export function evaluate(input: EvaluateInput): Verdict {
   if (pending.tx.nonce < state.nonce) blockers.push(`nonce ${pending.tx.nonce} is already used; this transaction can never execute`);
   if (pending.tx.nonce > state.nonce) blockers.push(`transactions run in order: nonce ${state.nonce} must execute first`);
   if (actions.some((a) => a.kind === "blocked")) blockers.push("the guard would reject this transaction");
-  if (actions.some((a) => a.kind === "escape")) warnings.push("escape hatch: nobody rotates in this transaction; every signer's key must be treated as burned");
+  const escape = actions.some((a) => a.kind === "escape");
+  if (!escape && pending.tx.safeTxGas === 0n && pending.tx.gasPrice === 0n) {
+    blockers.push("safeTxGas is 0: the guard rejects this, since a failing call would then undo the rotation; propose it again from this app");
+  }
+  if (escape) warnings.push("escape hatch: nobody rotates in this transaction; every signer's key must be treated as burned");
 
   for (const confirmation of pending.confirmations) {
     if (!isOwner(state, confirmation.owner)) {

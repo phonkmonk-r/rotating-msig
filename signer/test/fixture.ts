@@ -143,7 +143,7 @@ export async function startChain(port: number, options: ChainOptions = {}): Prom
     address: safe,
     abi: safeAbi,
     functionName: "execTransaction",
-    args: [tx.to, tx.value, tx.data, tx.operation, 0n, 0n, 0n, ZERO, ZERO, signatures],
+    args: [tx.to, tx.value, tx.data, tx.operation, tx.safeTxGas, 0n, 0n, ZERO, ZERO, signatures],
   });
   if ((await client.waitForTransactionReceipt({ hash: sent })).status !== "success") throw new Error("install failed");
 

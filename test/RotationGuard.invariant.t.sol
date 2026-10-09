@@ -24,6 +24,7 @@ contract RotationHandler is Test {
     uint32 public constant TREE_SIZE = 16;
     uint256 internal constant MIN_OWNERS = 2;
     uint256 internal constant MAX_OWNERS = 5;
+    uint256 internal constant SAFE_TX_GAS = 5_000_000;
 
     Safe public immutable safe;
     RotationGuard public immutable guard;
@@ -70,7 +71,7 @@ contract RotationHandler is Test {
     function execute(uint256 seed, bool ethSign, bool failInner) external {
         if (failInner) {
             _exec(seed, ethSign, address(reverter), 0, abi.encodeCall(Reverter.boom, ()), Enum.Operation.Call, 100_000);
-        } else if (_exec(seed, ethSign, recipient, 1, "", Enum.Operation.Call, 0)) {
+        } else if (_exec(seed, ethSign, recipient, 1, "", Enum.Operation.Call, SAFE_TX_GAS)) {
             transferred += 1;
         }
     }
@@ -98,13 +99,13 @@ contract RotationHandler is Test {
     function forceRotate(uint256 seed, uint256 slotSeed) external {
         uint256[] memory ids = new uint256[](1);
         ids[0] = _randomSlot(slotSeed);
-        _exec(seed, false, address(guard), 0, abi.encodeCall(guard.forceRotate, (ids)), Enum.Operation.Call, 0);
+        _exec(seed, false, address(guard), 0, abi.encodeCall(guard.forceRotate, (ids)), Enum.Operation.Call, SAFE_TX_GAS);
     }
 
     function skipTo(uint256 seed, uint256 slotSeed, uint8 delta) external {
         uint256 slotId = _randomSlot(slotSeed);
         uint32 index = guard.getSlot(address(safe), slotId).nextIndex + uint32(delta % 4);
-        _exec(seed, false, address(guard), 0, abi.encodeCall(guard.skipTo, (slotId, index)), Enum.Operation.Call, 0);
+        _exec(seed, false, address(guard), 0, abi.encodeCall(guard.skipTo, (slotId, index)), Enum.Operation.Call, SAFE_TX_GAS);
     }
 
     /// @notice Replaces a slot's root with a fresh tree, or carelessly re-commits the current tree at any index.
@@ -116,12 +117,12 @@ contract RotationHandler is Test {
         uint32 startIndex = reuse ? startSeed % TREE_SIZE : 0;
         bytes32 root = MerkleBuilder.root(leavesOf[treeId]);
         bytes memory data = abi.encodeCall(guard.setRoot, (slotId, root, TREE_SIZE, startIndex, "cid"));
-        if (_exec(seed, false, address(guard), 0, data, Enum.Operation.Call, 0)) genOf[slotId] = gen;
+        if (_exec(seed, false, address(guard), 0, data, Enum.Operation.Call, SAFE_TX_GAS)) genOf[slotId] = gen;
     }
 
     function changeThreshold(uint256 seed, uint256 thresholdSeed) external {
         uint256 threshold = bound(thresholdSeed, 1, safe.getOwners().length);
-        _exec(seed, false, address(safe), 0, abi.encodeCall(safe.changeThreshold, (threshold)), Enum.Operation.Call, 0);
+        _exec(seed, false, address(safe), 0, abi.encodeCall(safe.changeThreshold, (threshold)), Enum.Operation.Call, SAFE_TX_GAS);
     }
 
     function removeSlot(uint256 seed, uint256 slotSeed) external {
@@ -130,7 +131,7 @@ contract RotationHandler is Test {
         uint256 threshold = safe.getThreshold();
         if (threshold > owners - 1) threshold = owners - 1;
         bytes memory data = abi.encodeCall(guard.removeSlot, (_randomSlot(slotSeed), threshold));
-        _exec(seed, false, address(guard), 0, data, Enum.Operation.Call, 0);
+        _exec(seed, false, address(guard), 0, data, Enum.Operation.Call, SAFE_TX_GAS);
     }
 
     function addSlot(uint256 seed) external {
@@ -139,7 +140,7 @@ contract RotationHandler is Test {
         uint256 gen = nextGen++;
         _buildTree(slotId, gen);
         bytes memory data = abi.encodeCall(guard.addSlot, (_config(slotId, gen, 0), safe.getThreshold()));
-        if (_exec(seed, false, address(guard), 0, data, Enum.Operation.Call, 0)) genOf[slotId] = gen;
+        if (_exec(seed, false, address(guard), 0, data, Enum.Operation.Call, SAFE_TX_GAS)) genOf[slotId] = gen;
     }
 
     /// @notice Re-initializes with fresh trees, or carelessly with the trees previously used under the same slot ids.
@@ -154,7 +155,7 @@ contract RotationHandler is Test {
             configs[i] = _config(i, gens[i], 0);
         }
         bytes memory data = abi.encodeCall(guard.initialize, (owners, configs));
-        if (_exec(seed, false, address(guard), 0, data, Enum.Operation.Call, 0)) {
+        if (_exec(seed, false, address(guard), 0, data, Enum.Operation.Call, SAFE_TX_GAS)) {
             for (uint256 i = 0; i < owners.length; ++i) genOf[i] = gens[i];
         }
     }
@@ -200,7 +201,7 @@ contract RotationHandler is Test {
             data = abi.encodeCall(MultiSendCallOnly.multiSend, (abi.encodePacked(uint8(0), address(safe), uint256(0), inner.length, inner)));
         }
 
-        if (_exec(seed, false, to, 0, data, operation, 0)) {
+        if (_exec(seed, false, to, 0, data, operation, SAFE_TX_GAS)) {
             adversarialSucceeded = true;
             adversarialKind = kind;
         }
@@ -209,7 +210,7 @@ contract RotationHandler is Test {
     /// @notice A rogue module may be enabled, but must never be able to act.
     function rogueModule(uint256 seed) external {
         if (!safe.isModuleEnabled(address(rogue))) {
-            _exec(seed, false, address(safe), 0, abi.encodeCall(safe.enableModule, (address(rogue))), Enum.Operation.Call, 0);
+            _exec(seed, false, address(safe), 0, abi.encodeCall(safe.enableModule, (address(rogue))), Enum.Operation.Call, SAFE_TX_GAS);
         }
         try rogue.drain(ISafe(payable(address(safe))), recipient) returns (bool ok) {
             if (ok) {
@@ -268,7 +269,7 @@ contract RotationHandler is Test {
     /// @notice Whether the escape hatch succeeds from the current state. State is restored afterwards.
     function probeEscape() external returns (bool ok) {
         uint256 snapshot = vm.snapshotState();
-        ok = _exec(0, false, address(safe), 0, abi.encodeCall(safe.setGuard, (address(0))), Enum.Operation.Call, 0);
+        ok = _exec(0, false, address(safe), 0, abi.encodeCall(safe.setGuard, (address(0))), Enum.Operation.Call, SAFE_TX_GAS);
         vm.revertToState(snapshot);
     }
 
@@ -283,7 +284,7 @@ contract RotationHandler is Test {
             (, uint256 slotId) = guard.slotOf(address(safe), owners[i]);
             if (guard.getSlot(address(safe), slotId).staged.length == 0) refillable = false;
         }
-        if (refillable) ok = _exec(1, false, recipient, 1, "", Enum.Operation.Call, 0);
+        if (refillable) ok = _exec(1, false, recipient, 1, "", Enum.Operation.Call, SAFE_TX_GAS);
         bytes memory reason = lastRevert;
         vm.revertToState(snapshot);
         if (!ok) lastRevert = reason;

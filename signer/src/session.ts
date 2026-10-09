@@ -20,6 +20,8 @@ import {
   preValidatedSignature,
   readSafeState,
   plainSafeTx,
+  DEFAULT_SAFE_TX_GAS,
+  estimatedSafeTxGas,
   guardCalls,
   loadTreeFile,
   stageEntries,
@@ -437,7 +439,7 @@ export class SignerSession {
       const call = buildProposal(input, this.context(state));
       await this.check(input, state, call);
 
-      const tx = plainSafeTx({ ...call, nonce: state.nonce });
+      const tx = plainSafeTx({ ...call, nonce: state.nonce }, await this.safeTxGasFor(input, state));
       const hash = safeTxHash(state.chainId, state.safe, tx);
       const verdict = this.evaluate(state, { safeTxHash: hash, tx, confirmations: [] }, [], owner);
       if (verdict.action !== "confirm") throw new Error(`cannot propose: ${verdict.blockers.join("; ")}`);
@@ -449,6 +451,18 @@ export class SignerSession {
       return { ...result, proposed: true };
     };
     return preview ? run() : this.exclusive(run);
+  }
+
+  /**
+   * The gas Safe hands the inner call. The guard requires it non-zero (otherwise a failing call would revert the whole
+   * transaction and undo the rotation); it is sized from a simulation when the RPC offers one, else a generous default.
+   */
+  private async safeTxGasFor(input: ProposalInput, state: SafeState): Promise<bigint> {
+    if (input.kind === "escape") return DEFAULT_SAFE_TX_GAS;
+    const calls = batchCalls(input.kind === "batch" ? input.items : [input], this.context(state));
+    const simulation = await simulateCalls(this.options.publicClient, state.safe, calls);
+    if (!simulation.available || simulation.calls.some((call) => !call.ok)) return DEFAULT_SAFE_TX_GAS;
+    return estimatedSafeTxGas(simulation.calls.reduce((sum, call) => sum + BigInt(call.gasUsed), 0n));
   }
 
   private context(state: SafeState) {

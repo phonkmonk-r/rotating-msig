@@ -150,21 +150,23 @@ The other low-level detail is `_readAddress`: the guard reads the Safe's guard a
 **`checkTransaction(to, value, data, operation, …, signatures, msgSender)`**, called by the Safe before executing:
 
 1. Revert `NestedExecution` if this Safe already has a guarded transaction in progress.
-2. If the transaction is exactly the escape hatch (3.8), mark `TX_ESCAPE` and return: nothing else is checked.
+2. If the transaction is exactly the escape hatch (3.8), snapshot the owners, threshold, module guard and module into transient storage, mark `TX_ESCAPE` and return: nothing else is checked here.
 3. Revert `NotInitialized` if the Safe never called `initialize`.
 4. Allow delegatecall only to `MULTI_SEND_CALL_ONLY` (`DelegateCallNotAllowed`). Batches therefore go through MultiSendCallOnly, which cannot itself delegatecall.
-5. Require `signatures.length == threshold * 65` exactly (`UnexpectedSignatureLength`). Extra signatures would be public without being rotated, so they are rejected rather than ignored.
-6. Recompute the Safe transaction hash with `nonce - 1` (Safe has already incremented the nonce) and recover each signer the same way Safe does:
+5. Require `safeTxGas` or `gasPrice` to be non-zero (`SafeTxGasRequired`). With both zero, Safe reverts the whole `execTransaction` when the inner call fails, which would undo the rotation while the signatures stay public in the reverted calldata. With `safeTxGas` set, a failing inner call burns the nonce and the signers still rotate. The app sizes `safeTxGas` from a simulation, or uses a generous default; the executor pays only for gas used.
+6. Require `signatures.length == threshold * 65` exactly (`UnexpectedSignatureLength`). Extra signatures would be public without being rotated, so they are rejected rather than ignored.
+7. Recompute the Safe transaction hash with `nonce - 1` (Safe has already incremented the nonce) and recover each signer the same way Safe does:
    - `v == 0` (contract signature): rejected. With the exact-length rule this is unreachable (a contract signature needs dynamic data after the static part); kept as defense in depth.
    - `v == 1` (pre-validated, "approved hash"): allowed only if the signer is `msgSender`, the account executing. Any other v = 1 signature would rely on an earlier on-chain `approveHash`, which exposed that owner in a separate transaction (`ApprovedHashNotAllowed`).
    - `v > 30`: eth_sign over the prefixed hash.
    - otherwise: plain ECDSA over the hash.
-7. **Executor rule:** the executor must be one of the signers, through v = 1 (`ExecutorMustSign`). Sending a transaction exposes the sender's public key, so the sender must be rotated too.
-8. Store the signers and their count, set `TX_ACTIVE`.
+   Every recovered signer must be a current owner (`SignerNotOwner`). Safe already guarantees this for its own hook call; the check rejects a replay of the hook from inside the transaction (see 3.8).
+8. **Executor rule:** the executor must be one of the signers, through v = 1 (`ExecutorMustSign`). Sending a transaction exposes the sender's public key, so the sender must be rotated too.
+9. Store the signers and their count, set `TX_ACTIVE`.
 
 **`checkAfterExecution(hash, success)`**, called by the Safe after executing:
 
-1. If `TX_ESCAPE`, clear it and return.
+1. If `TX_ESCAPE`, clear it, then require the guard slot to be empty and the owners, threshold, module guard and module to match the snapshot (`InvalidEscape`). A genuine escape changes nothing but the guard, so this costs it nothing.
 2. Read and clear the signer list.
 3. For every signer still an owner, find its slot and rotate it, **whether or not the inner call succeeded**: a failed call still used the nonce and exposed the signatures. Signers no longer owners (removed or force-rotated by this very transaction) are skipped. A signer with no slot is `UnmanagedOwner`, unreachable while the owner-set check below holds, pinned by a test that corrupts storage.
 4. `_checkOwnerSet`: the Safe's owner list must have exactly `activeSlots` entries and each owner must be some slot's owner. Owners are distinct and each slot has one owner, so with equal counts this is a one-to-one match. Any direct `addOwner`, `removeOwner` or `swapOwner` that bypasses the guard breaks it and reverts the whole transaction.
@@ -194,7 +196,7 @@ All are called by the Safe on itself (so they need the Safe's threshold, through
 
 | Function | What it does |
 |---|---|
-| `initialize(oldOwners, configs)` | Setup, and a full reset under a new epoch. Records consumed indexes of every old slot, then for each config creates a slot (root, size, start index, first owner with proof) and swaps `oldOwners[i]` for its first owner. Ends with the owner-set check. |
+| `initialize(oldOwners, configs)` | Setup, and a full reset under a new epoch. Records consumed indexes of every old slot, then for each config creates a slot (root, size, start index, first owner with proof) and swaps `oldOwners[i]` for its first owner. Ends with the owner-set check and the hooks-installed check, so a Safe cannot end up with fresh owners and no rotation. |
 | `addSlot(config, newThreshold)` | Creates a slot and adds its first owner with `addOwnerWithThreshold`. |
 | `removeSlot(slotId, newThreshold)` | Records consumed indexes, deletes the slot, and removes its owner with `removeOwner`. |
 | `setRoot(slotId, root, size, startIndex, cid)` | Replaces a slot's tree (renewal, re-keying). Rejects an already-consumed start index. Empties the buffer. |
@@ -208,6 +210,8 @@ All are called by the Safe on itself (so they need the Safe's threshold, through
 `checkModuleTransaction` allows exactly one thing: the guard itself, as module, calling the Safe (no value, plain call) with `swapOwner`, `addOwnerWithThreshold` or `removeOwner`. Every other module, and every other call, reverts `ModuleTransactionNotAllowed`. This closes the "a module can do anything" hole on-chain. `checkAfterModuleExecution` is a no-op.
 
 The escape hatch is a transaction that is exactly `setGuard(address(0))` on the Safe itself (value 0, plain call). Both hooks return immediately for it, so it works even if the guard's own checks are what is broken. Its signers are not rotated, so their keys must be treated as burned. `to == safe` is essential: without it, any transaction carrying that calldata to any address would skip rotation (caught by mutation testing). After the escape, the Safe is a plain Safe; the module and module guard can then be removed by the owners.
+
+The hooks cannot tell the Safe's genuine calls from calls the Safe makes from inside a transaction: a MultiSendCallOnly batch, or a fallback handler, runs with the Safe as `msg.sender`. Such a batch could call `checkAfterExecution` (rotating and resetting the state), then `checkTransaction` with escape-shaped arguments, and the real after-hook would then skip every check. Decoding the payload cannot close this, because of the fallback handler path, so the escape path constrains the outcome instead: the snapshot taken in `checkTransaction` must match at the end and the guard must be gone. Re-arming to the non-escape state needs `threshold` signatures from current owners over the transaction's own hash, which cannot embed them; the signers it carries have in any case just been rotated out (`SignerNotOwner`). Pinned by `test/RotationGuard.poc.t.sol`.
 
 ### 3.9 Views and events
 
@@ -391,6 +395,8 @@ Joining tries them in that order. Each derivation step has a fixed cost regardle
 | A retired key comes back | `_consumedUpTo` per root; staging requires strictly sequential indexes. |
 | Owners changed around the guard | Owner-set check after every transaction; module guard blocks other modules. |
 | Guard removed silently | Hooks-installed check; only the exact escape transaction skips it. |
+| Hooks replayed from inside a transaction | Escape requires the guard removed and owners, threshold, module guard and module unchanged since `checkTransaction`; non-escape re-arm needs current owners' signatures. |
+| A failing call undoes the rotation | `safeTxGas` or `gasPrice` must be non-zero, so Safe never reverts the whole transaction on inner failure. |
 | Off-chain confirmations exposing too many keys | Rules engine: at most threshold − 1 confirmations, exposure checked across the queue. |
 | Seed theft from disk | Encrypted vault (scrypt, AES-256-GCM), unlocked per session, wiped on lock. |
 | A web page | dApp view sandboxed, own storage, no permissions, review hidden from the page, no message signing, no calls to Safe or guard. |

@@ -13,6 +13,7 @@ import {MerkleBuilder} from "./utils/MerkleBuilder.sol";
 
 /// @notice Measures the guard's per-transaction overhead against an unguarded Safe across owner set sizes.
 contract RotationGuardGasTest is Test {
+    uint256 internal constant SAFE_TX_GAS = 5_000_000;
     uint256 internal constant SECP256K1_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141;
     uint256 internal constant TREE_SIZE = 4;
     uint256 internal constant MAX_TOTAL_GAS = 3_000_000;
@@ -71,7 +72,7 @@ contract RotationGuardGasTest is Test {
         address[] memory owners = safe.getOwners();
         address[] memory signers = new address[](threshold);
         for (uint256 i = 0; i < threshold; ++i) signers[i] = owners[i];
-        bytes32 hash = safe.getTransactionHash(recipient, 1, "", Enum.Operation.Call, 0, 0, 0, address(0), address(0), safe.nonce());
+        bytes32 hash = safe.getTransactionHash(recipient, 1, "", Enum.Operation.Call, SAFE_TX_GAS, 0, 0, address(0), address(0), safe.nonce());
 
         bytes[] memory sigs = new bytes[](threshold);
         sigs[0] = abi.encodePacked(bytes32(uint256(uint160(signers[0]))), bytes32(0), uint8(1));
@@ -84,7 +85,7 @@ contract RotationGuardGasTest is Test {
 
         vm.prank(executor);
         uint256 before = gasleft();
-        safe.execTransaction(recipient, 1, "", Enum.Operation.Call, 0, 0, 0, address(0), payable(address(0)), packed);
+        safe.execTransaction(recipient, 1, "", Enum.Operation.Call, SAFE_TX_GAS, 0, 0, address(0), payable(address(0)), packed);
         gasUsed = before - gasleft();
     }
 

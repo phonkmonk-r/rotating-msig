@@ -147,7 +147,8 @@ export async function createSafe(
   }
 
   onStage?.("installing");
-  const tx = plainSafeTx({ ...install, nonce: 0n });
+  // The install runs before the guard is active; with safeTxGas 0 a failing step reverts the whole call with its reason.
+  const tx = plainSafeTx({ ...install, nonce: 0n }, 0n);
   const data = execTransactionData(tx, preValidatedSignature(operator.address).data);
   let gas: bigint;
   try {

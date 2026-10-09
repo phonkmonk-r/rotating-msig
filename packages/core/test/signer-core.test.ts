@@ -13,7 +13,7 @@ import { TxService, txServiceUrl, type Confirmation, type PendingTx } from "../s
 /** The first guarded transaction on the Sepolia test Safe (nonce 1), as reported by the Transaction Service. */
 const SEPOLIA = {
   safe: "0x7aC0Ac669d32Bd739eAA892bcFD2C6dF9946Ed02" as Address,
-  tx: plainSafeTx({ to: "0xBDD48ac62B4cc6C347175751588fE5CAf927bbF9", value: 100000000000000n, data: "0x", operation: 0, nonce: 1n }),
+  tx: plainSafeTx({ to: "0xBDD48ac62B4cc6C347175751588fE5CAf927bbF9", value: 100000000000000n, data: "0x", operation: 0, nonce: 1n }, 0n),
   safeTxHash: "0x4a4faf6109fac5a9d0be90f5062ff027301af82a969905f3a9e9fa5d43a5fee4" as Hex,
   confirmer: "0xfD4875be1fd08A81215C32b10E31B06EdFE78eB3" as Address,
   signature:

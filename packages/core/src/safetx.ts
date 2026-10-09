@@ -75,6 +75,22 @@ export function execTransactionData(tx: SafeTx, signatures: Hex): Hex {
   });
 }
 
-export function plainSafeTx(fields: Pick<SafeTx, "to" | "value" | "data" | "operation" | "nonce">): SafeTx {
-  return { ...fields, safeTxGas: 0n, baseGas: 0n, gasPrice: 0n, gasToken: ZERO_ADDRESS, refundReceiver: ZERO_ADDRESS };
+/**
+ * `safeTxGas` when no simulation is available. The guard rejects `safeTxGas == 0 && gasPrice == 0`: Safe would then
+ * revert the whole transaction on a failing inner call, undoing the rotation while the signatures stay public.
+ * The executor pays only for gas actually used, so a generous value costs nothing beyond a higher gas limit.
+ */
+export const DEFAULT_SAFE_TX_GAS = 1_000_000n;
+/** Floor for an estimated `safeTxGas`, covering estimate drift between proposal and execution. */
+export const MIN_SAFE_TX_GAS = 100_000n;
+
+/** `safeTxGas` for an inner call that used `gasUsed` in simulation: half again as much, at least the floor. */
+export function estimatedSafeTxGas(gasUsed: bigint): bigint {
+  const withMargin = (gasUsed * 3n) / 2n;
+  return withMargin > MIN_SAFE_TX_GAS ? withMargin : MIN_SAFE_TX_GAS;
+}
+
+/** A Safe transaction with no refund fields. `safeTxGas` is non-zero unless the caller says otherwise. */
+export function plainSafeTx(fields: Pick<SafeTx, "to" | "value" | "data" | "operation" | "nonce">, safeTxGas: bigint = DEFAULT_SAFE_TX_GAS): SafeTx {
+  return { ...fields, safeTxGas, baseGas: 0n, gasPrice: 0n, gasToken: ZERO_ADDRESS, refundReceiver: ZERO_ADDRESS };
 }

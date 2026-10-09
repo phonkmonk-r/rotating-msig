@@ -275,9 +275,12 @@ contract RotationGuardTest is RotationFixture {
         );
 
         SafeTx memory outer = call(address(reentrant), 0, abi.encodeCall(Reentrant.reenter, (address(safe), payload)));
-        (bytes memory sigs, address executor) = prepareBySlots(outer, 0, 1);
-        vm.expectRevert(IRotationGuard.NestedExecution.selector);
-        execRaw(outer, sigs, executor);
+        uint256 nonceBefore = safe.nonce();
+        address outerSigner = currentOwner(0);
+        assertFalse(execBySlots(outer, 0, 1), "the re-entered execTransaction fails, so the outer inner call fails");
+        assertEq(recipient.balance, 0, "the nested transaction did not execute");
+        assertEq(safe.nonce(), nonceBefore + 1, "only the outer nonce was used");
+        assertFalse(safe.isOwner(outerSigner), "outer signer rotated");
     }
 
     function test_revert_hooksCalledDirectly() public {
@@ -393,9 +396,7 @@ contract RotationGuardTest is RotationFixture {
     }
 
     function test_revert_skipTo_backwards() public {
-        (bytes memory sigs, address executor) = prepareBySlots(call(address(guard), 0, abi.encodeCall(guard.skipTo, (2, 0))), 0, 1);
-        vm.expectRevert(abi.encodeWithSelector(IRotationGuard.IndexOutOfRange.selector, 0));
-        execRaw(call(address(guard), 0, abi.encodeCall(guard.skipTo, (2, 0))), sigs, executor);
+        execExpectInnerRevert(call(address(guard), 0, abi.encodeCall(guard.skipTo, (2, 0))), abi.encodeWithSelector(IRotationGuard.IndexOutOfRange.selector, 0), 0, 1);
     }
 
     function test_setRoot() public {
@@ -483,9 +484,7 @@ contract RotationGuardTest is RotationFixture {
         assertEq(slotCount, guard.MAX_SLOTS());
 
         bytes memory data = abi.encodeCall(guard.addSlot, (slotConfig(0, 9), 2));
-        (bytes memory sigs, address executor) = prepareBySlots(call(address(guard), 0, data), 0, 1);
-        vm.expectRevert(IRotationGuard.InvalidConfig.selector);
-        execRaw(call(address(guard), 0, data), sigs, executor);
+        execExpectInnerRevert(call(address(guard), 0, data), abi.encodeWithSelector(IRotationGuard.InvalidConfig.selector), 0, 1);
     }
 
     function test_revert_adminRequiresInitializedCaller() public {
@@ -518,9 +517,7 @@ contract RotationGuardTest is RotationFixture {
     function test_revert_setRoot_reusesConsumedIndex() public {
         assertTrue(execBySlots(call(recipient, 1, ""), 2, 1));
         bytes memory data = abi.encodeCall(guard.setRoot, (2, rootOf[2], TREE_SIZE, 0, "cid"));
-        (bytes memory sigs, address executor) = prepareBySlots(call(address(guard), 0, data), 0, 1);
-        vm.expectRevert(abi.encodeWithSelector(IRotationGuard.RootIndexConsumed.selector, rootOf[2], 0, 2));
-        execRaw(call(address(guard), 0, data), sigs, executor);
+        execExpectInnerRevert(call(address(guard), 0, data), abi.encodeWithSelector(IRotationGuard.RootIndexConsumed.selector, rootOf[2], 0, 2), 0, 1);
     }
 
     function test_setRoot_sameRootFromNextIndex() public {
@@ -539,9 +536,7 @@ contract RotationGuardTest is RotationFixture {
             oldOwners[slot] = currentOwner(slot);
         }
         bytes memory data = abi.encodeCall(guard.initialize, (oldOwners, configs));
-        (bytes memory sigs, address executor) = prepareBySlots(call(address(guard), 0, data), 0, 1);
-        vm.expectRevert(abi.encodeWithSelector(IRotationGuard.RootIndexConsumed.selector, rootOf[0], 0, 1));
-        execRaw(call(address(guard), 0, data), sigs, executor);
+        execExpectInnerRevert(call(address(guard), 0, data), abi.encodeWithSelector(IRotationGuard.RootIndexConsumed.selector, rootOf[0], 0, 1), 0, 1);
     }
 
     function test_removeSlot_recordsConsumed() public {
@@ -592,9 +587,7 @@ contract RotationGuardTest is RotationFixture {
         IRotationGuard.SlotConfig memory config = slotConfig(0, 9);
         config.proof = proofOf(0, 10);
         bytes memory data = abi.encodeCall(guard.addSlot, (config, 2));
-        (bytes memory sigs, address executor) = prepareBySlots(call(address(guard), 0, data), 0, 1);
-        vm.expectRevert(IRotationGuard.InvalidProof.selector);
-        execRaw(call(address(guard), 0, data), sigs, executor);
+        execExpectInnerRevert(call(address(guard), 0, data), abi.encodeWithSelector(IRotationGuard.InvalidProof.selector), 0, 1);
     }
 
     function test_revert_initialize_invalidProof() public {
@@ -606,9 +599,7 @@ contract RotationGuardTest is RotationFixture {
         }
         configs[1].owner = makeAddr("attacker");
         bytes memory data = abi.encodeCall(guard.initialize, (oldOwners, configs));
-        (bytes memory sigs, address executor) = prepareBySlots(call(address(guard), 0, data), 0, 1);
-        vm.expectRevert(IRotationGuard.InvalidProof.selector);
-        execRaw(call(address(guard), 0, data), sigs, executor);
+        execExpectInnerRevert(call(address(guard), 0, data), abi.encodeWithSelector(IRotationGuard.InvalidProof.selector), 0, 1);
     }
 
     function test_revert_addSlot_existingOwner() public {
@@ -616,9 +607,7 @@ contract RotationGuardTest is RotationFixture {
         IRotationGuard.SlotConfig memory config = slotConfig(0, 9);
         config.owner = existing;
         bytes memory data = abi.encodeCall(guard.addSlot, (config, 2));
-        (bytes memory sigs, address executor) = prepareBySlots(call(address(guard), 0, data), 0, 1);
-        vm.expectRevert(abi.encodeWithSelector(IRotationGuard.InvalidOwner.selector, existing));
-        execRaw(call(address(guard), 0, data), sigs, executor);
+        execExpectInnerRevert(call(address(guard), 0, data), abi.encodeWithSelector(IRotationGuard.InvalidOwner.selector, existing), 0, 1);
     }
 
     function _root(bytes32[] memory leaves) private pure returns (bytes32) {

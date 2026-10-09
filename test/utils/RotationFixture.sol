@@ -17,6 +17,8 @@ abstract contract RotationFixture is Test {
     uint256 internal constant THRESHOLD = 2;
     uint32 internal constant TREE_SIZE = 16;
     uint256 internal constant SECP256K1_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141;
+    /// @dev The guard rejects `safeTxGas == 0 && gasPrice == 0`; Safe passes exactly this much gas to the inner call.
+    uint256 internal constant SAFE_TX_GAS = 5_000_000;
 
     Safe internal singleton;
     SafeProxyFactory internal factory;
@@ -124,7 +126,7 @@ abstract contract RotationFixture is Test {
     }
 
     function call(address to, uint256 value, bytes memory data) internal pure returns (SafeTx memory) {
-        return SafeTx(to, value, data, Enum.Operation.Call, 0);
+        return SafeTx(to, value, data, Enum.Operation.Call, SAFE_TX_GAS);
     }
 
     function txHash(SafeTx memory t) internal view returns (bytes32) {
@@ -198,8 +200,24 @@ abstract contract RotationFixture is Test {
         return exec(t, currentOwner(signerSlot), currentOwner(executorSlot));
     }
 
+    /// @dev Asserts a guarded transaction's inner call reverts with `reason`. Safe does not surface inner reverts once
+    ///      `safeTxGas` is set (the transaction succeeds with `success == false` and rotates), so the reason is checked
+    ///      by replaying the call as the Safe, and the guarded run is checked to report failure and still rotate.
+    function execExpectInnerRevert(SafeTx memory t, bytes memory reason, uint256 signerSlot, uint256 executorSlot) internal {
+        require(t.operation == Enum.Operation.Call, "replay supports plain calls only");
+        vm.prank(address(safe));
+        vm.expectRevert(reason);
+        (bool ok, ) = t.to.call{value: t.value}(t.data);
+        ok;
+        address signer = currentOwner(signerSlot);
+        address executor = currentOwner(executorSlot);
+        assertFalse(execBySlots(t, signerSlot, executorSlot), "inner call should fail");
+        assertFalse(safe.isOwner(signer), "signer rotates despite the failure");
+        assertFalse(safe.isOwner(executor), "executor rotates despite the failure");
+    }
+
     function multiSendTx(bytes memory packedCalls) internal view returns (SafeTx memory) {
-        return SafeTx(address(multiSend), 0, abi.encodeCall(MultiSendCallOnly.multiSend, (packedCalls)), Enum.Operation.DelegateCall, 0);
+        return SafeTx(address(multiSend), 0, abi.encodeCall(MultiSendCallOnly.multiSend, (packedCalls)), Enum.Operation.DelegateCall, SAFE_TX_GAS);
     }
 
     function packCall(address to, uint256 value, bytes memory data) internal pure returns (bytes memory) {

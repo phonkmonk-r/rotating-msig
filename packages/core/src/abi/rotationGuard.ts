@@ -876,6 +876,11 @@ export const rotationGuardAbi = [
   },
   {
     "type": "error",
+    "name": "InvalidEscape",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidOwner",
     "inputs": [
       {
@@ -966,6 +971,22 @@ export const rotationGuardAbi = [
         "name": "consumedUpTo",
         "type": "uint32",
         "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SafeTxGasRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SignerNotOwner",
+    "inputs": [
+      {
+        "name": "signer",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },

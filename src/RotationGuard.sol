@@ -21,10 +21,15 @@ import {IRotationGuard} from "./interfaces/IRotationGuard.sol";
  *      - exactly `threshold` static signatures, no contract signatures;
  *      - the executor (`msg.sender` of `execTransaction`) is an owner signing through a pre-validated (v = 1) signature,
  *        and no other pre-validated signatures;
- *      - delegatecalls only to the allowlisted MultiSendCallOnly.
+ *      - delegatecalls only to the allowlisted MultiSendCallOnly;
+ *      - `safeTxGas` or `gasPrice` non-zero, so that a failing inner call cannot revert the whole transaction and undo
+ *        the rotation while the signatures stay public in the reverted calldata.
  *      After execution every signer still an owner is rotated, the owner set must equal the slot owners exactly, and
  *      the hooks must still be installed. The only exception is the escape hatch: a transaction that is exactly
- *      `setGuard(address(0))` on the Safe itself bypasses every check.
+ *      `setGuard(address(0))` on the Safe itself skips the signature rules and the rotation. Since the Safe itself can
+ *      call these hooks from inside a transaction (through a batch or a fallback handler), the escape path does not
+ *      trust the state machine alone: it snapshots owners, threshold, module guard and module before execution and
+ *      requires them unchanged, and the guard removed, afterwards.
  */
 contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
     /// @notice Capacity of each slot's staging ring buffer.
@@ -102,12 +107,14 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
         if (_tload(base) != TX_NONE) revert NestedExecution();
 
         if (_isEscape(safe, to, value, data, operation)) {
+            _tstore(base + 1, uint256(_escapeSnapshot(safe)));
             _tstore(base, TX_ESCAPE);
             return;
         }
 
         if (_configs[safe].epoch == 0) revert NotInitialized(safe);
         if (operation == Enum.Operation.DelegateCall && to != MULTI_SEND_CALL_ONLY) revert DelegateCallNotAllowed(to);
+        if (safeTxGas == 0 && gasPrice == 0) revert SafeTxGasRequired();
 
         uint256 threshold = _safe(safe).getThreshold();
         if (signatures.length != threshold * 65) revert UnexpectedSignatureLength(signatures.length, threshold * 65);
@@ -136,6 +143,8 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
             } else {
                 signer = ecrecover(txHash, v, r, s);
             }
+            // Always true when the Safe calls this hook; rejects a replay of the hook from inside the transaction.
+            if (!_safe(safe).isOwner(signer)) revert SignerNotOwner(signer);
             _tstore(base + 2 + i, uint256(uint160(signer)));
         }
         if (!executorSigned) revert ExecutorMustSign(msgSender);
@@ -147,14 +156,20 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
     /**
      * @inheritdoc ITransactionGuard
      * @dev Rotates every recorded signer that is still an owner, whether or not the inner call succeeded, then checks
-     *      the owner set and hook invariants.
+     *      the owner set and hook invariants. For the escape hatch, requires the guard removed and everything the
+     *      invariants protect unchanged since `checkTransaction`.
      */
     function checkAfterExecution(bytes32, bool) external override {
         address safe = msg.sender;
         uint256 base = _transientBase(safe);
         uint256 state = _tload(base);
         if (state == TX_ESCAPE) {
+            bytes32 snapshot = bytes32(_tload(base + 1));
+            _tstore(base + 1, 0);
             _tstore(base, TX_NONE);
+            if (_readAddress(safe, GUARD_STORAGE_SLOT) != address(0) || _escapeSnapshot(safe) != snapshot) {
+                revert InvalidEscape();
+            }
             return;
         }
         if (state != TX_ACTIVE) revert NoTransactionInProgress();
@@ -242,6 +257,7 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
             );
         }
         _checkOwnerSet(safe, epoch);
+        _checkHooksInstalled(safe);
 
         emit Initialized(safe, epoch, configs.length);
     }
@@ -479,6 +495,19 @@ contract RotationGuard is IRotationGuard, ITransactionGuard, IModuleGuard {
             _readAddress(safe, MODULE_GUARD_STORAGE_SLOT) != address(this) ||
             !_safe(safe).isModuleEnabled(address(this))
         ) revert HooksRemoved();
+    }
+
+    /// @dev Everything the post-execution checks protect, hashed; an escape transaction may change none of it.
+    function _escapeSnapshot(address safe) internal view returns (bytes32) {
+        ISafe target = _safe(safe);
+        return keccak256(
+            abi.encode(
+                target.getOwners(),
+                target.getThreshold(),
+                _readAddress(safe, MODULE_GUARD_STORAGE_SLOT),
+                target.isModuleEnabled(address(this))
+            )
+        );
     }
 
     function _isEscape(

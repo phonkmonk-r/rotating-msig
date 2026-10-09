@@ -60,6 +60,9 @@ describe("core against a local chain", { skip }, () => {
     return getAddress(receipt.contractAddress!);
   }
 
+  /** The guard requires a non-zero safeTxGas; Safe hands exactly this much gas to the inner call. */
+  const SAFE_TX_GAS = 1_000_000n;
+
   /** Executes as Safe owners: `signer` signs the safeTxHash off-chain, `executor` sends with a pre-validated signature. */
   async function execute(tx: MetaTx, executor: PrivateKeyAccount, signer: PrivateKeyAccount) {
     const nonce = await client.readContract({ address: safe, abi: safeAbi, functionName: "nonce" });
@@ -68,9 +71,9 @@ describe("core against a local chain", { skip }, () => {
       address: safe,
       abi: safeAbi,
       functionName: "getTransactionHash",
-      args: [tx.to, tx.value, tx.data, tx.operation, 0n, 0n, 0n, zero, zero, nonce],
+      args: [tx.to, tx.value, tx.data, tx.operation, SAFE_TX_GAS, 0n, 0n, zero, zero, nonce],
     });
-    assert.equal(safeTxHash(foundry.id, safe, { ...plainSafeTx({ ...tx, nonce }) }), hash, "local SafeTx hash must match the contract");
+    assert.equal(safeTxHash(foundry.id, safe, { ...plainSafeTx({ ...tx, nonce }, SAFE_TX_GAS) }), hash, "local SafeTx hash must match the contract");
     const ecdsa = await signer.sign({ hash });
     const preValidated = concatHex([pad(executor.address, { size: 32 }), pad("0x", { size: 32 }), "0x01"]);
     const signatures = BigInt(executor.address) < BigInt(signer.address) ? concatHex([preValidated, ecdsa]) : concatHex([ecdsa, preValidated]);
@@ -79,7 +82,7 @@ describe("core against a local chain", { skip }, () => {
       address: safe,
       abi: safeAbi,
       functionName: "execTransaction",
-      args: [tx.to, tx.value, tx.data, tx.operation, 0n, 0n, 0n, zero, zero, signatures],
+      args: [tx.to, tx.value, tx.data, tx.operation, SAFE_TX_GAS, 0n, 0n, zero, zero, signatures],
     });
     const receipt = await client.waitForTransactionReceipt({ hash: sent });
     assert.equal(receipt.status, "success");

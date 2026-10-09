@@ -121,6 +121,14 @@ interface IRotationGuard {
     error NoTransactionInProgress();
     /// @notice A delegatecall targeted something other than the allowlisted MultiSendCallOnly.
     error DelegateCallNotAllowed(address to);
+    /// @notice `safeTxGas` and `gasPrice` are both zero, so a failing inner call would revert the whole transaction and
+    ///         undo the rotation of signers whose signatures are already public.
+    error SafeTxGasRequired();
+    /// @notice A recovered signer is not an owner. Unreachable from the Safe's own hook call, which follows its
+    ///         signature check; rejects the hook being replayed from inside the transaction.
+    error SignerNotOwner(address signer);
+    /// @notice An escape transaction did not remove the guard, or changed owners, threshold, module guard or module.
+    error InvalidEscape();
     /// @notice The signatures are not exactly `threshold` static 65-byte signatures.
     error UnexpectedSignatureLength(uint256 length, uint256 expected);
     /// @notice A contract (EIP-1271) signature was supplied.
@@ -160,7 +168,8 @@ interface IRotationGuard {
 
     /**
      * @notice Configures the calling Safe, replacing every current owner with the first address of its slot's tree.
-     * @dev Called by the Safe itself in the setup batch, after enabling this contract as a module. Starts a new epoch, so
+     * @dev Called by the Safe itself in the setup batch, after enabling this contract as a module and setting it as
+     *      transaction guard and module guard; it reverts with `HooksRemoved` otherwise. Starts a new epoch, so
      *      calling it again discards all existing slots, after recording their consumed indexes so their roots can
      *      never be re-committed below them. `oldOwners[i]` is swapped for `configs[i].owner`.
      * @param oldOwners Current owners, one per slot, all of which must be covered.

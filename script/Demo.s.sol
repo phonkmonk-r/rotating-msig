@@ -16,6 +16,7 @@ import {IRotationGuard} from "../src/interfaces/IRotationGuard.sol";
  * @dev Entry points, run in order: `deploySafe()`, `install()`, `rotate(uint256)`, `status()`.
  */
 contract Demo is Script {
+    uint256 internal constant SAFE_TX_GAS = 2_000_000;
     address internal constant SAFE_SINGLETON = 0xFf51A5898e281Db6DfC7855790607438dF2ca44b;
     address internal constant SAFE_PROXY_FACTORY = 0x14F2982D601c9458F93bd70B218933A6f8165e7b;
     address internal constant MULTI_SEND_CALL_ONLY = 0xA83c336B20401Af773B6219BA5027174338D1836;
@@ -147,14 +148,14 @@ contract Demo is Script {
     ) internal {
         address executor = vm.addr(executorKey);
         address signer = vm.addr(signerKey);
-        bytes32 hash = safe.getTransactionHash(to, value, data, operation, 0, 0, 0, address(0), address(0), safe.nonce());
+        bytes32 hash = safe.getTransactionHash(to, value, data, operation, SAFE_TX_GAS, 0, 0, address(0), address(0), safe.nonce());
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerKey, hash);
         bytes memory ecdsa = abi.encodePacked(r, s, v);
         bytes memory preValidated = abi.encodePacked(bytes32(uint256(uint160(executor))), bytes32(0), uint8(1));
         bytes memory signatures = executor < signer ? bytes.concat(preValidated, ecdsa) : bytes.concat(ecdsa, preValidated);
 
         vm.startBroadcast(executorKey);
-        safe.execTransaction(to, value, data, operation, 0, 0, 0, address(0), payable(address(0)), signatures);
+        safe.execTransaction(to, value, data, operation, SAFE_TX_GAS, 0, 0, address(0), payable(address(0)), signatures);
         vm.stopBroadcast();
     }
 

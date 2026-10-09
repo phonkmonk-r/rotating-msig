@@ -55,6 +55,15 @@ function run(overrides: Partial<EvaluateInput> & { pending?: PendingTx } = {}) {
 }
 
 describe("rules", () => {
+  it("blocks a transaction whose safeTxGas and gasPrice are both zero, except the escape hatch", () => {
+    const zero = run({ pending: pending([], { safeTxGas: 0n }) });
+    assert.equal(zero.action, "none");
+    assert.ok(zero.blockers.some((b) => b.includes("safeTxGas is 0")));
+    assert.equal(run({ pending: pending([], { safeTxGas: 0n, gasPrice: 1n }) }).action, "confirm");
+    const escape = run({ pending: pending([], { ...safeCalls.escape(SAFE), safeTxGas: 0n }) });
+    assert.ok(!escape.blockers.some((b) => b.includes("safeTxGas")));
+  });
+
   it("lets the first signer confirm and the last signer execute", () => {
     assert.equal(run().action, "confirm");
     const verdict = run({ pending: pending([confirmation(B)]) });
