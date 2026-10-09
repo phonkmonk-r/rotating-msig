@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 
 import { api, type ProposalInput, type ProposalResult, type StatusView } from "../api";
 import { IconAlert, IconCheck } from "../icons";
+import { packagePreview } from "../lib/slotPackage";
 import { Address } from "../ui";
 
 type Action = "add" | "remove" | "threshold" | "escape";
@@ -191,19 +192,6 @@ function Proposal({
       </div>
     </div>
   );
-}
-
-/** The signer address and slot a pasted package claims, for the owner to confirm; signatures are checked in the session. */
-function packagePreview(code: string): { operator: string; slotId: number } | undefined {
-  const text = code.trim();
-  if (!text.startsWith("rotation-slot:")) return undefined;
-  try {
-    const json = atob(text.slice("rotation-slot:".length).replace(/-/g, "+").replace(/_/g, "/"));
-    const pkg = JSON.parse(json) as { operator?: string; slotId?: number };
-    return typeof pkg.operator === "string" && typeof pkg.slotId === "number" ? { operator: pkg.operator, slotId: pkg.slotId } : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 function AddSigner({ owners, threshold, queue, onClose }: { owners: number; threshold: number; queue: QueueProps; onClose: () => void }) {

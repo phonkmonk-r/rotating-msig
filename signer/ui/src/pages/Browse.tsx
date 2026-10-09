@@ -4,6 +4,7 @@ import { formatEther } from "viem";
 import { browser, type BrowserState, type DappRequest, type ProposalResult, type StatusView } from "../api";
 import { short } from "../format";
 import { IconAlert, IconBack, IconCheck, IconForward, IconGlobe, IconRefresh } from "../icons";
+import { requestValue } from "../lib/execution";
 import { Badge } from "../ui";
 
 const SUGGESTIONS = [
@@ -229,7 +230,7 @@ function RequestReview({
   }
 
   const queueFirst = queueMode && !request.readsOwnRpc;
-  const total = request.calls.reduce((sum, call) => sum + (call.value && call.value !== "0x" ? BigInt(call.value) : 0n), 0n);
+  const total = requestValue(request.calls);
   return (
     <section className="card request-review">
       <div className="request-origin">

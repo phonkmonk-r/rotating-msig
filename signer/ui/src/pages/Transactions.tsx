@@ -3,6 +3,7 @@ import { useState } from "react";
 import { api, type DraftView, type Execution, type QueueItem, type StatusView } from "../api";
 import { explorer, short } from "../format";
 import { IconAlert, IconCheck, IconExternal, IconInbox, IconPlus } from "../icons";
+import { executionInFlight, executionTone } from "../lib/execution";
 import { Avatar, Badge, PageHeader } from "../ui";
 import { NewTransaction } from "./NewTransaction";
 import { QueueCard } from "./QueueCard";
@@ -85,7 +86,7 @@ function TxCard({ item, status, onBusy }: { item: QueueItem; status: StatusView;
       } else {
         let execution = await api.execute(item.safeTxHash);
         setStage({ kind: "executing", execution });
-        while (execution.status === "preparing" || execution.status === "pending" || execution.status === "stuck" || execution.sweep?.status === "waiting") {
+        while (executionInFlight(execution)) {
           await new Promise((resolve) => setTimeout(resolve, execution.status === "preparing" ? 1_000 : EXECUTION_POLL_MS));
           execution = await api.execution(execution.safeTxHash);
           setStage({ kind: "executing", execution });
@@ -221,8 +222,7 @@ function Review({
 
 /** The execution's steps as they happen: simulate, gas for the key, sign and send, inclusion, rotation, sweep. */
 function ExecutionStatus({ execution, chainId }: { execution: Execution; chainId: number }) {
-  const tone =
-    execution.status === "success" ? "ok" : execution.status === "reverted" || execution.status === "failed" ? "critical" : execution.status === "stuck" ? "warning" : "pending";
+  const tone = executionTone(execution.status);
   return (
     <div className={`note ${tone} column execution-steps`}>
       <ol>

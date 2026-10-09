@@ -2,17 +2,9 @@ import { Fragment, useEffect, useState } from "react";
 import { formatUnits } from "viem";
 
 import { api, type DraftView, type ProposalResult, type Simulation } from "../api";
-import { short } from "../format";
+import { short, signedAmount, UNLIMITED_APPROVAL } from "../format";
 import { IconAlert, IconCheck } from "../icons";
 import { Badge } from "../ui";
-
-function signed(delta: string, decimals: number, symbol: string) {
-  const value = BigInt(delta);
-  const amount = formatUnits(value < 0n ? -value : value, decimals);
-  return `${value < 0n ? "−" : "+"}${amount} ${symbol}`;
-}
-
-const UNLIMITED = 2n ** 255n;
 
 /**
  * Actions waiting in the local queue: simulated together as the Safe would run them, then proposed as one transaction,
@@ -159,7 +151,7 @@ export function QueueCard({ draft, pending, onChanged }: { draft: DraftView; pen
                 {simulation.changes.map((change) => (
                   <Fragment key={change.token}>
                     <dt>{change.symbol}</dt>
-                    <dd className={BigInt(change.delta) < 0n ? "negative" : "positive"}>{signed(change.delta, change.decimals, change.symbol)}</dd>
+                    <dd className={BigInt(change.delta) < 0n ? "negative" : "positive"}>{signedAmount(change.delta, change.decimals, change.symbol)}</dd>
                   </Fragment>
                 ))}
               </dl>
@@ -167,7 +159,7 @@ export function QueueCard({ draft, pending, onChanged }: { draft: DraftView; pen
             {simulation.approvals.map((approval) => (
               <div key={`${approval.token}${approval.spender}`} className="muted small">
                 Approves {short(approval.spender)} to spend{" "}
-                {BigInt(approval.amount) >= UNLIMITED ? <Badge tone="warning">unlimited</Badge> : `${formatUnits(BigInt(approval.amount), approval.decimals)}`} {approval.symbol}
+                {BigInt(approval.amount) >= UNLIMITED_APPROVAL ? <Badge tone="warning">unlimited</Badge> : `${formatUnits(BigInt(approval.amount), approval.decimals)}`} {approval.symbol}
               </div>
             ))}
           </>

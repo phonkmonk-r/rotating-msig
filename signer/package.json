@@ -11,7 +11,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json && vite build ui",
     "typecheck": "tsc --noEmit && tsc --noEmit -p ui/tsconfig.json && tsc --noEmit -p desktop/tsconfig.json",
-    "test": "node --conditions=source --import tsx --test test/*.test.ts desktop/*.test.ts",
+    "test": "node --conditions=source --import tsx --test test/*.test.ts desktop/*.test.ts ui/test/*.test.ts",
     "start": "tsx --conditions=source src/cli.ts",
     "ui": "vite ui",
     "demo": "tsx --conditions=source scripts/local-demo.ts",

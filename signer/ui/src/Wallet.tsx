@@ -2,10 +2,9 @@ import { useState } from "react";
 
 import { desktop, type ProfileView } from "./api";
 import { short } from "./format";
+import { MIN_PASSWORD, profileFormProblems, seedWordCount } from "./lib/profileForm";
 import { IconPlus } from "./icons";
 import { Avatar, Badge } from "./ui";
-
-const MIN_PASSWORD = 10;
 
 type Kind = "seed" | "ledger";
 
@@ -20,11 +19,11 @@ export function AddProfile({ suggestedName, onDone, onCancel }: { suggestedName:
   const [error, setError] = useState<string>();
   const [working, setWorking] = useState(false);
 
-  const words = mnemonic.trim() === "" ? 0 : mnemonic.trim().split(/\s+/).length;
-  const validSafe = safe.trim() === "" || /^0x[0-9a-fA-F]{40}$/.test(safe.trim());
+  const words = seedWordCount(mnemonic);
+  const problems = profileFormProblems({ kind, name, mnemonic, safe, password, confirm });
+  const validSafe = !problems.includes("safe");
   const mismatch = confirm !== "" && confirm !== password;
-  const ready =
-    name.trim() !== "" && validSafe && !working && (kind === "ledger" || ((words === 12 || words === 24) && password.length >= MIN_PASSWORD && password === confirm));
+  const ready = problems.length === 0 && !working;
 
   async function submit() {
     setWorking(true);
