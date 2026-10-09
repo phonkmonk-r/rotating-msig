@@ -5,6 +5,7 @@ import { useSignerData } from "./data";
 import { short } from "./format";
 import { IconGlobe, IconLock, IconOverview, IconRefresh, IconSettings, IconSigners, IconTransactions, Logo } from "./icons";
 import { JoinSafe } from "./JoinSafe";
+import { SafeSwitcher } from "./SafeSwitcher";
 import { Setup } from "./Setup";
 import { Browse } from "./pages/Browse";
 import { Overview } from "./pages/Overview";
@@ -188,14 +189,14 @@ function Shell({
         </div>
 
         {status && (
-          <div className="safe-chip" title={status.safe}>
-            <Avatar address={status.safe} size={30} />
-            <div>
-              <div className="safe-chip-name">Safe</div>
-              <div className="mono small">{short(status.safe)}</div>
-            </div>
-            <span className={`network ${status.chainId === 1 ? "mainnet" : "testnet"}`}>{status.chainId === 1 ? "Ethereum" : status.chainName}</span>
-          </div>
+          <SafeSwitcher
+            status={status}
+            onAdd={onChangeSafe}
+            onSwitched={() => {
+              onProfileChanged?.();
+              void data.refresh();
+            }}
+          />
         )}
 
         <nav className="nav">

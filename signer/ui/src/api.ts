@@ -60,15 +60,35 @@ export interface Profile {
 }
 
 export interface ProfileView extends Profile {
-  /** The Safe this profile is connected to, if any. */
+  /** The Safe this profile shows, if any. */
   safe?: string;
   chainId?: number;
+  /** How many Safes this profile signs for. */
+  safeCount: number;
+}
+
+/** One Safe of the profile in use, for the switcher. */
+export interface SafeSummary {
+  key: string;
+  safe: string;
+  chainId: number;
+  chainName: string;
+  slotId: number;
+  active: boolean;
+  /** Its session started; otherwise `error` says why. */
+  running: boolean;
+  error?: string;
+  /** Pending transactions waiting for this signer (unknown if not running). */
+  needsYou?: number;
+  queued: number;
 }
 
 export interface DesktopState {
   profiles: ProfileView[];
   /** The profile in use; `vault` describes whether it is unlocked. */
   profile?: Profile;
+  /** How many Safes the profile in use signs for. */
+  safeCount: number;
   vault: { exists: boolean; unlocked: boolean; operator?: string };
   configured: boolean;
   /** A new Safe is being set up (as its creator or as an invited signer). */
@@ -121,6 +141,9 @@ interface DesktopBridge {
   renameProfile(id: string, name: string): Promise<Result<Profile>>;
   removeProfile(id: string): Promise<Result<true>>;
   connectLedger(): Promise<Result<true>>;
+  listSafes(): Promise<Result<SafeSummary[]>>;
+  selectSafe(key: string): Promise<Result<true>>;
+  removeSafe(key: string): Promise<Result<true>>;
   unlock(password: string): Promise<Result<true>>;
   lock(): Promise<Result<true>>;
   reset(): Promise<Result<true>>;
@@ -249,6 +272,9 @@ export const desktop = bridge
       renameProfile: (id: string, name: string) => unwrap(bridge.renameProfile(id, name)),
       removeProfile: (id: string) => unwrap(bridge.removeProfile(id)),
       connectLedger: () => unwrap(bridge.connectLedger()),
+      listSafes: () => unwrap(bridge.listSafes()),
+      selectSafe: (key: string) => unwrap(bridge.selectSafe(key)),
+      removeSafe: (key: string) => unwrap(bridge.removeSafe(key)),
       unlock: (password: string) => unwrap(bridge.unlock(password)),
       lock: () => unwrap(bridge.lock()),
       reset: () => unwrap(bridge.reset()),

@@ -27,7 +27,8 @@ import { ProfileStore, type ProfileEntry } from "./profiles.js";
 import { readVault, unlockVault } from "./vault.js";
 
 /** Saved between launches. The seed lives only in the encrypted vault (`vault.json`); the tree is public data. */
-interface Settings {
+/** One Safe a profile signs for. The tree file lives beside it; the seed only in the vault. */
+interface SafeEntry {
   chainId: number;
   safe: string;
   slotId: number;
@@ -37,6 +38,15 @@ interface Settings {
   executionRpc?: string;
   txServiceUrl?: string;
 }
+
+/** Saved per profile: every Safe it signs for, and the one the app shows. */
+interface ProfileSettings {
+  safes: SafeEntry[];
+  /** `safeKey` of the Safe shown. */
+  active?: string;
+}
+
+const safeKey = (entry: Pick<SafeEntry, "chainId" | "safe">) => `${entry.chainId}:${entry.safe.toLowerCase()}`;
 
 /** Optional overrides the signer can set under Advanced. */
 interface Advanced {
@@ -84,65 +94,104 @@ const settingsPath = () => join(profileDir(), "settings.json");
 const vaultPath = () => join(profileDir(), "vault.json");
 const creatingPath = () => join(profileDir(), "creating.json");
 const addingPath = () => join(profileDir(), "adding.json");
-const treePath = (settings: Pick<Settings, "chainId" | "safe" | "slotId">) =>
+const treePath = (settings: Pick<SafeEntry, "chainId" | "safe" | "slotId">) =>
   join(profileDir(), "trees", `${settings.chainId}-${settings.safe.toLowerCase()}-slot${settings.slotId}.json`);
 
 let session: SignerSession | undefined;
-let stopAutoRefill: (() => void) | undefined;
 /** Present only while the wallet is unlocked: the decrypted seed never leaves this process. */
 let source: AddressSource | undefined;
 let sessionError: string | undefined;
 
-function readSettings(dir = activeId ? profileDir() : undefined): Settings | undefined {
+function readSettings(dir = activeId ? profileDir() : undefined): ProfileSettings | undefined {
   if (!dir) return undefined;
+  let raw: ProfileSettings | SafeEntry;
   try {
-    return JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")) as Settings;
+    raw = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")) as ProfileSettings | SafeEntry;
   } catch {
     return undefined;
   }
+  // Settings from before several Safes per profile held exactly one Safe.
+  if ("safe" in raw) return { safes: [raw], active: safeKey(raw) };
+  return raw;
+}
+
+function writeSettings(settings: ProfileSettings) {
+  mkdirSync(dirname(settingsPath()), { recursive: true });
+  writeFileSync(settingsPath(), JSON.stringify(settings, null, 2));
+}
+
+/** The Safe the app shows, from saved settings. */
+function activeEntry(settings = readSettings()): SafeEntry | undefined {
+  return settings?.safes.find((entry) => safeKey(entry) === (activeKey ?? settings.active)) ?? settings?.safes[0];
 }
 
 function summarize(tree: TreeFile): TreeSummary {
   return { safe: tree.safe, chainId: tree.chainId, slotId: tree.slotId, size: tree.size, base: tree.base };
 }
 
-/** Builds a session from settings with the unlocked wallet, and proves it works by resolving the current owner key. */
-async function start(settings: Settings): Promise<void> {
+/** A Safe's signing session while the profile is unlocked; each keeps its own queue and refills. */
+interface Running {
+  session: SignerSession;
+  stopAutoRefill: () => void;
+}
+const running = new Map<string, Running>();
+/** Why a saved Safe could not start, by `safeKey`. */
+const safeErrors = new Map<string, string>();
+let activeKey: string | undefined;
+
+/** Shows another Safe; `session` always points at the shown one. */
+function setActive(key: string | undefined) {
+  activeKey = key;
+  session = key ? running.get(key)?.session : undefined;
+}
+
+function stopSafe(key: string) {
+  running.get(key)?.stopAutoRefill();
+  running.delete(key);
+}
+
+/** Starts a Safe's session with the unlocked wallet, and proves it works by resolving the current owner key. */
+async function start(entry: SafeEntry): Promise<void> {
   if (!source) throw new Error("unlock your wallet first");
-  stopAutoRefill?.();
-  stopAutoRefill = undefined;
-  session = undefined;
-  browser?.close();
-  const tree = loadTreeFile(readFileSync(treePath(settings), "utf8")).file;
+  const key = safeKey(entry);
+  stopSafe(key);
+  const tree = loadTreeFile(readFileSync(treePath(entry), "utf8")).file;
   const { session: next } = createSession(
-    { tree, rpc: settings.rpc || undefined, executionRpc: settings.executionRpc || undefined, txServiceUrl: settings.txServiceUrl, safeApiKey: process.env.SAFE_API_KEY },
+    { tree, rpc: entry.rpc || undefined, executionRpc: entry.executionRpc || undefined, txServiceUrl: entry.txServiceUrl, safeApiKey: process.env.SAFE_API_KEY },
     source,
   );
   const status = await next.status();
   if (!status.me) throw new Error(status.meError ?? "your current owner key could not be resolved");
-  session = next;
-  sessionError = undefined;
-  stopAutoRefill = next.startAutoRefill();
+  running.set(key, { session: next, stopAutoRefill: next.startAutoRefill() });
+  safeErrors.delete(key);
+  if (activeKey === key) session = next;
 }
 
 async function lock() {
-  stopAutoRefill?.();
-  stopAutoRefill = undefined;
-  session = undefined;
+  for (const key of [...running.keys()]) stopSafe(key);
+  setActive(undefined);
   browser?.close();
   await source?.close();
   source = undefined;
 }
 
-/** After unlocking, resumes the saved configuration if there is one; problems are shown on the setup screen. */
+/** After unlocking, starts every saved Safe; problems are shown per Safe, or on the setup screen if none started. */
 async function resume() {
   const settings = readSettings();
-  if (!settings || settings.slotId === undefined || !existsSync(treePath(settings))) return;
-  try {
-    await start(settings);
-  } catch (error) {
-    sessionError = (error as Error).message;
-  }
+  if (!settings) return;
+  await Promise.all(
+    settings.safes.map(async (entry) => {
+      if (!existsSync(treePath(entry))) return;
+      try {
+        await start(entry);
+      } catch (error) {
+        safeErrors.set(safeKey(entry), (error as Error).message);
+      }
+    }),
+  );
+  const preferred = settings.active && running.has(settings.active) ? settings.active : [...running.keys()][0];
+  setActive(preferred);
+  sessionError = preferred ? undefined : [...safeErrors.values()][0];
 }
 
 /** Every handler returns a Result so error messages reach the UI unchanged. Only the app's own UI may call them. */
@@ -174,7 +223,8 @@ function requireHash(value: unknown): Hex {
 async function joinWith(safe: string, advanced: Advanced, sendProgress: (progress: JoinProgress) => void): Promise<void> {
   if (!source) throw new Error("unlock your wallet first");
   const joined = await joinSafe({ source, safe, chainId: advanced.chainId || undefined, rpc: advanced.rpc || undefined, onProgress: sendProgress });
-  const settings: Settings = {
+  const settings = readSettings() ?? { safes: [] };
+  const entry: SafeEntry = {
     chainId: joined.chainId,
     safe: joined.safe,
     slotId: joined.slotId,
@@ -182,13 +232,16 @@ async function joinWith(safe: string, advanced: Advanced, sendProgress: (progres
     rpc: advanced.rpc || undefined,
     executionRpc: advanced.executionRpc || undefined,
   };
-  const existing = readSettings();
-  if (existing?.txServiceUrl) settings.txServiceUrl = existing.txServiceUrl;
-  mkdirSync(dirname(treePath(settings)), { recursive: true });
-  writeFileSync(treePath(settings), JSON.stringify(joined.tree));
-  await start(settings);
-  mkdirSync(dirname(settingsPath()), { recursive: true });
-  writeFileSync(settingsPath(), JSON.stringify(settings, null, 2));
+  const key = safeKey(entry);
+  const previous = settings.safes.find((candidate) => safeKey(candidate) === key);
+  if (previous?.txServiceUrl) entry.txServiceUrl = previous.txServiceUrl;
+  mkdirSync(dirname(treePath(entry)), { recursive: true });
+  writeFileSync(treePath(entry), JSON.stringify(joined.tree));
+  await start(entry);
+  writeSettings({ safes: [...settings.safes.filter((candidate) => safeKey(candidate) !== key), entry], active: key });
+  browser?.close();
+  setActive(key);
+  sessionError = undefined;
 }
 
 /** A new Safe being set up: kept on disk so either side can close the app between steps. */
@@ -226,7 +279,7 @@ function operator(): string | undefined {
 }
 
 function newSafeContext(chainId: number): NewSafeContext {
-  return { client: readClient(chainId, readSettings()?.rpc), chain: chainFor(chainId) };
+  return { client: readClient(chainId, activeEntry()?.rpc), chain: chainFor(chainId) };
 }
 
 /** What the setup screens show about a Safe being created. */
@@ -365,7 +418,7 @@ handle("adding:prepare", async (safe: unknown) => {
   if (!source) throw new Error("unlock your wallet first");
   const address = String(safe).trim();
   if (!/^0x[0-9a-fA-F]{40}$/.test(address)) throw new Error("that is not a Safe address");
-  const chains = await detectChains(address as `0x${string}`, readSettings()?.rpc);
+  const chains = await detectChains(address as `0x${string}`, activeEntry()?.rpc);
   if (chains.length === 0) throw new Error("no Safe at this address on Ethereum or Sepolia");
   const chainId = chains[0]!;
   const { tree, package: pkg } = await prepareNewSlot(newSafeContext(chainId), source, address as `0x${string}`, (done, total) =>
@@ -396,7 +449,8 @@ handle("adding:cancel", () => {
 });
 
 handle("app:state", () => {
-  const settings = readSettings();
+  const saved = readSettings();
+  const settings = activeEntry(saved);
   let tree: TreeSummary | undefined;
   try {
     if (settings?.slotId !== undefined) tree = summarize(loadTreeFile(readFileSync(treePath(settings), "utf8")).file);
@@ -407,9 +461,10 @@ handle("app:state", () => {
   const vault = { exists: profile !== undefined, unlocked: source !== undefined, operator: profile?.operator };
   return {
     profiles: profiles.list().map((entry) => {
-      const saved = readSettings(profiles.dir(entry.id));
-      return { ...entry, safe: saved?.safe, chainId: saved?.chainId };
+      const shown = activeEntry(readSettings(profiles.dir(entry.id)));
+      return { ...entry, safe: shown?.safe, chainId: shown?.chainId, safeCount: readSettings(profiles.dir(entry.id))?.safes.length ?? 0 };
     }),
+    safeCount: saved?.safes.length ?? 0,
     profile,
     vault,
     configured: session !== undefined,
@@ -532,7 +587,61 @@ handle("app:join", async (safe: string, advanced: Advanced = {}) => {
 });
 
 handle("app:reset", async () => {
-  session = undefined;
+  setActive(undefined);
+  return true;
+});
+
+/** Every Safe of this profile, with what needs this signer in each (only for Safes whose session is running). */
+handle("safes:list", async () => {
+  const settings = readSettings();
+  return Promise.all(
+    (settings?.safes ?? []).map(async (entry) => {
+      const key = safeKey(entry);
+      const run = running.get(key);
+      let needsYou: number | undefined;
+      try {
+        needsYou = run ? (await run.session.queue()).filter((item) => item.verdict.action !== "none").length : undefined;
+      } catch {
+        needsYou = undefined;
+      }
+      return {
+        key,
+        safe: entry.safe,
+        chainId: entry.chainId,
+        chainName: chainFor(entry.chainId).name,
+        slotId: entry.slotId,
+        active: key === activeKey,
+        running: run !== undefined,
+        error: safeErrors.get(key),
+        needsYou,
+        queued: run?.session.draft().items.length ?? 0,
+      };
+    }),
+  );
+});
+
+handle("safes:select", async (key: unknown) => {
+  const settings = readSettings();
+  const entry = settings?.safes.find((candidate) => safeKey(candidate) === key);
+  if (!settings || !entry) throw new Error("this Safe is not saved in this profile");
+  if (!running.has(String(key))) await start(entry);
+  browser?.close();
+  setActive(String(key));
+  writeSettings({ ...settings, active: String(key) });
+  return true;
+});
+
+/** Forgets a Safe in this profile (its tree file stays, so joining again is quick). Nothing changes on-chain. */
+handle("safes:remove", (key: unknown) => {
+  const settings = readSettings();
+  if (!settings) return true;
+  stopSafe(String(key));
+  const safes = settings.safes.filter((candidate) => safeKey(candidate) !== key);
+  if (activeKey === key) {
+    browser?.close();
+    setActive([...running.keys()][0]);
+  }
+  writeSettings({ safes, active: activeKey });
   return true;
 });
 
@@ -622,7 +731,9 @@ app.whenReady().then(async () => {
   if (process.env.ROTATION_SIGNER_TEST_PASSWORD && activeId && readVault(vaultPath())) {
     try {
       source = seedSource(unlockVault(vaultPath(), process.env.ROTATION_SIGNER_TEST_PASSWORD));
-      if (process.env.ROTATION_SIGNER_TEST_JOIN) await joinWith(process.env.ROTATION_SIGNER_TEST_JOIN, {}, () => undefined);
+      if (process.env.ROTATION_SIGNER_TEST_JOIN) {
+        for (const safe of process.env.ROTATION_SIGNER_TEST_JOIN.split(",")) await joinWith(safe, {}, () => undefined);
+      }
       else await resume();
     } catch (error) {
       sessionError = (error as Error).message;

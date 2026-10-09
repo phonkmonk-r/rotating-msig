@@ -21,6 +21,10 @@ On first launch, enter your seed phrase, a password and, to join an existing Saf
 - which signer you are, by matching the key your seed holds at each slot's current tree index against the slot's on-chain owner, so it works however many times you have already signed,
 - your rotation keys, rebuilt from the seed and checked against the root committed on-chain.
 
+### Several Safes
+
+One profile can sign for several Safes. Click the Safe card at the top of the sidebar to switch between them or add another; each shows how many transactions wait for you. Every Safe keeps its own queue and refills its own next keys in the background while the app is unlocked. Each Safe uses its own keys from your seed (a separate account per Safe), so being a signer of several Safes never mixes keys; your gas account pays for all of them.
+
 ### Profiles
 
 The app holds any number of profiles, each one wallet with its own Safe: a seed phrase (encrypted with its own password) or a Ledger (nothing secret is stored; the app recognizes the device by its first address and refuses a different one). Choose a profile at launch, switch from the sidebar, and rename or remove it in Settings. One profile is unlocked at a time; switching locks the current one. An install from before profiles is moved into a first profile automatically.

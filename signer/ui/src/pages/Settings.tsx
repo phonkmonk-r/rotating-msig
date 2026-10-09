@@ -23,6 +23,7 @@ export function Settings({
   const profile = desktopState.profile;
   const [name, setName] = useState(profile?.name ?? "");
   const [confirmRemove, setConfirmRemove] = useState("");
+  const [confirmForget, setConfirmForget] = useState(false);
   const [error, setError] = useState<string>();
 
   async function run(action: () => Promise<unknown>, after: () => void) {
@@ -51,9 +52,31 @@ export function Settings({
         </dl>
         <div className="card-actions">
           <button type="button" onClick={onChangeSafe}>
-            Change Safe or network
+            Add another Safe
+          </button>
+          <button type="button" onClick={() => setConfirmForget(!confirmForget)}>
+            Remove from Keyturn
           </button>
         </div>
+              {confirmForget && (
+          <div className="note warning">
+            <span>
+              Keyturn stops signing for this Safe on this device. Nothing changes on-chain and you stay a signer; add it again any time.{" "}
+              <button
+                type="button"
+                className="link"
+                onClick={() =>
+                  void run(
+                    () => desktop!.removeSafe(`${status.chainId}:${status.safe.toLowerCase()}`),
+                    onProfileChanged,
+                  )
+                }
+              >
+                Remove
+              </button>
+            </span>
+          </div>
+        )}
       </section>
 
       {profile && (
