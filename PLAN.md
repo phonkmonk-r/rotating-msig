@@ -7,7 +7,7 @@ Status: phases 1-3 done, phase 4 (Safe App) in progress. Last updated 2026-10-08
 | Phase | State | Where |
 |---|---|---|
 | 1. Spec and threat model | Done | this file |
-| 2. Contracts | Done, pending external audit. Owner-to-slot mapping dropped for gas (2026-10-08); the cheaper guard is not yet deployed on Sepolia | `src/`, `test/` (186 Solidity tests: unit, mainnet fork, SafeL2, fuzz, invariants, gas budgets; mutation-tested) |
+| 2. Contracts | Done, pending external audit. Owner-to-slot mapping dropped for gas (2026-10-08); the cheaper guard is deployed on Sepolia at `0x0f91…3391` and new Safes use it | `src/`, `test/` (186 Solidity tests: unit, mainnet fork, SafeL2, fuzz, invariants, gas budgets; mutation-tested) |
 | 3. Generator CLI | Done; defaults to the two-level key path (section 14); Ledger mode still needs one run on a real device | `generator/` (9 tests), cross-checked by `test/GeneratorVector.t.sol` |
 | Demo | Done | `demo/run.sh`: Anvil mainnet fork, real Safe 1.5.0 contracts, 2-of-3 Safe rotating through generated trees |
 | 4. Safe App and Keyturn | v1 app done and tested on Sepolia (4a-4j, see section 12): Keyturn desktop app with profiles (seed or Ledger), several Safes per profile, create and join Safes, propose, confirm, execute with live steps, gas account with just-in-time funding and sweep, self-staging, used-key and collision checks, signer management, transaction queue with simulation, dApp browser. Open: Ledger on a real device, renewing a slot's tree, packaging and code signing | `signer/`, `packages/`, `app/`, `deployments/sepolia.json`, `ARCHITECT.md` |
@@ -218,7 +218,7 @@ Measured (`test/RotationGuard.gas.t.sol`, local, Prague rules, before refunds), 
 | 7-of-10 | 87k | 477k | 55.8k | 608k, 74.5k |
 | 20-of-20 | 139k | 1.49M | 67.5k | 1.79M, 82.4k |
 
-The test budgets are pinned at 50k, 55k, 62k and 75k per signer. About 22k of each rotation is the one unavoidable zero-to-nonzero write (Safe's owner list entry for the new owner); the rest is the module call through the module guard, signature recovery, the slot scan and bookkeeping. Overhead grows with owner count because `_prevOwner` re-reads the owner list per rotation and `_findSlot` scans more slots. Under Sepolia's repricing (expected on mainnet later) a 2-of-3 rotating transfer measured about 650k gas with the earlier guard; the cheaper guard is still to be measured there.
+The test budgets are pinned at 50k, 55k, 62k and 75k per signer. About 22k of each rotation is the one unavoidable zero-to-nonzero write (Safe's owner list entry for the new owner); the rest is the module call through the module guard, signature recovery, the slot scan and bookkeeping. Overhead grows with owner count because `_prevOwner` re-reads the owner list per rotation and `_findSlot` scans more slots. Under Sepolia's repricing (expected on mainnet later), measured on-chain: a 2-of-3 rotating transfer used 651,905 gas on the first guard and 430,119 on the current one (-34%); installing three slots 4,181,594 and 3,859,156; deploying the guard 16,697,418 and 16,106,927 gas (`deployments/sepolia.json`).
 
 Staging: after the first fill, about 15-20k per address (non-zero SSTORE plus proof calldata and verification). A batch of 5 is roughly 100-120k gas, about 0.0002-0.0005 ETH at 2-4 gwei.
 

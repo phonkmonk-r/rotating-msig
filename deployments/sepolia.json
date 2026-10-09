@@ -1,14 +1,32 @@
 {
   "chainId": 11155111,
-  "rotationGuard": "0xbE621d916B9a75Ace3ff47Cc8b24aF22c0c05E36",
-  "deployTx": "0x6551d72151d6ab1e9958c7c5ce55f2bcbfe30e416add46206f195da9ebc609fa",
+  "rotationGuard": "0x0f912AC33a58094622dF7508C6D2Ce9Dc4aa3391",
+  "deployTx": "0x1f4cc687a7ec55151aa115f813baed9f989017d30605fbe490b045a99f9d0aba",
   "multiSendCallOnly": "0xA83c336B20401Af773B6219BA5027174338D1836",
   "testSafe": "0x7aC0Ac669d32Bd739eAA892bcFD2C6dF9946Ed02",
-  "note": "Test deployment. The guard serves any Safe 1.5.0 on Sepolia.",
+  "note": "Current guard (no owner-to-slot mapping, MAX_SLOTS 32), deployed from the ops seed's first account. New Safes use it; the guard serves any Safe 1.5.0 on Sepolia.",
   "appCreatedSafe": {
     "safe": "0x9Ed45FdF1598295CF7804719A4E3BB1719aEd1BD",
     "deployTx": "0xc61dc48f98dfaa4d49e29d85de25973eeb2d57936e5e51217de8ee3cdbf61b1c",
     "installTx": "0x53b77ce11375561c4add16f6bf6314d665a15d90b7ba725ad887b4b3f4ac7e52",
     "note": "2-of-3 created and installed by the signer app's create flow; deploy 1,409,784 gas, install 4,181,594 gas."
+  },
+  "previousGuards": [
+    {
+      "rotationGuard": "0xbE621d916B9a75Ace3ff47Cc8b24aF22c0c05E36",
+      "deployTx": "0x6551d72151d6ab1e9958c7c5ce55f2bcbfe30e416add46206f195da9ebc609fa",
+      "block": 11872066,
+      "note": "First deployment, with the owner-to-slot mapping. Safes 0x7aC0\u2026Ed02 and 0x9Ed4\u2026d1BD use it."
+    }
+  ],
+  "deployBlock": 11874061,
+  "deployGas": 16106927,
+  "measuredSafe": {
+    "safe": "0xa14D468F959c1736Bb13f67D50aeCFdD1e4015cB",
+    "guard": "0x0f912AC33a58094622dF7508C6D2Ce9Dc4aa3391",
+    "deployTx": "0x3544aba398fe6a9c1960a2df3e4fd97a29a54cfa54cc3c2f74bf6a1947f17e5c",
+    "installTx": "0x2dfbcafdb931230e5a81e0989121e03bbaa57a7e9d637d40fdb88ca8c645ca4e",
+    "rotatingTransferTx": "0x37d3aec7fe52ebc747c05e66a87f2cccffc2d79fb7f4f6f0a9621692ac264212",
+    "note": "2-of-3 on the current guard with the two-level key path. Rotating transfer 430,119 gas (651,905 on the first guard); install 3,859,156; deploy 1,409,784."
   }
 }

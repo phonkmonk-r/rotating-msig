@@ -12,6 +12,8 @@ export interface SafeDeployments {
   rotationGuard?: Address;
   /** Block of the first RotationGuard deployment: tree keys can only have become owners after it. */
   rotationGuardBlock?: number;
+  /** Earlier RotationGuard deployments that existing Safes may still use; their events count for key history. */
+  previousGuards?: Address[];
 }
 
 /**
@@ -33,7 +35,10 @@ export const SEPOLIA_CHAIN_ID = 11155111;
 /** Chains the project supports: mainnet for production, Sepolia for testing with Safe{Wallet}. */
 export const DEPLOYMENTS: Readonly<Record<number, SafeDeployments>> = {
   1: { ...CANONICAL, creationSingleton: CANONICAL.safeSingleton },
-  [SEPOLIA_CHAIN_ID]: { ...CANONICAL, creationSingleton: SAFE_L2_SINGLETON, rotationGuard: "0xbE621d916B9a75Ace3ff47Cc8b24aF22c0c05E36", rotationGuardBlock: 11_872_066 },
+  [SEPOLIA_CHAIN_ID]: { ...CANONICAL, creationSingleton: SAFE_L2_SINGLETON, rotationGuard: "0x0f912AC33a58094622dF7508C6D2Ce9Dc4aa3391",
+    rotationGuardBlock: 11_872_066,
+    previousGuards: ["0xbE621d916B9a75Ace3ff47Cc8b24aF22c0c05E36"],
+  },
 };
 
 export const MAINNET = { chainId: 1, ...CANONICAL } as const;

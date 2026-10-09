@@ -24,7 +24,7 @@ export function keyCheckerFor(chainId: number, client: PublicClient): KeyChecker
   const deployment = DEPLOYMENTS[chainId];
   const history =
     deployment?.rotationGuard && deployment.rotationGuardBlock !== undefined
-      ? { client, guards: [deployment.rotationGuard], fromBlock: BigInt(deployment.rotationGuardBlock) }
+      ? { client, guards: [deployment.rotationGuard, ...(deployment.previousGuards ?? [])], fromBlock: BigInt(deployment.rotationGuardBlock) }
       : undefined;
   return new KeyChecker(chainId === 1 ? [client] : [client, readClient(1)], history);
 }
