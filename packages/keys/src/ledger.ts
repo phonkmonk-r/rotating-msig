@@ -29,17 +29,17 @@ const prefix = (hex: string): Hex => (hex.startsWith("0x") ? (hex as Hex) : `0x$
  * alongside each address; it is dropped immediately and never stored or printed.
  */
 export function ledgerSource(eth: LedgerEth, close: () => Promise<void>): AddressSource {
-  async function address(account: number, index = 0): Promise<Address> {
-    const { address } = await eth.getAddress(derivationPath(account, index).slice(2), false);
+  async function address(account: number, index = 0, branch?: number): Promise<Address> {
+    const { address } = await eth.getAddress(derivationPath(account, index, branch).slice(2), false);
     return getAddress(address);
   }
 
   return {
     kind: "ledger",
     address,
-    async signer(account: number, index = 0): Promise<LocalAccount> {
-      const path = derivationPath(account, index).slice(2);
-      const owner = await address(account, index);
+    async signer(account: number, index = 0, branch?: number): Promise<LocalAccount> {
+      const path = derivationPath(account, index, branch).slice(2);
+      const owner = await address(account, index, branch);
       return toAccount({
         address: owner,
         async signMessage() {

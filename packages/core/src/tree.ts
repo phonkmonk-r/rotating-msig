@@ -11,20 +11,29 @@ export const TREE_FORMAT = "rotation-tree/v1";
 export const MAX_ACCOUNT_INDEX = 2 ** 31 - 1;
 
 /**
- * How a tree's keys are derived. Per-Safe (current): one hardened account per Safe, keys at index `i` under it, so two
- * Safes' keys only meet if their accounts collide (about 1 in 2 billion). Ranged (earlier trees): key `i` at hardened
- * account `base + i`, so two Safes' ranges of 10,000 could overlap (about 1 in 50,000).
+ * How a tree's keys are derived, newest first:
+ * - Two-level per Safe (current): hardened account and branch both from a hash of chain and Safe, keys at index `i`
+ *   under them. Two Safes of one seed share keys only if both levels collide: about 1 in 4.6 × 10^18 per pair.
+ * - Per Safe: one hardened account per Safe, about 1 in 2 billion per pair.
+ * - Ranged (earliest trees): key `i` at hardened account `base + i`; 10,000-key ranges overlap about 1 in 50,000.
+ * Every level is a single fixed-cost derivation, so the size of the numbers never slows a device down.
  */
+export const BRANCH_PATH_TEMPLATE = "m/44'/60'/{account}'/{branch}'/{index}";
 export const SAFE_PATH_TEMPLATE = "m/44'/60'/{account}'/0/{index}";
 export const RANGE_PATH_TEMPLATE = "m/44'/60'/{account}'/0/0";
 
-/** Where key `index` of a tree is derived. */
+/** Where key `index` of a tree is derived. `branch` set means a hardened fourth level; otherwise it is 0. */
 export interface KeyPath {
   account: number;
   index: number;
+  branch?: number;
 }
 
-export function treeKeyPath(layout: Pick<TreeFile, "base" | "pathTemplate">, index: number): KeyPath {
+export function treeKeyPath(layout: Pick<TreeFile, "base" | "pathTemplate" | "branch">, index: number): KeyPath {
+  if (layout.pathTemplate === BRANCH_PATH_TEMPLATE) {
+    if (layout.branch === undefined) throw new Error("a two-level tree needs its branch");
+    return { account: layout.base, branch: layout.branch, index };
+  }
   if (layout.pathTemplate === SAFE_PATH_TEMPLATE) return { account: layout.base, index };
   if (layout.pathTemplate === RANGE_PATH_TEMPLATE) return { account: layout.base + index, index: 0 };
   throw new Error(`unknown derivation path template ${layout.pathTemplate}`);
@@ -37,8 +46,10 @@ export interface TreeMeta {
   chainId: number;
   safe: Address;
   slotId: number;
-  /** The hardened account the keys live under (per-Safe layout), or the first account of the range (ranged layout). */
+  /** The hardened account the keys live under (per-Safe layouts), or the first account of the range (ranged layout). */
   base: number;
+  /** The hardened branch under the account (two-level layout only). */
+  branch?: number;
 }
 
 /** On-disk tree file. Holds only addresses (hashes of public keys), never public keys, xpubs or secrets. */
@@ -88,6 +99,9 @@ export function validateMeta(meta: TreeMeta, size: number): void {
   if (!isAddress(meta.safe, { strict: false })) throw new Error(`invalid safe address: ${meta.safe}`);
   if (!Number.isSafeInteger(meta.slotId) || meta.slotId < 0) throw new Error(`invalid slot id: ${meta.slotId}`);
   if (!Number.isSafeInteger(size) || size < 1 || size > 2 ** 32 - 1) throw new Error(`invalid size: ${size}`);
+  if (meta.branch !== undefined && (!Number.isSafeInteger(meta.branch) || meta.branch < 0 || meta.branch > MAX_ACCOUNT_INDEX)) {
+    throw new Error(`invalid branch: ${meta.branch}`);
+  }
   if (!Number.isSafeInteger(meta.base) || meta.base < 0 || meta.base + size - 1 > MAX_ACCOUNT_INDEX) {
     throw new Error(`account range ${meta.base}..${meta.base + size - 1} is outside the hardened index space`);
   }
@@ -119,6 +133,7 @@ export function createTreeFile(meta: TreeMeta, pathTemplate: string, addresses: 
     safe: getAddress(meta.safe),
     slotId: meta.slotId,
     base: meta.base,
+    ...(meta.branch === undefined ? {} : { branch: meta.branch }),
     pathTemplate,
     size: addresses.length,
     root: tree.root as Hex,

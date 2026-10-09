@@ -28,7 +28,7 @@ export async function resolveCurrentOwner(source: AddressSource, tree: TreeFile,
   }
 
   const path = treeKeyPath(tree, index);
-  const account = await source.signer(path.account, path.index);
+  const account = await source.signer(path.account, path.index, path.branch);
   if (!isAddressEqual(account.address, slot.owner)) {
     throw new Error(`the key at account ${path.account}, index ${path.index} is ${account.address}, not the slot owner ${slot.owner}; wrong seed or passphrase?`);
   }

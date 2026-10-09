@@ -482,7 +482,7 @@ export class SignerSession {
       const slot = state.slots.find((candidate) => candidate.slotId === input.slotId);
       if (!slot) throw new Error(`slot ${input.slotId} has no owner`);
       if (input.index < slot.nextStageIndex - slot.staged.length) throw new Error("cannot skip back to keys already used");
-      const used = await this.checker().used(input.stage.map((entry) => entry.owner));
+      const used = await this.checker().used(input.stage.map((entry) => entry.owner), { ownSafe: state.safe });
       if (used.length > 0) throw new Error(`key ${used[0]!.address} was already used on ${used[0]!.networks.join(", ")}`);
     }
     if (input.kind === "force-rotate") {
@@ -730,7 +730,7 @@ export class SignerSession {
       if (file.root !== slot.root) throw new Error("the slot's root on-chain is not your tree's; join the Safe again");
 
       const candidates = stageEntries(tree, file, slot.nextStageIndex, count);
-      const used = await this.checker().used(candidates.map((entry) => entry.owner));
+      const used = await this.checker().used(candidates.map((entry) => entry.owner), { ownSafe: state.safe });
       const firstUsed = candidates.findIndex((entry) => used.some((key) => key.address === entry.owner));
       const entries = firstUsed < 0 ? candidates : candidates.slice(0, firstUsed);
       if (entries.length === 0) {
@@ -789,7 +789,11 @@ export class SignerSession {
     const firstStaged = slot.nextStageIndex - slot.staged.length;
     const indexes = Array.from({ length: slot.staged.length + Math.min(state.bufferSize, slot.unstaged) }, (_, i) => firstStaged + i);
     const addresses = indexes.map((index) => this.treeAddress(index)).filter((address): address is Address => address !== undefined);
-    const [used, current] = await Promise.all([this.checker().used(addresses), this.checker().used([owner.account.address])]);
+    // The current key is an owner of this Safe by design, so only its nonce is checked.
+    const [used, current] = await Promise.all([
+      this.checker().used(addresses, { ownSafe: state.safe }),
+      this.checker().used([owner.account.address], { checkOwners: false }),
+    ]);
     this.keyAlert = {
       usedKeys: used.map((key) => ({ ...key, index: indexes[addresses.indexOf(key.address)]! })),
       currentKeyUsed: current[0]?.networks,

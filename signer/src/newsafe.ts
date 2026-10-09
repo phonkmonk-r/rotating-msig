@@ -2,7 +2,8 @@ import {
   createInvite,
   creationCall,
   DEFAULT_TREE_SIZE,
-  safeAccount,
+  safeKeyPath,
+  treeKeyPath,
   deploymentsFor,
   describeRevert,
   execTransactionData,
@@ -14,6 +15,7 @@ import {
   safeProxyFactoryAbi,
   verifyInvite,
   createSlotPackage,
+  BRANCH_PATH_TEMPLATE,
   INSTALL_STAGE_COUNT,
   slotConfig,
   stageEntries,
@@ -25,8 +27,8 @@ import {
 import { generateTree, OPERATOR_ACCOUNT, type AddressSource } from "@rotating-msig/keys";
 import { createWalletClient, custom, isAddressEqual, type Address, type Chain, type Hex, type PublicClient } from "viem";
 
-import { readClient } from "./join.js";
-import { KeyChecker } from "./keycheck.js";
+import { keyCheckerFor } from "./create.js";
+import type { KeyChecker } from "./keycheck.js";
 
 export { OPERATOR_ACCOUNT };
 
@@ -40,7 +42,7 @@ export interface NewSafeContext {
 }
 
 function checkerOf(context: NewSafeContext): KeyChecker {
-  return context.keyChecker ?? new KeyChecker(context.chain.id === 1 ? [context.client] : [context.client, readClient(1)]);
+  return context.keyChecker ?? keyCheckerFor(context.chain.id, context.client);
 }
 
 /** The first of six consecutive never-used keys in the tree: the slot's first owner and its five staged keys. */
@@ -86,7 +88,8 @@ export async function prepareSlot(
   size = DEFAULT_TREE_SIZE,
 ): Promise<{ tree: TreeFile; package: SlotPackage }> {
   const { slotId } = await readInvite(context, source, invite);
-  const meta = { chainId: invite.chainId, safe: invite.safe, slotId, base: safeAccount(invite.chainId, invite.safe) };
+  const keyPath = safeKeyPath(invite.chainId, invite.safe);
+  const meta = { chainId: invite.chainId, safe: invite.safe, slotId, base: keyPath.account, branch: keyPath.branch };
   const tree = await generateTree(source, meta, size, onProgress);
   return { tree, package: createSlotPackage(invite, loadTreeFile(JSON.stringify(tree)), await freshStart(context, tree)) };
 }
@@ -171,8 +174,10 @@ export async function prepareNewSlot(
 ): Promise<{ tree: TreeFile; package: SlotPackage }> {
   const state = await readSafeState(context.client, safe);
   if (!state.installed) throw new Error("this Safe does not have the rotation guard installed");
-  const meta = { chainId: context.chain.id, safe: state.safe, slotId: state.slotCount, base: safeAccount(context.chain.id, state.safe) };
-  const first = await source.address(meta.base, 0);
+  const keyPath = safeKeyPath(context.chain.id, state.safe);
+  const meta = { chainId: context.chain.id, safe: state.safe, slotId: state.slotCount, base: keyPath.account, branch: keyPath.branch };
+  const firstPath = treeKeyPath({ ...meta, pathTemplate: BRANCH_PATH_TEMPLATE }, 0);
+  const first = await source.address(firstPath.account, firstPath.index, firstPath.branch);
   if (state.owners.some((owner) => isAddressEqual(owner, first))) throw new Error("this seed is already a signer of this Safe");
   const tree = await generateTree(source, meta, size, onProgress);
   const loaded = loadTreeFile(JSON.stringify(tree));

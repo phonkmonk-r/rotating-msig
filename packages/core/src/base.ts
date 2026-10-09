@@ -11,7 +11,17 @@ export const DEFAULT_TREE_SIZE = 10_000;
 const SAFE_ACCOUNT_SPAN = BigInt(2 ** 31 - 2 ** 20 - MIN_TREE_BASE);
 
 /**
- * The hardened account a signer's keys for a given Safe live under (per-Safe layout, `m/44'/60'/{account}'/0/{i}`).
+ * Where a signer's keys for a given Safe live in the two-level layout (`m/44'/60'/{account}'/{branch}'/{i}`): both
+ * hardened levels come from one hash of chain and Safe, so every device finds them from the Safe alone, and two Safes
+ * of one seed share keys only if both collide (about 1 in 4.6 × 10^18 per pair).
+ */
+export function safeKeyPath(chainId: number, safe: Address): { account: number; branch: number } {
+  const hash = BigInt(keccak256(encodeAbiParameters([{ type: "uint256" }, { type: "address" }, { type: "string" }], [BigInt(chainId), getAddress(safe), "keyturn/two-level"])));
+  return { account: MIN_TREE_BASE + Number(hash % SAFE_ACCOUNT_SPAN), branch: Number((hash >> 128n) % 2n ** 31n) };
+}
+
+/**
+ * The hardened account a signer's keys for a given Safe live under (one-level per-Safe layout, `m/44'/60'/{account}'/0/{i}`).
  * Derived from the chain and the Safe address, so the app finds the keys again from the Safe alone, and two Safes
  * share an account with probability about 1 in 2 billion.
  */

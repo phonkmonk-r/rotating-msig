@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 
 import { run, sampleIndexes, type Io } from "../src/cli.js";
 import { seedSource } from "@rotating-msig/keys";
-import { defaultBase, type TreeFile, safeAccount, SAFE_PATH_TEMPLATE, RANGE_PATH_TEMPLATE } from "@rotating-msig/core";
+import { defaultBase, type TreeFile, RANGE_PATH_TEMPLATE, safeKeyPath, BRANCH_PATH_TEMPLATE } from "@rotating-msig/core";
 
 const TEST_MNEMONIC = "test test test test test test test test test test test junk";
 const SAFE = "0x1234567890123456789012345678901234567890";
@@ -97,8 +97,8 @@ describe("default base", () => {
     const h = harness();
     assert.equal(await run(["generate", "--safe", SAFE, "--slot", "0", "--size", "3", "--mnemonic-file", ws.mnemonicFile, "--out", ws.tree], h.io), 0);
     const file = JSON.parse(readFileSync(ws.tree, "utf8")) as TreeFile;
-    assert.equal(file.base, safeAccount(1, SAFE), "one account per Safe");
-    assert.equal(file.pathTemplate, SAFE_PATH_TEMPLATE);
+    assert.deepEqual([file.base, file.branch], [safeKeyPath(1, SAFE).account, safeKeyPath(1, SAFE).branch], "account and branch per Safe");
+    assert.equal(file.pathTemplate, BRANCH_PATH_TEMPLATE);
 
     const ranged = harness();
     assert.equal(await run(["generate", "--safe", SAFE, "--slot", "0", "--size", "3", "--layout", "range", "--mnemonic-file", ws.mnemonicFile, "--out", ws.tree, "--force"], ranged.io), 0);

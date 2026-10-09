@@ -6,6 +6,7 @@ import { foundry } from "viem/chains";
 import { readSafeState, TxService } from "@rotating-msig/core";
 import { seedSource } from "@rotating-msig/keys";
 
+import { KeyChecker } from "../src/keycheck.js";
 import { SignerSession } from "../src/session.js";
 import { BASE, hasAnvil, hasArtifacts, SIGNER_SEEDS, startChain, startFakeTxService, type Chain, type FakeTxService } from "./fixture.js";
 
@@ -56,6 +57,20 @@ describe("never staging keys that were used elsewhere", { skip }, () => {
     assert.ok(status.findings.some((finding) => /Key 6 was already used/.test(finding.message)));
     await assert.rejects(sessions[0]!.refill(), /key 6 was already used/);
     assert.equal((await slot0()).staged.length, 4, "nothing was staged");
+  });
+
+  it("flags a key the guard already staged for another Safe, found from the chain alone", async () => {
+    // Slot 1's keys 1 to 5 were staged for this Safe at install: to any other Safe of the same seed, they are taken.
+    const staged = chain.trees[1]!.addresses[3]!;
+    const unseen = chain.trees[1]!.addresses[10]!;
+    const checker = new KeyChecker([chain.client], { client: chain.client, guards: [chain.guard], fromBlock: 0n });
+    const other = "0x00000000000000000000000000000000000000aA" as Address;
+
+    const [flagged] = await checker.used([staged, unseen], { ownSafe: other });
+    assert.equal(checker.historyError, undefined);
+    assert.equal(flagged?.address, staged);
+    assert.match(flagged!.networks.join(), new RegExp(`Safe ${chain.safe.slice(0, 6)}`));
+    assert.equal((await checker.used([staged], { ownSafe: chain.safe })).length, 0, "its own Safe's staging is not a collision");
   });
 
   it("skips past it and stages the next fresh keys in one transaction", async () => {

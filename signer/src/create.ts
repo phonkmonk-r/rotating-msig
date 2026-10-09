@@ -1,4 +1,4 @@
-import { TxService, type TreeFile } from "@rotating-msig/core";
+import { DEPLOYMENTS, TxService, type TreeFile } from "@rotating-msig/core";
 import type { AddressSource } from "@rotating-msig/keys";
 import { createPublicClient, fallback, http, type Chain, type PublicClient } from "viem";
 
@@ -19,6 +19,16 @@ export interface SessionConfig {
   safeApiKey?: string;
 }
 
+/** Nonces on this network and mainnet, and the guard's staging history on this network since its first deployment. */
+export function keyCheckerFor(chainId: number, client: PublicClient): KeyChecker {
+  const deployment = DEPLOYMENTS[chainId];
+  const history =
+    deployment?.rotationGuard && deployment.rotationGuardBlock !== undefined
+      ? { client, guards: [deployment.rotationGuard], fromBlock: BigInt(deployment.rotationGuardBlock) }
+      : undefined;
+  return new KeyChecker(chainId === 1 ? [client] : [client, readClient(1)], history);
+}
+
 /** Builds the session the CLI and the desktop app both run. */
 export function createSession(config: SessionConfig, source: AddressSource): { session: SignerSession; chain: Chain; executionRpc: string } {
   const chain = chainFor(config.tree.chainId);
@@ -28,7 +38,7 @@ export function createSession(config: SessionConfig, source: AddressSource): { s
   const publicClient = createPublicClient({ chain, transport: fallback(readUrls.map((url) => http(url))) }) as PublicClient;
   const session = new SignerSession({
     publicClient,
-    keyChecker: new KeyChecker(config.tree.chainId === 1 ? [publicClient] : [publicClient, readClient(1)]),
+    keyChecker: keyCheckerFor(config.tree.chainId, publicClient),
     chain,
     executionRpcUrl: executionRpc,
     txService: new TxService(config.tree.chainId, { baseUrl: config.txServiceUrl, apiKey: config.safeApiKey }),
