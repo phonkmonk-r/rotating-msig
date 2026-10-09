@@ -71,15 +71,15 @@ type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 
 const appRoot = () => app.getAppPath();
 
-export const APP_NAME = "Keyturn";
+export const APP_NAME = "Cicada";
 app.setName(APP_NAME);
 if (process.env.ROTATION_SIGNER_USER_DATA) {
   app.setPath("userData", process.env.ROTATION_SIGNER_USER_DATA);
 } else {
-  // Data from before the rename (the folder Electron derived from the package name) moves to the new folder once.
+  // Data from before a rename (the Keyturn folder, or the one Electron derived from the package name) moves to the new folder once.
   const current = join(app.getPath("appData"), APP_NAME);
-  const previous = join(app.getPath("appData"), "@rotating-msig", "signer");
-  if (!existsSync(current) && existsSync(previous)) renameSync(previous, current);
+  const previous = [join(app.getPath("appData"), "Keyturn"), join(app.getPath("appData"), "@rotating-msig", "signer")].find(existsSync);
+  if (!existsSync(current) && previous) renameSync(previous, current);
   app.setPath("userData", current);
 }
 /**

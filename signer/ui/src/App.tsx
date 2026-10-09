@@ -143,7 +143,7 @@ function AuthLayout({ children }: { children: ReactNode }) {
     <div className="auth">
       <div className="auth-brand">
         <Logo />
-        <span>Keyturn</span>
+        <span>Cicada</span>
       </div>
       {children}
     </div>
@@ -193,7 +193,7 @@ function Shell({
       <aside className="sidebar">
         <div className="brand">
           <Logo />
-          <span>Keyturn</span>
+          <span>Cicada</span>
         </div>
 
         {status && (

@@ -104,7 +104,10 @@ export function packageDigest(pkg: SlotPackage): Hex {
   return keccak256(stringToHex(JSON.stringify(canonical)));
 }
 
-/** The text the signer signs, readable on a hardware wallet's screen. */
+/**
+ * The text the signer signs, readable on a hardware wallet's screen. The first line keeps the app's former name so
+ * packages signed before the rename to Cicada still verify.
+ */
 export function packageMessage(pkg: SlotPackage): string {
   return [
     "Keyturn slot package",

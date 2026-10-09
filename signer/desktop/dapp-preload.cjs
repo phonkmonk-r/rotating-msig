@@ -54,8 +54,8 @@ contextBridge.executeInMainWorld({
 
     const info = Object.freeze({
       uuid: crypto.randomUUID(),
-      name: "Keyturn (Safe)",
-      rdns: "io.raac.keyturn",
+      name: "Cicada (Safe)",
+      rdns: "io.raac.cicada",
       icon:
         "data:image/svg+xml;base64," +
         btoa(

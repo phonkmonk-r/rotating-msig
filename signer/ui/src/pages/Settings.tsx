@@ -56,13 +56,13 @@ export function Settings({
             Add another Safe
           </button>
           <button type="button" onClick={() => setConfirmForget(!confirmForget)}>
-            Remove from Keyturn
+            Remove from Cicada
           </button>
         </div>
               {confirmForget && (
           <div className="note warning">
             <span>
-              Keyturn stops signing for this Safe on this device. Nothing changes on-chain and you stay a signer; add it again any time.{" "}
+              Cicada stops signing for this Safe on this device. Nothing changes on-chain and you stay a signer; add it again any time.{" "}
               <button
                 type="button"
                 className="link"

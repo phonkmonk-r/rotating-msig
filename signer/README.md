@@ -1,4 +1,4 @@
-# Keyturn (rotation-signer)
+# Cicada (rotation-signer)
 
 Confirms and executes Safe transactions with your **current** rotation key, so you never import or switch wallet accounts after a rotation. It reads which tree index currently owns your slot on-chain, derives exactly that key from your seed (or uses your Ledger), and refuses anything that would break the rotation rules.
 
@@ -6,7 +6,7 @@ It also proposes new transactions: **New transaction** on the Transactions page 
 
 ## Desktop app
 
-The desktop app is called Keyturn. The command-line version keeps the `rotation-signer` command.
+The desktop app is called Cicada. The command-line version keeps the `rotation-signer` command.
 
 ```sh
 # From the repository root

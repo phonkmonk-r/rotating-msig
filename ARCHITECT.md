@@ -17,13 +17,13 @@ Concretely:
 1. Each signer derives a long list of fresh addresses from their seed or Ledger (by default 10,000), one per future use. That list is their **tree**: a Merkle tree whose root is committed on-chain. Each signer owns one **slot** in the Safe.
 2. The next few addresses of each slot are **staged** in the guard (a ring buffer of 5), each proven against the slot's root.
 3. When a Safe transaction executes, the **RotationGuard** contract records who signed it, and after execution swaps every signer for the next staged address of their slot, in the same transaction.
-4. The signer's desktop app (**Keyturn**) always knows which key is current (it reads the chain), signs with it, refills the staged keys, and pays gas from a separate gas account.
+4. The signer's desktop app (**Cicada**) always knows which key is current (it reads the chain), signs with it, refills the staged keys, and pays gas from a separate gas account.
 
 ### Actors and pieces
 
 ```
                  ┌──────────────────────────── on-chain ─────────────────────────────┐
-  Keyturn app    │  Safe 1.5.0 proxy ──(guard hooks, module calls)──► RotationGuard  │
+  Cicada app    │  Safe 1.5.0 proxy ──(guard hooks, module calls)──► RotationGuard  │
   (per signer)   │   owners = current key of each slot             singleton, one per│
   seed or Ledger │                                                  network          │
        │         └───────────────────────────────────────────────────────────────────┘
@@ -38,16 +38,16 @@ Concretely:
 | core | `packages/core` | Pure TypeScript shared by everything: tree format, Safe and guard calldata, state reading, rules engine, Transaction Service client, proposals, Safe creation. |
 | keys | `packages/keys` | Key sources (seed, Ledger), derivation paths, finding the current owner key, finding a signer's slot. |
 | generator | `generator` | Command-line tool that derives a tree file and prints proofs (the original, manual flow). |
-| signer | `signer` | Keyturn: the signing session (`src`), the desktop app (`desktop`), and its UI (`ui`). Also the `rotation-signer` command-line server. |
-| app | `app` | The original Safe App (dashboard and install wizard inside Safe{Wallet}). Superseded by Keyturn for daily use, kept for installing through Safe{Wallet}. |
+| signer | `signer` | Cicada: the signing session (`src`), the desktop app (`desktop`), and its UI (`ui`). Also the `rotation-signer` command-line server. |
+| app | `app` | The original Safe App (dashboard and install wizard inside Safe{Wallet}). Superseded by Cicada for daily use, kept for installing through Safe{Wallet}. |
 | tests, scripts | `test`, `script`, `demo` | Solidity suites, deployment script, local demo. |
 
 ### The life of a Safe
 
-1. **Create or join.** Keyturn creates a Safe through Safe's factory and installs the guard (or joins an existing guarded Safe and rebuilds the signer's tree from the seed).
+1. **Create or join.** Cicada creates a Safe through Safe's factory and installs the guard (or joins an existing guarded Safe and rebuilds the signer's tree from the seed).
 2. **Install.** One Safe transaction: enable the guard as module, set it as transaction guard and module guard, call `initialize` (each slot's root and first owner), stage each slot's next 5 keys, set the threshold.
 3. **Use.** A signer proposes a transaction (signing it is their confirmation), other signers confirm, and the last signer executes. Every signer rotates.
-4. **Maintain.** Each Keyturn refills its own slot's staged keys from its gas account, skips keys found to be used elsewhere, and admin actions (add or remove signers, threshold) go through the same transaction flow.
+4. **Maintain.** Each Cicada refills its own slot's staged keys from its gas account, skips keys found to be used elsewhere, and admin actions (add or remove signers, threshold) go through the same transaction flow.
 
 ## 2. Repository map
 
@@ -215,7 +215,7 @@ The hooks cannot tell the Safe's genuine calls from calls the Safe makes from in
 
 ### 3.9 Views and events
 
-`getSlot` returns a slot's root, owner, size, current index (`nextIndex`), next stage index and staged addresses in order. `getConfig` and `leaf` expose the rest; a signer's slot is found off-chain by matching `getSlot(...).owner`, and the consumed marks are enforced on-chain only (`RootIndexConsumed`), both dropped as views to keep the guard under Sepolia's per-transaction deploy gas cap. Events (`Initialized`, `SlotConfigured`, `SlotRemoved`, `OwnerStaged`, `OwnerRotated`, `IndexSkipped`) are what off-chain tools index; Keyturn's collision alarm reads `OwnerStaged` and `OwnerRotated` (section 7.2).
+`getSlot` returns a slot's root, owner, size, current index (`nextIndex`), next stage index and staged addresses in order. `getConfig` and `leaf` expose the rest; a signer's slot is found off-chain by matching `getSlot(...).owner`, and the consumed marks are enforced on-chain only (`RootIndexConsumed`), both dropped as views to keep the guard under Sepolia's per-transaction deploy gas cap. Events (`Initialized`, `SlotConfigured`, `SlotRemoved`, `OwnerStaged`, `OwnerRotated`, `IndexSkipped`) are what off-chain tools index; Cicada's collision alarm reads `OwnerStaged` and `OwnerRotated` (section 7.2).
 
 ### 3.10 Contract tests
 
@@ -247,7 +247,7 @@ No keys and no Electron. Everything that both the UI, the session and the tools 
 | `safetx.ts` | Safe transaction hashing and signatures: `safeTxTypedData`, `safeTxHash`, `preValidatedSignature` (the executor's v = 1), `packSignatures` (sorted by owner, as Safe requires), `execTransactionData`, `plainSafeTx`. |
 | `state.ts` | `readSafeState`: owners, threshold, nonce, balance, guard, module guard, whether the guard is fully installed, and every slot (owner, current index, staged keys, unused keys). `assess` turns state into findings (out of staged keys, tree running low, owner needs gas). |
 | `decode.ts` | `decodeActions`: turns a Safe transaction into plain-language actions (transfers, token transfers and approvals, Safe and guard admin, escape), unpacking MultiSend batches; flags anything the guard would reject. `unpackMultiSend`. |
-| `rules.ts` | `evaluate`: the rules engine every Keyturn action passes through. Decides confirm, execute or nothing for this signer: transactions in nonce order; at most threshold − 1 off-chain confirmations; the last signer executes; every involved slot has a staged key; confirmations that no longer count (rotated owners) are ignored; no confirmation that would leave a threshold of exposed keys across the queue. |
+| `rules.ts` | `evaluate`: the rules engine every Cicada action passes through. Decides confirm, execute or nothing for this signer: transactions in nonce order; at most threshold − 1 off-chain confirmations; the last signer executes; every involved slot has a staged key; confirmations that no longer count (rotated owners) are ignored; no confirmation that would leave a threshold of exposed keys across the queue. |
 | `txservice.ts` | Minimal client for Safe's Transaction Service: `pending` (queue, every hash recomputed locally), `propose`, `confirm`. |
 | `proposals.ts` | What the app can propose (`ProposalInput`): ETH and ERC-20 transfers, force-rotate, dApp calls, threshold, add and remove signer, escape, skip used keys, and queued batches. `buildProposal` turns each into the Safe call; `dappCall` refuses dApp calls to the Safe or the guard; `batchCalls` flattens a queue into plain calls. |
 | `setup.ts` | Installing on an existing Safe: `readGuardInfo`, `validateInstall` (every reason not to install), `planInstall`. `INSTALL_STAGE_COUNT` (5). |
@@ -277,7 +277,7 @@ Keys never leave this package's sources: the seed stays in process memory, Ledge
 
 `scripts/vectors.ts` writes the cross-check vectors used by `test/GeneratorVector.t.sol`. Secrets are never accepted as arguments.
 
-## 7. signer: Keyturn
+## 7. signer: Cicada
 
 ### 7.1 signer/src: the signing session
 
@@ -304,7 +304,7 @@ Everything that signs, proposes, executes and maintains a slot. Runs inside the 
 - **Queue:** `draft`, `setQueueMode`, `addToDraft`, `removeFromDraft`, `moveInDraft`, `clearDraft`, `simulateDraft`, `readAfterDraft`, `proposeDraft` (the whole queue as one MultiSend transaction).
 - **Checks:** `check` validates every proposal kind against chain state before anything is signed.
 
-### 7.2 Keyturn desktop (signer/desktop)
+### 7.2 Cicada desktop (signer/desktop)
 
 Electron. The UI runs sandboxed with no Node access; it can only call the handlers the preload exposes, and every handler checks the call comes from the app's own window.
 
@@ -316,9 +316,9 @@ Electron. The UI runs sandboxed with no Node access; it can only call the handle
 | `browser.ts` | `DappBrowser`: a separate web view for dApps with its own storage partition and no permissions, laid over the UI's viewport; hidden whenever a request is under review so a page can never cover or imitate the review. |
 | `preload.cjs` | The bridge from the UI to the main process. |
 | `dapp-preload.cjs` | The bridge in dApp pages: injects an EIP-1193 wallet (`window.ethereum`, announced through EIP-6963) whose only capability is forwarding requests. |
-| `assets/` | The Keyturn icon (SVG source, PNG, macOS `.icns`). |
+| `assets/` | The Cicada icon (SVG source, PNG, macOS `.icns`). |
 
-### 7.3 Keyturn UI (signer/ui)
+### 7.3 Cicada UI (signer/ui)
 
 React, built with Vite; the same UI runs in the desktop app (through the preload bridge) and against the local web server (through HTTP).
 
@@ -337,7 +337,7 @@ React, built with Vite; the same UI runs in the desktop app (through the preload
 | `pages/QueueCard.tsx` | The local queue: reorder, simulate, review, propose all. |
 | `pages/Browse.tsx` | The dApp browser's address bar and request review. |
 | `pages/Signers.tsx`, `pages/Manage.tsx` | Every slot's state; add, remove, re-threshold, escape hatch. |
-| `pages/Settings.tsx` | Profile (rename, remove), Safe (add another, remove from Keyturn), connection. |
+| `pages/Settings.tsx` | Profile (rename, remove), Safe (add another, remove from Cicada), connection. |
 | `ui.tsx`, `icons.tsx`, `format.ts`, `styles.css` | Shared components, icons, formatting and the design tokens. |
 | `lib/` | The UI's logic as plain functions, unit tested in `ui/test`: contract-call parsing and encoding, profile form checks, slot package preview, execution state. Components keep only state and markup. |
 
@@ -345,12 +345,12 @@ Tests: `npm test -w @rotating-msig/signer` runs the session, desktop and UI unit
 
 ### 7.4 How the dApp browser works
 
-The dApp sees the **Safe** as its account. Reads (`eth_call`, balances, logs) go to the RPC. `eth_sendTransaction` and EIP-5792 `wallet_sendCalls` open a review in Keyturn; the user either proposes it (signed with the current key) or adds it to the local queue. Message signing is refused, since it would expose an owner key without rotating it, and dApps cannot call the Safe or the guard.
+The dApp sees the **Safe** as its account. Reads (`eth_call`, balances, logs) go to the RPC. `eth_sendTransaction` and EIP-5792 `wallet_sendCalls` open a review in Cicada; the user either proposes it (signed with the current key) or adds it to the local queue. Message signing is refused, since it would expose an owner key without rotating it, and dApps cannot call the Safe or the guard.
 
 What the dApp gets back depends on how it reads the chain:
 
 - `eth_sendTransaction` answers with the **real execution's transaction hash** once a signer executes the proposal, because many dApps (testnet.raac.io among them) look the hash up through their own RPC.
-- Queued requests get a placeholder hash whose receipt reports success at once, and while the queue is not empty the dApp's reads run on top of the queued calls (`readAfterDraft`), so approve then deposit works before anything is on-chain. This only helps dApps that read through the wallet; Keyturn detects dApps that read their own RPC (they set the nonce, or never read through the wallet) and recommends proposing instead.
+- Queued requests get a placeholder hash whose receipt reports success at once, and while the queue is not empty the dApp's reads run on top of the queued calls (`readAfterDraft`), so approve then deposit works before anything is on-chain. This only helps dApps that read through the wallet; Cicada detects dApps that read their own RPC (they set the nonce, or never read through the wallet) and recommends proposing instead.
 - `wallet_sendCalls` answers with an ID that `wallet_getCallsStatus` follows.
 
 ## 8. Keys: where each Safe's keys live

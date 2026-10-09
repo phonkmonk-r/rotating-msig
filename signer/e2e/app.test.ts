@@ -23,7 +23,7 @@ const TIMEOUT = 60_000;
 
 const skip = !hasAnvil ? "anvil not installed" : !hasArtifacts ? "run `forge build` first" : false;
 
-describe("Keyturn desktop app", { skip, timeout: 5 * TIMEOUT }, () => {
+describe("Cicada desktop app", { skip, timeout: 5 * TIMEOUT }, () => {
   let chain: Chain;
   let service: FakeTxService;
   let userData: string;
@@ -48,7 +48,7 @@ describe("Keyturn desktop app", { skip, timeout: 5 * TIMEOUT }, () => {
     service = await startFakeTxService(chain.safe, foundry.id);
     // The app's keys start empty, so executing has to fund them from the gas account first.
     for (const address of chain.trees[0]!.addresses) await chain.client.request({ method: "anvil_setBalance" as never, params: [address, "0x0"] as never });
-    userData = mkdtempSync(join(tmpdir(), "keyturn-e2e-"));
+    userData = mkdtempSync(join(tmpdir(), "cicada-e2e-"));
     app = await electron.launch({
       executablePath: ELECTRON,
       args: [APP_DIR],

@@ -118,14 +118,20 @@ export const IconInbox = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 );
 
-/** The app mark: a shield with a rotation arrow. */
-/** The Keyturn mark: a keyhole inside a turning arrow, as in the app icon. */
+/** The Cicada mark: the cicada from the app icon, with its wings folded over the body. */
 export const Logo = () => (
   <svg width="26" height="26" viewBox="64 64 896 896" aria-hidden="true">
-    <rect x="64" y="64" width="896" height="896" rx="200" fill="var(--accent)" />
-    <path d="M611.2 239.5 A290 290 0 1 1 412.8 239.5" fill="none" stroke="#fff" strokeWidth="64" strokeLinecap="round" />
-    <path d="M478.6 215.6 L388.9 173.7 L436.7 305.3 Z" fill="#fff" stroke="#fff" strokeWidth="18" strokeLinejoin="round" />
-    <circle cx="512" cy="475" r="82" fill="#fff" />
-    <path d="M468 520 L556 520 L540 660 Q538 676 522 676 L502 676 Q486 676 484 660 Z" fill="#fff" />
+    <rect x="64" y="64" width="896" height="896" rx="200" fill="#0f403a" />
+    <g transform="translate(512 528) scale(1.04) translate(-512 -585)">
+      <path d="M422 416 C408 560 450 720 512 812 C574 720 616 560 602 416 Z" fill="#e8b445" />
+      <path d="M438 512 Q512 540 586 512 M450 592 Q512 616 574 592 M466 668 Q512 688 558 668" fill="none" stroke="#06201e" strokeOpacity="0.45" strokeWidth="16" strokeLinecap="round" />
+      <path d="M494 430 C372 462 318 640 356 822 C370 886 414 912 446 898 C484 806 506 640 516 472 Z" fill="#f2faf6" fillOpacity="0.82" />
+      <path d="M530 430 C652 462 706 640 668 822 C654 886 610 912 578 898 C540 806 518 640 508 472 Z" fill="#f2faf6" fillOpacity="0.82" />
+      <path d="M470 466 C392 560 362 700 378 850 M554 466 C632 560 662 700 646 850" fill="none" stroke="#0b3b36" strokeOpacity="0.26" strokeWidth="12" strokeLinecap="round" />
+      <ellipse cx="512" cy="406" rx="108" ry="78" fill="#efc25a" />
+      <ellipse cx="512" cy="314" rx="86" ry="62" fill="#f4cd68" />
+      <circle cx="440" cy="310" r="27" fill="#06201e" />
+      <circle cx="584" cy="310" r="27" fill="#06201e" />
+    </g>
   </svg>
 );

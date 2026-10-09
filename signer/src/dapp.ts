@@ -114,7 +114,7 @@ export class DappProvider {
 
   async request(origin: string, method: string, params: unknown = []): Promise<unknown> {
     const session = this.host.session();
-    if (!session) throw new ProviderError(DISCONNECTED, "Keyturn is locked");
+    if (!session) throw new ProviderError(DISCONNECTED, "Cicada is locked");
     const args = Array.isArray(params) ? params : [];
     const chainHex = numberToHex(session.chainId);
     if (WALLET_READS.has(method)) this.readingOrigins.add(origin);
@@ -195,7 +195,7 @@ export class DappProvider {
     }
 
     if (SIGNING_METHODS.has(method)) {
-      throw new ProviderError(UNSUPPORTED_METHOD, "Keyturn does not sign messages: it would expose a Safe owner key without rotating it");
+      throw new ProviderError(UNSUPPORTED_METHOD, "Cicada does not sign messages: it would expose a Safe owner key without rotating it");
     }
     if (READ_METHODS.has(method)) return session.rpc(method, args);
     throw new ProviderError(UNSUPPORTED_METHOD, `${method} is not supported`);
@@ -214,7 +214,7 @@ export class DappProvider {
       const fromBlock = await session.blockNumber();
       const result = await this.host.review({ id: String(++this.nextId), ...request });
       if ("queued" in result) {
-        const hash = keccak256(stringToHex(`keyturn-queued:${result.queued.id}:${result.queued.addedAt}`));
+        const hash = keccak256(stringToHex(`cicada-queued:${result.queued.id}:${result.queued.addedAt}`));
         this.queued.set(hash.toLowerCase(), result.queued.id);
         if (request.calls[0]) this.queuedCalls.set(hash.toLowerCase(), request.calls[0]);
         return { hash, queued: true };
@@ -230,7 +230,7 @@ export class DappProvider {
   private async executionOf(session: SignerSession, safeTxHash: Hex): Promise<Hex> {
     const tracked = this.proposals.get(safeTxHash.toLowerCase())!;
     for (;;) {
-      if (this.host.session() !== session) throw new ProviderError(DISCONNECTED, "Keyturn was locked before the transaction executed");
+      if (this.host.session() !== session) throw new ProviderError(DISCONNECTED, "Cicada was locked before the transaction executed");
       const status = await session.proposalStatus(safeTxHash, tracked.nonce, tracked.fromBlock).catch(() => undefined);
       if (status?.status === "executed") return status.transactionHash!;
       if (status?.status === "failed") throw new ProviderError(-32603, `the Safe executed the transaction but its call reverted (${status.transactionHash})`);

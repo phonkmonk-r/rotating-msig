@@ -1,6 +1,6 @@
 {
   "name": "@rotating-msig/signer",
-  "productName": "Keyturn",
+  "productName": "Cicada",
   "version": "0.1.0",
   "private": true,
   "description": "rotation-signer: local web UI that confirms and executes Safe transactions with each signer's current rotation key.",

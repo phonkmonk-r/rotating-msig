@@ -20,6 +20,7 @@ const SAFE_ACCOUNT_SPAN = BigInt(2 ** 31 - 2 ** 20 - MIN_TREE_BASE);
  */
 export function safeKeyPath(chainId: number, safe: Address, generation = 0): { account: number; branch: number } {
   // Generation 0 keeps the original hash input; each renewal of a slot's key list moves to the next generation.
+  // The "keyturn" domain strings predate the Cicada name and stay as they are: changing them would move every Safe's keys.
   const hash = BigInt(
     keccak256(
       generation === 0

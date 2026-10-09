@@ -80,7 +80,7 @@ export function RenewKeys({ compact = false }: { compact?: boolean }) {
       {stage === "done" && review && (
         <div className="note ok">
           <IconCheck width="15" height="15" />
-          <span>Proposed #{review.nonce}. Once another signer executes it, Keyturn switches to your new key list by itself.</span>
+          <span>Proposed #{review.nonce}. Once another signer executes it, Cicada switches to your new key list by itself.</span>
         </div>
       )}
       {error && <div className="note critical">{error.charAt(0).toUpperCase() + error.slice(1)}</div>}
