@@ -543,6 +543,37 @@ contract RotationGuardTest is RotationFixture {
     function test_removeSlot_recordsConsumed() public {
         assertTrue(execBySlots(call(recipient, 1, ""), 2, 1));
         assertTrue(execBySlots(call(address(guard), 0, abi.encodeCall(guard.removeSlot, (2, 2))), 0, 1));
+
+        // Leaves bind the slot ID, so slot 2's root can only come back in a later configuration, where IDs restart.
+        // Back to three owners first: re-initializing swaps one old owner per configured slot.
+        address newOwner = makeAddr("re-added signer");
+        bytes32[] memory leaves = new bytes32[](2);
+        leaves[0] = guard.leaf(address(safe), SLOTS, 0, newOwner);
+        leaves[1] = guard.leaf(address(safe), SLOTS, 1, makeAddr("re-added signer, next key"));
+        IRotationGuard.SlotConfig memory added = IRotationGuard.SlotConfig(_root(leaves), 2, 0, newOwner, _proof(leaves, 0), "cid3");
+        assertTrue(execBySlots(call(address(guard), 0, abi.encodeCall(guard.addSlot, (added, 2))), 0, 1));
+
+        IRotationGuard.SlotConfig[] memory configs = new IRotationGuard.SlotConfig[](SLOTS);
+        address[] memory oldOwners = new address[](SLOTS);
+        configs[0] = slotConfig(0, 10);
+        configs[1] = slotConfig(1, 10);
+        oldOwners[0] = currentOwner(0);
+        oldOwners[1] = currentOwner(1);
+        oldOwners[2] = newOwner;
+
+        // Slot 2 left at index 1, its owner then: the root may not come back starting at or below it.
+        configs[2] = slotConfig(2, 1);
+        bytes memory data = abi.encodeCall(guard.initialize, (oldOwners, configs));
+        execExpectInnerRevert(call(address(guard), 0, data), abi.encodeWithSelector(IRotationGuard.RootIndexConsumed.selector, rootOf[2], 1, 2), 0, 1);
+
+        oldOwners[0] = currentOwner(0);
+        oldOwners[1] = currentOwner(1);
+        configs[2] = slotConfig(2, 2);
+        bytes memory batch = packCall(address(guard), 0, abi.encodeCall(guard.initialize, (oldOwners, configs)));
+        batch = bytes.concat(batch, packCall(address(guard), 0, abi.encodeCall(guard.stage, (address(safe), 0, entries(0, 11, 2)))));
+        batch = bytes.concat(batch, packCall(address(guard), 0, abi.encodeCall(guard.stage, (address(safe), 1, entries(1, 11, 2)))));
+        assertTrue(execBySlots(multiSendTx(batch), 0, 1));
+        assertEq(currentOwner(2), treeAddress(2, 2));
     }
 
     function test_setGuardCalldataToOtherTargetIsGuarded() public {
