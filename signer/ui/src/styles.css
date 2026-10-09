@@ -1894,3 +1894,46 @@ button.safe-chip.open {
   justify-content: flex-end;
   gap: 6px;
 }
+
+/* ---------- macOS window without a title bar ---------- */
+
+.desktop-mac .titlebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  z-index: 100;
+  pointer-events: none;
+  -webkit-app-region: drag;
+}
+
+/* Empty space in the sidebar, page headers and setup screens moves the window, as a title bar would. */
+.desktop-mac .sidebar,
+.desktop-mac .page-header,
+.desktop-mac .auth,
+.desktop-mac .browser-bar {
+  -webkit-app-region: drag;
+}
+
+.desktop-mac button,
+.desktop-mac input,
+.desktop-mac select,
+.desktop-mac textarea,
+.desktop-mac a,
+.desktop-mac summary,
+.desktop-mac label,
+.desktop-mac .auth-card,
+.desktop-mac .safe-menu,
+.desktop-mac [role="menu"] {
+  -webkit-app-region: no-drag;
+}
+
+/* Room for the window controls above the brand. */
+.desktop-mac .sidebar {
+  padding-top: 50px;
+}
+
+.desktop-mac .auth {
+  padding-top: 56px;
+}

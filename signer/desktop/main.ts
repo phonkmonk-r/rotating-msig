@@ -695,6 +695,8 @@ function createWindow() {
     title: APP_NAME,
     icon: iconPath(),
     backgroundColor: "#f6f7f8",
+    // macOS: no title bar; the window controls float over the app, which provides its own drag areas.
+    ...(process.platform === "darwin" ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 18, y: 18 } } : {}),
     webPreferences: { preload: join(appRoot(), "desktop/preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false },
   }));
   // The UI never navigates; links (block explorers) open in the user's browser.
