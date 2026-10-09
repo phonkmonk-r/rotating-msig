@@ -2,7 +2,9 @@
  * Captures the screenshots used in the README from the real desktop app against a local chain:
  * `npm run screenshots -w @rotating-msig/signer [-- outDir]` (defaults to `../screenshots`). Needs anvil and `forge build`.
  * With `SCREENSHOT_PAUSE=<dir>` it stops at each state until `<dir>/next` exists, for screenshots taken by hand.
+ * The captures are then framed as macOS windows by `frame.py` (python3 with Pillow).
  */
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -143,4 +145,10 @@ await app.close();
 await service.stop();
 chain.stop();
 rmSync(userData, { recursive: true, force: true });
+if (!pauseDir) {
+  // Framed as macOS windows (rounded corners, window buttons, shadow): page captures leave out the window itself.
+  const shots = ["welcome", "overview", "transactions", "executed", "signers", "browser"].map((name) => join(out, `${name}.png`));
+  const framed = spawnSync("python3", [fileURLToPath(new URL("frame.py", import.meta.url)), ...shots], { stdio: "inherit" });
+  if (framed.status !== 0) console.warn("Could not frame the screenshots (needs python3 with Pillow); they are left unframed.");
+}
 console.log(`Screenshots written to ${out}`);
