@@ -25,6 +25,9 @@ import {
 import { generateTree, OPERATOR_ACCOUNT, type AddressSource } from "@rotating-msig/keys";
 import { createWalletClient, custom, isAddressEqual, type Address, type Chain, type Hex, type PublicClient } from "viem";
 
+import { readClient } from "./join.js";
+import { KeyChecker } from "./keycheck.js";
+
 export { OPERATOR_ACCOUNT };
 
 export interface NewSafeContext {
@@ -32,6 +35,19 @@ export interface NewSafeContext {
   chain: Chain;
   /** Defaults to the canonical deployments for the chain; tests pass their own. */
   deployments?: SafeDeployments;
+  /** Checks keys for earlier use; defaults to this network plus Ethereum mainnet. */
+  keyChecker?: KeyChecker;
+}
+
+function checkerOf(context: NewSafeContext): KeyChecker {
+  return context.keyChecker ?? new KeyChecker(context.chain.id === 1 ? [context.client] : [context.client, readClient(1)]);
+}
+
+/** The first of six consecutive never-used keys in the tree: the slot's first owner and its five staged keys. */
+async function freshStart(context: NewSafeContext, tree: TreeFile): Promise<number> {
+  const start = await checkerOf(context).firstUnusedRun((index) => tree.addresses[index], 0, INSTALL_STAGE_COUNT + 1);
+  if (start === undefined) throw new Error("could not find six unused keys in a row at the start of your key list; this seed's keys look used elsewhere");
+  return start;
 }
 
 function deploymentsOf(context: NewSafeContext): SafeDeployments {
@@ -72,7 +88,7 @@ export async function prepareSlot(
   const { slotId } = await readInvite(context, source, invite);
   const meta = { chainId: invite.chainId, safe: invite.safe, slotId, base: defaultBase(invite.chainId, invite.safe) };
   const tree = await generateTree(source, meta, size, onProgress);
-  return { tree, package: createSlotPackage(invite, loadTreeFile(JSON.stringify(tree))) };
+  return { tree, package: createSlotPackage(invite, loadTreeFile(JSON.stringify(tree)), await freshStart(context, tree)) };
 }
 
 export type CreationStage = "deploying" | "installing" | "done";
@@ -160,6 +176,7 @@ export async function prepareNewSlot(
   if (state.owners.some((owner) => isAddressEqual(owner, first))) throw new Error("this seed is already a signer of this Safe");
   const tree = await generateTree(source, meta, size, onProgress);
   const loaded = loadTreeFile(JSON.stringify(tree));
+  const start = await freshStart(context, tree);
   return {
     tree,
     package: {
@@ -169,8 +186,8 @@ export async function prepareNewSlot(
       slotId: tree.slotId,
       operator: await source.address(OPERATOR_ACCOUNT),
       base: tree.base,
-      config: slotConfig(loaded.tree, tree, 0, ""),
-      stage: stageEntries(loaded.tree, tree, 1, INSTALL_STAGE_COUNT),
+      config: slotConfig(loaded.tree, tree, start, ""),
+      stage: stageEntries(loaded.tree, tree, start + 1, INSTALL_STAGE_COUNT),
     },
   };
 }

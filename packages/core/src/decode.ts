@@ -72,6 +72,10 @@ function describeGuardCall(name: string, args: readonly unknown[]): string | und
       const [, slotId, entries] = args as [Address, bigint, readonly unknown[]];
       return `Stage ${entries.length} next key(s) for slot ${slotId}`;
     }
+    case "skipTo": {
+      const [slotId, index] = args as [bigint, number];
+      return `Skip slot ${slotId} ahead to key ${index}, past keys used elsewhere`;
+    }
     case "forceRotate": {
       const [slotIds] = args as [readonly bigint[]];
       return `Rotate slot(s) ${slotIds.join(", ")} to their next keys`;

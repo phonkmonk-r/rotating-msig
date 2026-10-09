@@ -132,6 +132,7 @@ interface DesktopBridge {
   propose(input: ProposalInput, preview: boolean): Promise<Result<ProposalResult>>;
   token(address: string): Promise<Result<TokenInfo>>;
   refill(): Promise<Result<Refill | null>>;
+  skipUsedKeys(): Promise<Result<ProposalInput>>;
   browserQueue(id: string): Promise<Result<DraftItem>>;
   draft(): Promise<Result<DraftView>>;
   draftMode(enabled: boolean): Promise<Result<DraftView>>;
@@ -230,6 +231,7 @@ export const api = {
   draftClear: () => (bridge ? unwrap(bridge.draftClear()) : draftHttp<DraftView>({ action: "clear" })),
   draftSimulate: () => (bridge ? unwrap(bridge.draftSimulate()) : draftHttp<Simulation>({ action: "simulate" })),
   draftPropose: (preview: boolean) => (bridge ? unwrap(bridge.draftPropose(preview)) : draftHttp<ProposalResult>({ action: "propose", preview })),
+  skipUsedKeys: () => (bridge ? unwrap(bridge.skipUsedKeys()) : http<ProposalInput>("/api/skip-used-keys", { method: "POST", body: "{}" })),
   refill: () => (bridge ? unwrap(bridge.refill()) : http<Refill | null>("/api/refill", { method: "POST", body: "{}" })),
   token: (address: string) => (bridge ? unwrap(bridge.token(address)) : http<TokenInfo>(`/api/token?address=${encodeURIComponent(address)}`)),
 };

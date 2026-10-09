@@ -1750,3 +1750,7 @@ dd.positive {
 .queue-toggle-text {
   white-space: nowrap;
 }
+
+.skip-keys {
+  margin-top: 12px;
+}

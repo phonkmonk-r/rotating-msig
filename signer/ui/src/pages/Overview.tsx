@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { api, type QueueItem, type StatusView } from "../api";
+import { api, type ProposalInput, type ProposalResult, type QueueItem, type StatusView } from "../api";
 import { LOW_GAS_WEI } from "../data";
 import { eth } from "../format";
 import { IconAlert, IconTransactions } from "../icons";
@@ -93,9 +93,77 @@ export function Overview({ status, queue, onOpenTransactions }: { status: Status
               </li>
             ))}
           </ul>
+          {me?.usedKeys && me.usedKeys.length > 0 && <SkipUsedKeys />}
         </section>
       )}
     </>
+  );
+}
+
+/** Proposes moving this signer's slot past keys that were used elsewhere, staging fresh ones in the same transaction. */
+function SkipUsedKeys() {
+  const [review, setReview] = useState<ProposalResult & { input: ProposalInput }>();
+  const [done, setDone] = useState<string>();
+  const [error, setError] = useState<string>();
+  const [working, setWorking] = useState(false);
+
+  async function run(step: () => Promise<void>) {
+    setWorking(true);
+    setError(undefined);
+    try {
+      await step();
+    } catch (caught) {
+      const message = (caught as Error).message;
+      setError(message.charAt(0).toUpperCase() + message.slice(1));
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  if (done) return <p className="muted small">Proposed #{done}. Another signer executes it from Transactions.</p>;
+  return (
+    <div className="skip-keys">
+      {review && (
+        <div className="review-panel">
+          {review.actions.map((action, i) => (
+            <div key={i} className={`tx-action ${action.kind}`}>
+              {action.summary}
+            </div>
+          ))}
+        </div>
+      )}
+      {error && <div className="note critical">{error}</div>}
+      <div className="tx-footer">
+        {review ? (
+          <button
+            type="button"
+            className="primary"
+            disabled={working}
+            onClick={() =>
+              void run(async () => {
+                setDone((await api.propose(review.input, false)).nonce);
+              })
+            }
+          >
+            {working ? "Signing…" : "Sign & propose"}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="primary"
+            disabled={working}
+            onClick={() =>
+              void run(async () => {
+                const input = await api.skipUsedKeys();
+                setReview({ ...(await api.propose(input, true)), input });
+              })
+            }
+          >
+            {working ? "Checking…" : "Skip used keys"}
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 

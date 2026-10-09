@@ -2,6 +2,8 @@ import { TxService, type TreeFile } from "@rotating-msig/core";
 import type { AddressSource } from "@rotating-msig/keys";
 import { createPublicClient, fallback, http, type Chain, type PublicClient } from "viem";
 
+import { readClient } from "./join.js";
+import { KeyChecker } from "./keycheck.js";
 import { chainFor, DEFAULT_EXECUTION_RPC, DEFAULT_RPCS } from "./networks.js";
 import { SignerSession } from "./session.js";
 
@@ -23,8 +25,10 @@ export function createSession(config: SessionConfig, source: AddressSource): { s
   const readUrls = config.rpc ? [config.rpc] : (DEFAULT_RPCS[config.tree.chainId] ?? []);
   if (readUrls.length === 0) throw new Error(`no RPC known for chain ${config.tree.chainId}; set one`);
   const executionRpc = config.executionRpc ?? DEFAULT_EXECUTION_RPC[config.tree.chainId] ?? readUrls[0]!;
+  const publicClient = createPublicClient({ chain, transport: fallback(readUrls.map((url) => http(url))) }) as PublicClient;
   const session = new SignerSession({
-    publicClient: createPublicClient({ chain, transport: fallback(readUrls.map((url) => http(url))) }) as PublicClient,
+    publicClient,
+    keyChecker: new KeyChecker(config.tree.chainId === 1 ? [publicClient] : [publicClient, readClient(1)]),
     chain,
     executionRpcUrl: executionRpc,
     txService: new TxService(config.tree.chainId, { baseUrl: config.txServiceUrl, apiKey: config.safeApiKey }),

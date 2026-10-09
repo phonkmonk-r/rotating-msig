@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
-import { numberToHex, parseEther, type Address } from "viem";
+import { createWalletClient, http, numberToHex, parseEther, type Address } from "viem";
 import { foundry } from "viem/chains";
 
-import { decodeInvite, decodePackage, encodeInvite, encodePackage, readSafeState, verifyPackages, type SafeDeployments, type SlotPackage } from "@rotating-msig/core";
+import { defaultBase, decodeInvite, decodePackage, encodeInvite, encodePackage, readSafeState, verifyPackages, type SafeDeployments, type SlotPackage } from "@rotating-msig/core";
 import { seedSource } from "@rotating-msig/keys";
 
 import { joinSafe } from "../src/join.js";
+import { KeyChecker } from "../src/keycheck.js";
 import { createSafe, planSafe, prepareSlot, readInvite, type NewSafeContext } from "../src/newsafe.js";
 import { hasAnvil, hasArtifacts, SIGNER_SEEDS, startChain, type Chain } from "./fixture.js";
 
@@ -30,7 +31,7 @@ describe("creating a new Safe from the app", { skip }, () => {
       fallbackHandler: ZERO,
       rotationGuard: chain.guard,
     };
-    context = { client: chain.client, chain: foundry, deployments };
+    context = { client: chain.client, chain: foundry, deployments, keyChecker: new KeyChecker([chain.client]) };
     operators = await Promise.all(sources.map((source) => source.address(0)));
   });
   after(() => chain?.stop());
@@ -62,6 +63,21 @@ describe("creating a new Safe from the app", { skip }, () => {
     const joined = await joinSafe({ source: sources[1]!, safe: invite.safe, chainId: foundry.id, client: chain.client });
     assert.equal(joined.slotId, 1);
     assert.equal(joined.tree.root, packages[1]!.config.root);
+  });
+
+  it("starts a slot past keys that were already used elsewhere", async () => {
+    const invite = await planSafe(context, operators, 2);
+    const base = defaultBase(foundry.id, invite.safe);
+    const usedKey = await sources[2]!.signer(base + 1);
+    await chain.client.request({ method: "anvil_setBalance" as never, params: [usedKey.address, numberToHex(parseEther("1"))] as never });
+    const wallet = createWalletClient({ account: usedKey, chain: foundry, transport: http(chain.rpc) });
+    await chain.client.waitForTransactionReceipt({ hash: await wallet.sendTransaction({ to: usedKey.address, value: 0n }) });
+
+    const prepared = await prepareSlot(context, sources[2]!, invite, undefined, 12);
+    assert.equal(prepared.package.config.startIndex, 2, "keys 0 and 1 are skipped: 1 sent a transaction");
+    assert.deepEqual(prepared.package.stage.map((entry) => entry.index), [3, 4, 5, 6, 7]);
+    const others = await Promise.all(sources.slice(0, 2).map(async (source) => (await prepareSlot(context, source, invite, undefined, 12)).package));
+    assert.deepEqual(verifyPackages(invite, [...others, prepared.package]), []);
   });
 
   it("rejects an invite whose signers were changed, and outsiders", async () => {

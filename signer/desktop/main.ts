@@ -543,6 +543,7 @@ handle("signer:execute", (hash: unknown) => requireSession().execute(requireHash
 handle("signer:execution", (hash: unknown) => requireSession().execution(requireHash(hash)));
 handle("signer:propose", (input: unknown, preview: unknown) => requireSession().propose(input as never, preview === true));
 handle("signer:refill", () => requireSession().refill());
+handle("signer:skipUsedKeys", () => requireSession().skipUsedKeysInput());
 handle("signer:token", (address: unknown) => requireSession().tokenInfo(String(address)));
 
 let browser: DappBrowser | undefined;

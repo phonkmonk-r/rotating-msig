@@ -171,8 +171,11 @@ export function verifyInvite(invite: SafeInvite, deployments: SafeDeployments, p
   return errors;
 }
 
-/** Builds this signer's package from their full tree for the invite's Safe. */
-export function createSlotPackage(invite: SafeInvite, { file, tree }: LoadedTree): SlotPackage {
+/**
+ * Builds this signer's package from their full tree for the invite's Safe. `startIndex` is the first of six
+ * consecutive keys that have never been used (normally 0).
+ */
+export function createSlotPackage(invite: SafeInvite, { file, tree }: LoadedTree, startIndex = 0): SlotPackage {
   return {
     v: 1,
     chainId: file.chainId,
@@ -180,23 +183,26 @@ export function createSlotPackage(invite: SafeInvite, { file, tree }: LoadedTree
     slotId: file.slotId,
     operator: invite.owners[file.slotId]!,
     base: file.base,
-    config: slotConfig(tree, file, 0, ""),
-    stage: stageEntries(tree, file, 1, INSTALL_STAGE_COUNT),
+    config: slotConfig(tree, file, startIndex, ""),
+    stage: stageEntries(tree, file, startIndex + 1, INSTALL_STAGE_COUNT),
   };
 }
 
 /**
- * Every reason a single package does not fit `expected`: wrong Safe or slot, a first key that is not index 0, staged
- * keys that are not indexes 1 to 5, or any key not proven against the package's root.
+ * Every reason a single package does not fit `expected`: wrong Safe or slot, staged keys that do not directly follow
+ * the first key, or any key not proven against the package's root. The first key need not be index 0: keys that were
+ * already used elsewhere are skipped when the package is made.
  */
 export function checkPackage(pkg: SlotPackage, expected: { chainId: number; safe: Address; slotId: number }): string[] {
   const errors: string[] = [];
   if (pkg.slotId !== expected.slotId) errors.push(`the package is for slot ${pkg.slotId}`);
   if (pkg.chainId !== expected.chainId || !isAddressEqual(pkg.safe, expected.safe)) errors.push("the package is for another Safe");
   const { config } = pkg;
-  if (config.startIndex !== 0) errors.push("the slot must start at index 0");
-  if (config.size < INSTALL_STAGE_COUNT + 1) errors.push("the tree is too small");
-  if (pkg.stage.length !== INSTALL_STAGE_COUNT || pkg.stage.some((entry, i) => entry.index !== i + 1)) errors.push(`staged keys must be indexes 1 to ${INSTALL_STAGE_COUNT}`);
+  if (!Number.isInteger(config.startIndex) || config.startIndex < 0) errors.push("the first key's index is invalid");
+  if (config.size < config.startIndex + INSTALL_STAGE_COUNT + 1) errors.push("the tree is too small");
+  if (pkg.stage.length !== INSTALL_STAGE_COUNT || pkg.stage.some((entry, i) => entry.index !== config.startIndex + i + 1)) {
+    errors.push(`the ${INSTALL_STAGE_COUNT} staged keys must directly follow the first key`);
+  }
   const meta = { chainId: expected.chainId, safe: expected.safe, slotId: expected.slotId, base: pkg.base };
   for (const entry of packageKeys(pkg)) {
     let valid = false;

@@ -29,6 +29,7 @@ import {
   type TxService,
   type Verdict,
 } from "@rotating-msig/core";
+import { KeyChecker, type UsedKey } from "./keycheck.js";
 import { readAfter, simulateCalls, type ReadCall, type Simulation } from "./simulate.js";
 import { OPERATOR_ACCOUNT, resolveCurrentOwner, type AddressSource, type CurrentOwner } from "@rotating-msig/keys";
 import {
@@ -69,6 +70,8 @@ export interface SessionOptions {
    * keys then hold no ETH between uses, so nothing is stranded when they rotate out.
    */
   gasFunding?: boolean;
+  /** Checks this signer's upcoming keys for earlier use; defaults to the Safe's network only. */
+  keyChecker?: KeyChecker;
 }
 
 export const DEFAULT_EXECUTION_TIMEOUT_MS = 180_000;
@@ -99,6 +102,10 @@ export interface Me {
   operator?: { address: Address; balance: string };
   /** The latest refill of this signer's staged keys. */
   lastRefill?: RefillStatus;
+  /** Staged or upcoming keys of this slot that already sent a transaction somewhere; skip past them. */
+  usedKeys?: (UsedKey & { index: number })[];
+  /** Networks where the current owner key itself has sent a transaction outside rotation. */
+  currentKeyUsed?: string[];
 }
 
 /** One slot as every signer sees it. */
@@ -245,6 +252,7 @@ export class SignerSession {
   private nextDraftId = 0;
   private readonly proposedDrafts = new Map<string, DraftProposal>();
   private lastRefill?: RefillStatus;
+  private keyAlert?: { usedKeys: (UsedKey & { index: number })[]; currentKeyUsed?: string[] };
   private readonly executions = new Map<string, { record: Execution; before: SafeState; sentAtMs: number; account: LocalAccount }>();
 
   constructor(private readonly options: SessionOptions) {}
@@ -314,10 +322,18 @@ export class SignerSession {
           findings.push({ severity: "warning", slotId: owner.slot.slotId, message: "Your gas account is low: executions are paid from it" });
         }
       }
+      for (const key of this.keyAlert?.usedKeys ?? []) {
+        findings.push({ severity: "critical", slotId: owner.slot.slotId, message: `Key ${key.index} was already used on ${key.networks.join(", ")}: skip past it before it becomes an owner` });
+      }
+      if (this.keyAlert?.currentKeyUsed?.length) {
+        findings.push({ severity: "critical", slotId: owner.slot.slotId, message: `Your current key has sent a transaction on ${this.keyAlert.currentKeyUsed.join(", ")}: force-rotate your slot` });
+      }
       if (this.lastRefill?.error) findings.push({ severity: "warning", slotId: owner.slot.slotId, message: `Refilling your next keys failed: ${this.lastRefill.error}` });
       me = {
         operator,
         lastRefill: this.lastRefill,
+        usedKeys: this.keyAlert?.usedKeys,
+        currentKeyUsed: this.keyAlert?.currentKeyUsed,
         slotId: owner.slot.slotId,
         index: owner.index,
         address: owner.account.address,
@@ -447,6 +463,13 @@ export class SignerSession {
       if (packageKeys(pkg).some((entry) => known.has(entry.owner.toLowerCase()))) errors.push("the package reuses an address of a current signer");
       if (errors.length > 0) throw new Error(`the new signer's package does not fit: ${errors.join("; ")}`);
       checkThreshold(input.threshold, owners + 1);
+    }
+    if (input.kind === "skip-keys") {
+      const slot = state.slots.find((candidate) => candidate.slotId === input.slotId);
+      if (!slot) throw new Error(`slot ${input.slotId} has no owner`);
+      if (input.index < slot.nextStageIndex - slot.staged.length) throw new Error("cannot skip back to keys already used");
+      const used = await this.checker().used(input.stage.map((entry) => entry.owner));
+      if (used.length > 0) throw new Error(`key ${used[0]!.address} was already used on ${used[0]!.networks.join(", ")}`);
     }
     if (input.kind === "force-rotate") {
       for (const slotId of input.slotIds) {
@@ -643,7 +666,14 @@ export class SignerSession {
       const { file, tree } = this.loadedTree;
       if (file.root !== slot.root) throw new Error("the slot's root on-chain is not your tree's; join the Safe again");
 
-      const call = guardCalls.stage(state.guard, state.safe, slot.slotId, stageEntries(tree, file, slot.nextStageIndex, count));
+      const candidates = stageEntries(tree, file, slot.nextStageIndex, count);
+      const used = await this.checker().used(candidates.map((entry) => entry.owner));
+      const firstUsed = candidates.findIndex((entry) => used.some((key) => key.address === entry.owner));
+      const entries = firstUsed < 0 ? candidates : candidates.slice(0, firstUsed);
+      if (entries.length === 0) {
+        throw new Error(`key ${candidates[0]!.index} was already used on ${used[0]!.networks.join(", ")}; skip past it (Overview, Skip used keys)`);
+      }
+      const call = guardCalls.stage(state.guard, state.safe, slot.slotId, entries);
       const gasAccount = await source.signer(OPERATOR_ACCOUNT);
       let gas: bigint;
       try {
@@ -659,7 +689,7 @@ export class SignerSession {
       const transactionHash = await wallet.sendTransaction({ to: call.to, data: call.data, gas: (gas * 12n) / 10n, chain });
       const receipt = await publicClient.waitForTransactionReceipt({ hash: transactionHash });
       if (receipt.status !== "success") throw new Error(`staging reverted (${transactionHash})`);
-      return { transactionHash, count, fromIndex: slot.nextStageIndex };
+      return { transactionHash, count: entries.length, fromIndex: slot.nextStageIndex };
     });
   }
 
@@ -668,6 +698,7 @@ export class SignerSession {
     try {
       const { state, owner } = await this.snapshot();
       if (!owner) return undefined;
+      await this.checkKeys(state, owner);
       const free = state.bufferSize - owner.slot.staged.length;
       if (owner.slot.unstaged === 0 || free === 0) return undefined;
       if (free < REFILL_FREE_PLACES && owner.slot.staged.length > 0) return undefined;
@@ -678,6 +709,46 @@ export class SignerSession {
       this.lastRefill = { at: new Date().toISOString(), error: (error as Error).message };
       return undefined;
     }
+  }
+
+  private checker(): KeyChecker {
+    return (this.options.keyChecker ??= new KeyChecker([this.options.publicClient]));
+  }
+
+  /** The tree address at `index`, if the tree has one. */
+  private treeAddress(index: number): Address | undefined {
+    return this.options.tree.addresses[index];
+  }
+
+  /** Checks the current key, the staged keys and the next unstaged ones for use elsewhere; the result feeds status. */
+  private async checkKeys(state: SafeState, owner: CurrentOwner): Promise<void> {
+    const slot = owner.slot;
+    const firstStaged = slot.nextStageIndex - slot.staged.length;
+    const indexes = Array.from({ length: slot.staged.length + Math.min(state.bufferSize, slot.unstaged) }, (_, i) => firstStaged + i);
+    const addresses = indexes.map((index) => this.treeAddress(index)).filter((address): address is Address => address !== undefined);
+    const [used, current] = await Promise.all([this.checker().used(addresses), this.checker().used([owner.account.address])]);
+    this.keyAlert = {
+      usedKeys: used.map((key) => ({ ...key, index: indexes[addresses.indexOf(key.address)]! })),
+      currentKeyUsed: current[0]?.networks,
+    };
+  }
+
+  /**
+   * A proposal that moves this signer's slot past every used key among its staged and upcoming keys, and stages the
+   * next run of fresh keys in the same transaction (skipping empties the slot's buffer).
+   */
+  async skipUsedKeysInput(): Promise<ProposalInput> {
+    const { state, owner, ownerError } = await this.snapshot();
+    if (!owner) throw new Error(ownerError ?? "your current owner key could not be resolved");
+    await this.checkKeys(state, owner);
+    const used = this.keyAlert?.usedKeys ?? [];
+    if (used.length === 0) throw new Error("none of your staged or upcoming keys was used elsewhere");
+    const from = Math.max(...used.map((key) => key.index)) + 1;
+    const start = await this.checker().firstUnusedRun((index) => this.treeAddress(index), from, state.bufferSize);
+    if (start === undefined) throw new Error("no run of fresh keys left in your key list; it needs renewing");
+    this.loadedTree ??= loadTreeFile(JSON.stringify(this.options.tree));
+    const { file, tree } = this.loadedTree;
+    return { kind: "skip-keys", slotId: owner.slot.slotId, index: start, stage: stageEntries(tree, file, start, state.bufferSize) };
   }
 
   /** Checks every `intervalMs` and refills as needed until the returned function is called. */

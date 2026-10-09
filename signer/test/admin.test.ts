@@ -7,6 +7,7 @@ import { encodePackage, readSafeState, TxService, type ProposalInput } from "@ro
 import { seedSource } from "@rotating-msig/keys";
 
 import { joinSafe } from "../src/join.js";
+import { KeyChecker } from "../src/keycheck.js";
 import { prepareNewSlot } from "../src/newsafe.js";
 import { SignerSession } from "../src/session.js";
 import { hasAnvil, hasArtifacts, SIGNER_SEEDS, startChain, startFakeTxService, type Chain, type FakeTxService } from "./fixture.js";
@@ -51,7 +52,7 @@ describe("managing signers from the app", { skip }, () => {
   }
 
   it("adds a newcomer from their package, with their next keys staged, and they can join", async () => {
-    const context = { client: chain.client, chain: foundry };
+    const context = { client: chain.client, chain: foundry, keyChecker: new KeyChecker([chain.client]) };
     const prepared = await prepareNewSlot(context, seedSource(NEWCOMER), chain.safe, undefined, 12);
     assert.equal(prepared.package.slotId, 3);
     const proposal = await run({ kind: "add-signer", package: encodePackage(prepared.package), threshold: 2 });

@@ -5,6 +5,7 @@ import { unpackMultiSend } from "./decode.js";
 
 import { batch, guardCalls, safeCalls, type MetaTx } from "./calls.js";
 import { decodePackage } from "./create.js";
+import type { StageEntry } from "./tree.js";
 
 /** A call requested by a dApp, as it arrives from the browser (values are decimal or 0x-hex wei). */
 export interface DappCall {
@@ -26,7 +27,8 @@ export type ProposalInput =
   | { kind: "add-signer"; package: string; threshold: number }
   | { kind: "remove-signer"; slotId: number; threshold: number }
   | { kind: "escape" }
-  | { kind: "batch"; items: ProposalInput[] };
+  | { kind: "batch"; items: ProposalInput[] }
+  | { kind: "skip-keys"; slotId: number; index: number; stage: StageEntry[] };
 
 /** Most actions one queued batch may hold. */
 export const MAX_BATCH_ITEMS = 30;
@@ -99,6 +101,15 @@ export function buildProposal(input: ProposalInput, context: { safe: Address; gu
       return safeCalls.escape(context.safe);
     case "batch":
       return batch(batchCalls(input.items, context), context.multiSendCallOnly);
+    case "skip-keys": {
+      // skipTo empties the slot's buffer, so staging the following keys must happen in the same transaction.
+      if (input.stage.length === 0) throw new Error("stage at least one key after the skip");
+      if (input.stage.some((entry, i) => entry.index !== input.index + i)) throw new Error("staged keys must start at the skip target and be consecutive");
+      return batch(
+        [guardCalls.skipTo(context.guard, input.slotId, input.index), guardCalls.stage(context.guard, context.safe, input.slotId, input.stage)],
+        context.multiSendCallOnly,
+      );
+    }
     case "calls": {
       if (input.calls.length === 0) throw new Error("the dApp sent no calls");
       if (input.calls.length > MAX_DAPP_CALLS) throw new Error(`at most ${MAX_DAPP_CALLS} calls per request`);
