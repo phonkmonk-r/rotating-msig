@@ -8,8 +8,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  check:
-    name: Foundry project
+  foundry:
+    name: Contracts
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -25,11 +25,90 @@ jobs:
       - name: Show Forge version
         run: forge --version
 
-      - name: Run Forge fmt
-        run: forge fmt --check
-
-      - name: Run Forge build
+      - name: Build
         run: forge build --sizes
 
-      - name: Run Forge tests
+      - name: Test
         run: forge test -vvv
+
+  typescript:
+    name: TypeScript packages and signer
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      # Anvil runs the signer's and core's integration tests; they read the contracts from Foundry's build output.
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Build contracts
+        run: forge build
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Headers for the Ledger USB modules, in case they build from source instead of using a prebuilt binary.
+      - name: Install USB headers
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev libusb-1.0-0-dev
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+  desktop:
+    name: Desktop app end to end
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Build contracts
+        run: forge build
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Headers for the Ledger USB modules, in case they build from source instead of using a prebuilt binary.
+      - name: Install USB headers
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev libusb-1.0-0-dev
+
+      - name: Install
+        run: npm ci
+
+      # Ubuntu 24.04 restricts the unprivileged user namespaces Chromium's sandbox (and so Electron) needs.
+      - name: Allow the Chromium sandbox
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
+      - name: Electron end-to-end tests
+        run: xvfb-run --auto-servernum npm run test:app -w @rotating-msig/signer
+        env:
+          E2E_SCREENSHOTS: ${{ runner.temp }}/screenshots
+
+      - name: Keep screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: ${{ runner.temp }}/screenshots
+          if-no-files-found: ignore
