@@ -102,7 +102,7 @@ export function Browse({ status, request, queueMode }: { status: StatusView; req
             return (
               <div key={tab.id} className={`browser-tab ${active ? "active" : ""}`}>
                 <button type="button" role="tab" aria-selected={active} className="browser-tab-title" title={tab.url || label} onClick={() => void tabAction(() => browser!.selectTab(tab.id))}>
-                  {tab.loading && <span className="spinner" />}
+                  {tab.loading ? <span className="spinner" /> : tab.icon ? <img className="site-icon" src={tab.icon} alt="" /> : <IconGlobe width="13" height="13" />}
                   <span className="browser-tab-label">{label}</span>
                 </button>
                 <button type="button" className="browser-tab-close" aria-label={`Close ${label}`} title="Close tab" onClick={() => void tabAction(() => browser!.closeTab(tab.id))}>
@@ -146,7 +146,11 @@ export function Browse({ status, request, queueMode }: { status: StatusView; req
             aria-pressed={saved}
             title={saved ? "Remove from saved pages" : "Save this page"}
             disabled={!state.url}
-            onClick={() => void (saved ? browser!.removeBookmark(state.url) : browser!.addBookmark(state.url, state.title)).catch((caught: Error) => setError(caught.message))}
+            onClick={() =>
+              void (saved ? browser!.removeBookmark(state.url) : browser!.addBookmark(state.url, state.tabs.find((tab) => tab.id === state.activeTab)?.icon)).catch((caught: Error) =>
+                setError(caught.message),
+              )
+            }
           >
             <IconStar width="16" height="16" />
           </button>

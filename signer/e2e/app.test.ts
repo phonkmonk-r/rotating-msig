@@ -218,6 +218,13 @@ describe("Cicada desktop app", { skip, timeout: 5 * TIMEOUT }, () => {
     const tabs = await page.getByRole("tab").count();
     await page.getByRole("button", { name: "Saved pages", exact: true }).click();
     const saved = page.getByRole("list", { name: "Saved pages" });
+    // Saved under its domain; double-click renames it, Enter keeps the new name.
+    const host = new URL(dappUrl).host;
+    await saved.getByRole("button", { name: host, exact: true }).dblclick();
+    const rename = saved.getByRole("textbox", { name: `Rename ${host}` });
+    await rename.fill("Plain page");
+    await rename.press("Enter");
+    assert.equal(await page.getByRole("tab").count(), tabs, "renaming does not open the page");
     await saved.getByRole("button", { name: "Plain page", exact: true }).click();
     await page.waitForFunction((count) => document.querySelectorAll('[role="tab"]').length === count, tabs + 1);
     const opened = page.getByRole("tab").last();
@@ -231,6 +238,15 @@ describe("Cicada desktop app", { skip, timeout: 5 * TIMEOUT }, () => {
     await saved.getByRole("button", { name: "Remove Plain page" }).click();
     await page.getByText("Save a page with the star").waitFor();
     assert.equal(await page.getByRole("button", { name: "Save this page" }).getAttribute("aria-pressed"), "false");
+
+    // The close shortcut closes the selected tab while the browser is on screen, not the app.
+    // Sent through Electron's input pipeline, as a real key press is (Playwright's own key presses skip it).
+    await app.evaluate(({ BrowserWindow }, modifier) => {
+      const contents = BrowserWindow.getAllWindows()[0]!.webContents;
+      contents.sendInputEvent({ type: "keyDown", keyCode: "W", modifiers: [modifier] });
+      contents.sendInputEvent({ type: "keyUp", keyCode: "W", modifiers: [modifier] });
+    }, process.platform === "darwin" ? ("meta" as const) : ("control" as const));
+    await page.waitForFunction((count) => document.querySelectorAll('[role="tab"]').length === count, tabs);
   });
 
   it("as the only signer, executes at once from a Safe that holds no ETH, and rotates its key", async () => {

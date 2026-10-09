@@ -47,6 +47,7 @@ contextBridge.exposeInMainWorld("signer", {
   bookmarksList: call("bookmarks:list"),
   bookmarksAdd: call("bookmarks:add"),
   bookmarksRemove: call("bookmarks:remove"),
+  bookmarksRename: call("bookmarks:rename"),
   browserNewTab: call("browser:newTab"),
   browserSelectTab: call("browser:selectTab"),
   browserCloseTab: call("browser:closeTab"),

@@ -569,6 +569,36 @@ button.large {
   color: var(--text);
 }
 
+.site-icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+.saved-open {
+  gap: 8px;
+}
+
+.saved-rename {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  height: 28px;
+}
+
+.saved-rename input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 0 6px;
+  font-size: 13px;
+}
+
 .saved-label {
   overflow: hidden;
   white-space: nowrap;

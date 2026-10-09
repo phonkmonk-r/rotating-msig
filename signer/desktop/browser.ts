@@ -13,6 +13,8 @@ const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 export interface Bookmark {
   url: string;
   title: string;
+  /** The site's icon as a data URL, when it had one. */
+  icon?: string;
 }
 
 /** One open page; a new tab has no URL until something is opened in it. */
@@ -21,6 +23,8 @@ export interface BrowserTab {
   url: string;
   title: string;
   loading: boolean;
+  /** The page's icon as a data URL (the app's UI loads no remote images). */
+  icon?: string;
 }
 
 /** The selected tab's page, plus every open tab in order. */
@@ -59,6 +63,33 @@ export function browsableUrl(input: string): string {
   return url.toString();
 }
 
+/** The close-tab shortcut: Cmd+W on macOS, Ctrl+W elsewhere. */
+export function isCloseShortcut(input: { type: string; key: string; meta: boolean; control: boolean; shift: boolean; alt: boolean }): boolean {
+  const modifier = process.platform === "darwin" ? input.meta : input.control;
+  return input.type === "keyDown" && input.key.toLowerCase() === "w" && modifier && !input.shift && !input.alt;
+}
+
+/** Most an icon may weigh; it is sent to the UI as a data URL. */
+const MAX_ICON_BYTES = 64 * 1024;
+
+/** The first of a page's icons that loads, as a data URL, fetched in the dApp session; undefined if none does. */
+async function fetchIcon(contents: WebContents, urls: readonly string[]): Promise<string | undefined> {
+  for (const url of urls.slice(0, 3)) {
+    if (!/^https?:\/\//.test(url)) continue;
+    try {
+      const response = await contents.session.fetch(url);
+      const type = response.headers.get("content-type") ?? "";
+      if (!response.ok || !type.startsWith("image/")) continue;
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (bytes.length === 0 || bytes.length > MAX_ICON_BYTES) continue;
+      return `data:${type.split(";")[0]};base64,${bytes.toString("base64")}`;
+    } catch {
+      // Try the next one.
+    }
+  }
+  return undefined;
+}
+
 function navigable(url: string): boolean {
   try {
     return allowed(new URL(url));
@@ -80,7 +111,7 @@ interface Pending {
  */
 export class DappBrowser {
   /** Open tabs in display order. A page's popup or new window opens as another tab, keeping its opener. */
-  private tabs: { id: number; view: WebContentsView }[] = [];
+  private tabs: { id: number; view: WebContentsView; icon?: string }[] = [];
   private activeTab?: number;
   private nextTab = 1;
   /** Where the UI wants the selected page drawn, or null while it is hidden. */
@@ -166,6 +197,17 @@ export class DappBrowser {
     if (action === "stop") contents.stop();
   }
 
+  /**
+   * Closes the selected tab if the browser is on screen, for the close shortcut; false otherwise (the shortcut then
+   * closes the window as usual).
+   */
+  closeShownTab(): boolean {
+    const tab = this.active();
+    if (!tab || this.bounds === null) return false;
+    this.closeTab(tab.id);
+    return true;
+  }
+
   /** Places the selected tab over the UI's viewport, or hides it with `null`; other tabs stay hidden. */
   setBounds(bounds: Bounds | null): void {
     this.bounds = bounds && bounds.width > 0 && bounds.height > 0 ? bounds : null;
@@ -173,7 +215,7 @@ export class DappBrowser {
   }
 
   state(): BrowserState {
-    const tabs = this.tabs.map(({ id, view }) => ({ id, url: view.webContents.getURL(), title: view.webContents.getTitle(), loading: view.webContents.isLoading() }));
+    const tabs = this.tabs.map(({ id, view, icon }) => ({ id, url: view.webContents.getURL(), title: view.webContents.getTitle(), loading: view.webContents.isLoading(), icon }));
     const contents = this.active()?.view.webContents;
     if (!contents) return { url: "", title: "", loading: false, canGoBack: false, canGoForward: false, tabs, activeTab: this.activeTab };
     return {
@@ -263,7 +305,7 @@ export class DappBrowser {
     return session;
   }
 
-  private active(): { id: number; view: WebContentsView } | undefined {
+  private active(): { id: number; view: WebContentsView; icon?: string } | undefined {
     return this.tabs.find((tab) => tab.id === this.activeTab);
   }
 
@@ -303,7 +345,7 @@ export class DappBrowser {
     const view = new WebContentsView(webContents ? { webContents, webPreferences: { ...opened?.webPreferences, ...webPreferences } } : { webPreferences });
     view.setVisible(false);
     window.contentView.addChildView(view);
-    const tab = { id: this.nextTab++, view };
+    const tab: { id: number; view: WebContentsView; icon?: string } = { id: this.nextTab++, view };
     this.tabs.push(tab);
 
     const contents = view.webContents;
@@ -323,6 +365,19 @@ export class DappBrowser {
     });
     contents.on("will-redirect", (event) => {
       if (!navigable(event.url)) event.preventDefault();
+    });
+    contents.on("page-favicon-updated", (_event, favicons) => {
+      void fetchIcon(contents, favicons).then((icon) => {
+        tab.icon = icon;
+        this.update();
+      });
+    });
+    contents.on("did-navigate", () => {
+      tab.icon = undefined;
+    });
+    // Cmd+W (Ctrl+W elsewhere) with the page focused closes its tab rather than the window.
+    contents.on("before-input-event", (event, input) => {
+      if (isCloseShortcut(input) && this.closeShownTab()) event.preventDefault();
     });
     // A popup that closes itself (window.close() after sign-in) closes its tab.
     contents.on("destroyed", () => {

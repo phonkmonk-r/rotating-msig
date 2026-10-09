@@ -26,7 +26,7 @@ import { detectChains, JoinError, joinSafe, readClient, type JoinProgress } from
 import { chainFor, registerLocalChain } from "../src/networks.js";
 import { createSafe, planSafe, prepareNewSlot, prepareSlot, type NewSafeContext } from "../src/newsafe.js";
 import type { SignerSession } from "../src/session.js";
-import { browsableUrl, clearDappStorage, DappBrowser, type Bookmark, type Bounds } from "./browser.js";
+import { browsableUrl, clearDappStorage, DappBrowser, isCloseShortcut, type Bookmark, type Bounds } from "./browser.js";
 import { ProfileStore, type ProfileEntry } from "./profiles.js";
 import { readVault, unlockVault } from "./vault.js";
 
@@ -746,10 +746,17 @@ function writeBookmarks(list: Bookmark[]): Bookmark[] {
 }
 
 handle("bookmarks:list", () => readBookmarks());
-handle("bookmarks:add", (url: unknown, title: unknown) => {
+handle("bookmarks:add", (url: unknown, icon: unknown) => {
   const target = browsableUrl(String(url));
   const list = readBookmarks().filter((item) => item.url !== target);
-  return writeBookmarks([...list, { url: target, title: typeof title === "string" ? title.trim().slice(0, 120) : "" }]);
+  // Named after the site's domain; the user can rename it.
+  const saved: Bookmark = { url: target, title: new URL(target).host };
+  if (typeof icon === "string" && icon.startsWith("data:image/") && icon.length < 100_000) saved.icon = icon;
+  return writeBookmarks([...list, saved]);
+});
+handle("bookmarks:rename", (url: unknown, title: unknown) => {
+  const name = String(title ?? "").trim().slice(0, 80);
+  return writeBookmarks(readBookmarks().map((item) => (item.url === String(url) ? { ...item, title: name || new URL(item.url).host } : item)));
 });
 handle("bookmarks:remove", (url: unknown) => writeBookmarks(readBookmarks().filter((item) => item.url !== String(url))));
 handle("browser:navigate", (action: unknown) => {
@@ -790,6 +797,10 @@ function createWindow() {
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event) => event.preventDefault());
+  // Cmd+W (Ctrl+W elsewhere) closes the browser's selected tab while the browser is on screen, the window otherwise.
+  window.webContents.on("before-input-event", (event, input) => {
+    if (isCloseShortcut(input) && browser?.closeShownTab()) event.preventDefault();
+  });
   browser ??= new DappBrowser({
     window: () => mainWindow,
     session: () => session,

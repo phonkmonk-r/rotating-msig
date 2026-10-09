@@ -10,6 +10,8 @@ export type { DappCall, DappRequest, DraftItem, DraftView, Execution, Exposure, 
 export interface Bookmark {
   url: string;
   title: string;
+  /** The site's icon as a data URL, when it had one. */
+  icon?: string;
 }
 
 /** One open page in the dApp browser; a new tab has no URL until something is opened in it. */
@@ -18,6 +20,8 @@ export interface BrowserTab {
   url: string;
   title: string;
   loading: boolean;
+  /** The page's icon as a data URL. */
+  icon?: string;
 }
 
 /** The dApp browser's selected page and every open tab, as the main process reports them. */
@@ -187,7 +191,8 @@ interface DesktopBridge {
   draftPropose(preview: boolean): Promise<Result<ProposalResult>>;
   browserOpen(url: string): Promise<Result<BrowserState>>;
   bookmarksList(): Promise<Result<Bookmark[]>>;
-  bookmarksAdd(url: string, title: string): Promise<Result<Bookmark[]>>;
+  bookmarksAdd(url: string, icon?: string): Promise<Result<Bookmark[]>>;
+  bookmarksRename(url: string, title: string): Promise<Result<Bookmark[]>>;
   bookmarksRemove(url: string): Promise<Result<Bookmark[]>>;
   browserNewTab(url?: string): Promise<Result<BrowserState>>;
   browserSelectTab(id: number): Promise<Result<BrowserState>>;
@@ -331,7 +336,8 @@ export const browser = bridge
       open: (url: string) => unwrap(bridge.browserOpen(url)),
       newTab: (url?: string) => unwrap(bridge.browserNewTab(url)),
       bookmarks: () => unwrap(bridge.bookmarksList()),
-      addBookmark: (url: string, title: string) => unwrap(bridge.bookmarksAdd(url, title)),
+      addBookmark: (url: string, icon?: string) => unwrap(bridge.bookmarksAdd(url, icon)),
+      renameBookmark: (url: string, title: string) => unwrap(bridge.bookmarksRename(url, title)),
       removeBookmark: (url: string) => unwrap(bridge.bookmarksRemove(url)),
       onBookmarks: (listener: (list: Bookmark[]) => void) => bridge.onBookmarks(listener),
       selectTab: (id: number) => unwrap(bridge.browserSelectTab(id)),
