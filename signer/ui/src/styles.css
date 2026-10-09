@@ -459,10 +459,38 @@ button.large {
   font-size: 13px;
 }
 
-.network {
+.safe-chip-badges {
   grid-column: 2;
-  justify-self: start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-top: 6px;
+  /* The copy and explorer buttons only sit beside the first rows. */
+  margin-right: -48px;
+}
+
+.signers-pill {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--surface-2);
+}
+
+.safe-chip {
+  padding-right: 58px;
+}
+
+.safe-chip-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 2px;
+}
+
+.network {
   font-size: 11px;
   font-weight: 600;
   padding: 1px 8px;

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 
 import { desktop, type SafeSummary, type StatusView } from "./api";
-import { short } from "./format";
+import { explorer, short } from "./format";
 import { Skeleton } from "./Skeleton";
-import { IconPlus } from "./icons";
+import { IconCheck, IconCopy, IconExternal, IconPlus } from "./icons";
 import { Avatar } from "./ui";
 
 /** The Safe card at the top of the sidebar; in the desktop app it opens a list of the profile's Safes. */
@@ -55,13 +55,22 @@ export function SafeSwitcher({ status, onSwitched, onAdd }: { status: StatusView
         <div className="safe-chip-name">Safe</div>
         <div className="mono small">{short(status.safe)}</div>
       </div>
-      <span className={`network ${status.chainId === 1 ? "mainnet" : "testnet"}`}>{status.chainId === 1 ? "Ethereum" : status.chainName}</span>
+      <span className="safe-chip-badges">
+        <span className={`network ${status.chainId === 1 ? "mainnet" : "testnet"}`}>{status.chainId === 1 ? "Ethereum" : status.chainName}</span>
+        <span className="signers-pill" title={`${status.threshold} of ${status.owners.length} signers must sign`}>
+          {status.threshold} of {status.owners.length} signers
+        </span>
+      </span>
     </>
   );
+  const actions = <SafeActions safe={status.safe} chainId={status.chainId} />;
   if (!desktop) {
     return (
-      <div className="safe-chip" title={status.safe}>
-        {chip}
+      <div className="safe-switcher">
+        <div className="safe-chip" title={status.safe}>
+          {chip}
+        </div>
+        {actions}
       </div>
     );
   }
@@ -71,6 +80,7 @@ export function SafeSwitcher({ status, onSwitched, onAdd }: { status: StatusView
       <button type="button" className={`safe-chip ${open ? "open" : ""}`} title="Switch Safe" onClick={() => setOpen(!open)}>
         {chip}
       </button>
+      {actions}
       {open && (
         <div className="safe-menu" role="menu">
           {!safes && !error && (
@@ -132,5 +142,34 @@ export function SafeSwitcher({ status, onSwitched, onAdd }: { status: StatusView
         </div>
       )}
     </div>
+  );
+}
+
+/** Copy the Safe's address, or open it on the block explorer; beside the Safe card, which is itself a button. */
+function SafeActions({ safe, chainId }: { safe: string; chainId: number }) {
+  const [copied, setCopied] = useState(false);
+  const link = explorer(chainId, "address", safe);
+  return (
+    <span className="safe-chip-actions">
+      <button
+        type="button"
+        className="icon-button"
+        title="Copy the Safe's address"
+        aria-label="Copy the Safe's address"
+        onClick={() => {
+          void navigator.clipboard.writeText(safe).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1200);
+          });
+        }}
+      >
+        {copied ? <IconCheck width="14" height="14" /> : <IconCopy />}
+      </button>
+      {link && (
+        <a className="icon-button" href={link} target="_blank" rel="noreferrer" title="View on the block explorer" aria-label="View on the block explorer">
+          <IconExternal />
+        </a>
+      )}
+    </span>
   );
 }
