@@ -24,6 +24,9 @@ export function Transactions({
   onRefresh: () => void;
 }) {
   const [composing, setComposing] = useState(() => window.location.hash.includes("compose"));
+  // Executions this window ran: kept after the transaction leaves the queue, so the final steps stay readable.
+  const [finished, setFinished] = useState<{ item: QueueItem; execution: Execution }[]>([]);
+  const done = finished.filter((entry) => !queue.some((item) => item.safeTxHash === entry.item.safeTxHash));
   return (
     <>
       <PageHeader
@@ -45,7 +48,16 @@ export function Transactions({
       />
       {composing && <NewTransaction status={status} queueMode={draft.enabled} onClose={() => setComposing(false)} onProposed={onRefresh} />}
       <QueueCard draft={draft} pending={queue.length} onChanged={onRefresh} />
-      {queue.length === 0 && !composing && draft.items.length === 0 ? (
+      {done.map(({ item, execution }) => (
+        <FinishedCard
+          key={item.safeTxHash}
+          item={item}
+          execution={execution}
+          chainId={status.chainId}
+          onDismiss={() => setFinished((list) => list.filter((entry) => entry.item.safeTxHash !== item.safeTxHash))}
+        />
+      ))}
+      {queue.length === 0 && !composing && draft.items.length === 0 && done.length === 0 ? (
         <div className="empty-state">
           <IconInbox />
           <p>No pending transactions</p>
@@ -54,7 +66,13 @@ export function Transactions({
       ) : (
         <div className="stack">
           {queue.map((item) => (
-            <TxCard key={item.safeTxHash} item={item} status={status} onBusy={onBusy} />
+            <TxCard
+              key={item.safeTxHash}
+              item={item}
+              status={status}
+              onBusy={onBusy}
+              onFinished={(execution) => setFinished((list) => [{ item, execution }, ...list.filter((entry) => entry.item.safeTxHash !== item.safeTxHash)])}
+            />
           ))}
         </div>
       )}
@@ -70,7 +88,17 @@ type Stage =
   | { kind: "executing"; execution: Execution }
   | { kind: "failed"; message: string };
 
-function TxCard({ item, status, onBusy }: { item: QueueItem; status: StatusView; onBusy: (busy: boolean) => void }) {
+function TxCard({
+  item,
+  status,
+  onBusy,
+  onFinished,
+}: {
+  item: QueueItem;
+  status: StatusView;
+  onBusy: (busy: boolean) => void;
+  onFinished: (execution: Execution) => void;
+}) {
   const [stage, setStage] = useState<Stage>({ kind: "idle" });
   const needed = Math.max(status.threshold - 1, 0);
   const counting = item.confirmations.filter((c) => c.counts).length;
@@ -91,6 +119,7 @@ function TxCard({ item, status, onBusy }: { item: QueueItem; status: StatusView;
           execution = await api.execution(execution.safeTxHash);
           setStage({ kind: "executing", execution });
         }
+        onFinished(execution);
       }
     } catch (caught) {
       setStage({ kind: "failed", message: (caught as Error).message });
@@ -217,6 +246,32 @@ function Review({
         </button>
       </div>
     </div>
+  );
+}
+
+/** An execution that has left the queue, with its final steps, until the signer dismisses it. */
+function FinishedCard({ item, execution, chainId, onDismiss }: { item: QueueItem; execution: Execution; chainId: number; onDismiss: () => void }) {
+  const tone = executionTone(execution.status);
+  return (
+    <article className="card tx finished">
+      <div className="tx-top">
+        <span className="tx-nonce">#{item.nonce}</span>
+        <div className="tx-actions-list">
+          {item.actions.map((a, i) => (
+            <div key={i} className={`tx-action ${a.kind}`}>
+              {a.summary}
+            </div>
+          ))}
+        </div>
+        <Badge tone={tone === "pending" ? "neutral" : tone}>{execution.status === "success" ? "Executed" : execution.status}</Badge>
+      </div>
+      <ExecutionStatus execution={execution} chainId={chainId} />
+      <div className="tx-footer">
+        <button type="button" onClick={onDismiss}>
+          Dismiss
+        </button>
+      </div>
+    </article>
   );
 }
 
