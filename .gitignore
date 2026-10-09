@@ -26,3 +26,4 @@ node_modules/
 
 # Sepolia test seed and accounts (testnet only)
 .sepolia/
+.claude/
