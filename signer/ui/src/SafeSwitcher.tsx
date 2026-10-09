@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { desktop, type SafeSummary, type StatusView } from "./api";
 import { short } from "./format";
+import { Skeleton } from "./Skeleton";
 import { IconPlus } from "./icons";
 import { Avatar } from "./ui";
 
@@ -72,7 +73,12 @@ export function SafeSwitcher({ status, onSwitched, onAdd }: { status: StatusView
       </button>
       {open && (
         <div className="safe-menu" role="menu">
-          {!safes && !error && <div className="muted small safe-menu-note">Loading…</div>}
+          {!safes && !error && (
+            <div className="safe-menu-note stack-tight" role="status" aria-label="Loading">
+              <Skeleton width={140} height={12} />
+              <Skeleton width={90} height={10} />
+            </div>
+          )}
           {safes?.map((safe) =>
             forgetting === safe.key ? (
               <div key={safe.key} className="safe-forget">

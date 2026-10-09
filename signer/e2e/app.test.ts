@@ -91,6 +91,8 @@ describe("Cicada desktop app", { skip, timeout: 5 * TIMEOUT }, () => {
   const nav = (label: string) => page.locator(".nav").getByRole("button", { name: label }).click();
 
   it("adds a seed profile and joins the Safe from its address alone", async () => {
+    await page.getByRole("heading", { name: "Cicada" }).waitFor();
+    await page.getByRole("button", { name: "Get started" }).click();
     await page.getByRole("heading", { name: "Add a profile" }).waitFor();
     await page.getByLabel("Profile name").fill("Signer 1");
     await page.getByLabel(/Seed phrase/).fill(SIGNER_SEEDS[0]!);

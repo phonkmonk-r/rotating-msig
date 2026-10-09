@@ -326,7 +326,9 @@ React, built with Vite; the same UI runs in the desktop app (through the preload
 |---|---|
 | `api.ts` | Every call the UI can make, through the desktop bridge or HTTP. |
 | `data.ts` | `useSignerData`: polls status, queue and the local queue. |
-| `App.tsx` | Routing: add or pick a profile, unlock or connect the Ledger, set up a Safe, then the shell (sidebar with the Safe switcher, queue toggle, profile chip). |
+| `App.tsx` | Routing: the welcome page on first launch, add or pick a profile, unlock or connect the Ledger, set up a Safe, then the shell (sidebar with the Safe switcher, queue toggle, profile chip). |
+| `Welcome.tsx` | First launch (no profile yet): what the app does in three cards, a note that it works from addresses only (Ledger keys stay on the device, a seed is encrypted locally), and Get started. |
+| `Skeleton.tsx` | Placeholder blocks while the first status loads: an Overview-shaped skeleton in the shell and lines in the Safe switcher. |
 | `Wallet.tsx` | Add profile (seed or Ledger), profile picker (with removal), unlock, connect Ledger. |
 | `Setup.tsx`, `JoinSafe.tsx` | Connect a Safe: join, create (creator room), use an invite (signer room), being added (waiting room). |
 | `SafeSwitcher.tsx` | The Safe card at the top of the sidebar: switch, add, forget Safes. |

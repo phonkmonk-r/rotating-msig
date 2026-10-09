@@ -7,6 +7,8 @@ import { IconGlobe, IconLock, IconOverview, IconRefresh, IconSettings, IconSigne
 import { JoinSafe } from "./JoinSafe";
 import { SafeSwitcher } from "./SafeSwitcher";
 import { Setup } from "./Setup";
+import { OverviewSkeleton } from "./Skeleton";
+import { Welcome } from "./Welcome";
 import { Browse } from "./pages/Browse";
 import { Overview } from "./pages/Overview";
 import { Settings } from "./pages/Settings";
@@ -20,6 +22,7 @@ export function App() {
   const [changingSafe, setChangingSafe] = useState(false);
   const [pendingSafe, setPendingSafe] = useState<string>();
   const [adding, setAdding] = useState(false);
+  const [started, setStarted] = useState(false);
 
   const reload = useCallback(async () => {
     if (desktop) setDesktopState(await desktop.state());
@@ -46,6 +49,7 @@ export function App() {
   if (!desktopState) return <div className="boot" />;
 
   const { profiles, profile } = desktopState;
+  if (profiles.length === 0 && !started && !adding) return <Welcome onStart={() => setStarted(true)} />;
   if (profiles.length === 0 || adding) {
     return (
       <AuthLayout>
@@ -56,7 +60,14 @@ export function App() {
             setPendingSafe(safe);
             void reload();
           }}
-          onCancel={profiles.length > 0 ? () => setAdding(false) : undefined}
+          onCancel={
+            profiles.length > 0
+              ? () => setAdding(false)
+              : () => {
+                  setStarted(false);
+                  setAdding(false);
+                }
+          }
         />
       </AuthLayout>
     );
@@ -264,7 +275,7 @@ function Shell({
       <main className={page === "browse" ? "content full" : "content"}>
         {data.error && <div className="note critical banner-top">Can't reach the signer: {data.error}</div>}
         {status?.queueError && <div className="note warning banner-top">Transaction Service unavailable: pending transactions may be missing.</div>}
-        {!status && !data.error && <div className="loading">Loading…</div>}
+        {!status && !data.error && <OverviewSkeleton />}
         {status && page === "overview" && <Overview status={status} queue={queue} onOpenTransactions={() => setPage("transactions")} />}
         {status && page === "transactions" && <Transactions status={status} queue={queue} draft={data.draft} onBusy={data.setBusy} onRefresh={() => void data.refresh()} />}
         {status && page === "browse" && <Browse status={status} request={dappRequest} queueMode={data.draft.enabled} />}

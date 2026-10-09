@@ -111,6 +111,13 @@ export const IconClose = (p: SVGProps<SVGSVGElement>) => (
   </Icon>
 );
 
+export const IconKey = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <circle cx="8" cy="12" r="4.5" />
+    <path d="M12.5 12h8.5M18 12v3M21 12v2.5" />
+  </Icon>
+);
+
 export const IconInbox = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p} width="28" height="28" strokeWidth="1.5">
     <path d="M3 13l3-8h12l3 8v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-6z" />
@@ -119,8 +126,8 @@ export const IconInbox = (p: SVGProps<SVGSVGElement>) => (
 );
 
 /** The Cicada mark: the cicada from the app icon, with its wings folded over the body. */
-export const Logo = () => (
-  <svg width="26" height="26" viewBox="64 64 896 896" aria-hidden="true">
+export const Logo = ({ size = 26 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="64 64 896 896" aria-hidden="true">
     <rect x="64" y="64" width="896" height="896" rx="200" fill="#0f403a" />
     <g transform="translate(512 528) scale(1.04) translate(-512 -585)">
       <path d="M422 416 C408 560 450 720 512 812 C574 720 616 560 602 416 Z" fill="#e8b445" />
