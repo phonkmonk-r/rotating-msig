@@ -1,10 +1,10 @@
 {
   "chainId": 11155111,
-  "rotationGuard": "0x34d129296B3AeB1EE839778D974E586BB1339973",
-  "deployTx": "0x35891178116107b49a72704245dd1c0d24e68a09a17b3d235dd6dad6f62166bf",
+  "rotationGuard": "0xeE3b971850b9649D62b407bd7ADb44b8DE8bD074",
+  "deployTx": "0xc27a4063c17070e22781b2d0528a77f9dfd97b283fddf8b74f40955474622672",
   "multiSendCallOnly": "0xA83c336B20401Af773B6219BA5027174338D1836",
   "testSafe": "0x7aC0Ac669d32Bd739eAA892bcFD2C6dF9946Ed02",
-  "note": "Current guard, with the 2026-10-08 security review fixes: escape hatch verified against an owner-set snapshot, safeTxGas required, initialize checks the hooks, signers must be owners. The slotOf and consumedUpTo views were dropped to fit under the 2^24 per-transaction gas cap (10,471 bytes). Deployed with cast send from the deployer account at the cap gas limit. New Safes use it; the guard serves any Safe 1.5.0 on Sepolia.",
+  "note": "Current guard (commit 09d4481), with the second review's fixes: safeTxGas and gasPrice both required with refunds only in ETH to the executor, checkTransaction once per Safe nonce, rotation skips staged keys that are already owners; redundant checks dropped (10,212 bytes). Deployed with cast send from the ops seed's first account at the cap gas limit. New Safes use it; the guard serves any Safe 1.5.0 on Sepolia.",
   "appCreatedSafe": {
     "safe": "0x9Ed45FdF1598295CF7804719A4E3BB1719aEd1BD",
     "deployTx": "0xc61dc48f98dfaa4d49e29d85de25973eeb2d57936e5e51217de8ee3cdbf61b1c",
@@ -12,6 +12,12 @@
     "note": "2-of-3 created and installed by the signer app's create flow; deploy 1,409,784 gas, install 4,181,594 gas."
   },
   "previousGuards": [
+    {
+      "rotationGuard": "0x34d129296B3AeB1EE839778D974E586BB1339973",
+      "deployTx": "0x35891178116107b49a72704245dd1c0d24e68a09a17b3d235dd6dad6f62166bf",
+      "block": 11874570,
+      "note": "Third deployment, with the first review's fixes (escape owner-set snapshot, safeTxGas required, initialize checks the hooks, signers must be owners); slotOf and consumedUpTo views dropped (10,471 bytes). No Safe was installed on it."
+    },
     {
       "rotationGuard": "0x0f912AC33a58094622dF7508C6D2Ce9Dc4aa3391",
       "deployTx": "0x1f4cc687a7ec55151aa115f813baed9f989017d30605fbe490b045a99f9d0aba",
@@ -25,8 +31,8 @@
       "note": "First deployment, with the owner-to-slot mapping. Safes 0x7aC0…Ed02 and 0x9Ed4…d1BD use it."
     }
   ],
-  "deployBlock": 11874570,
-  "deployGas": 16402276,
+  "deployBlock": 11879507,
+  "deployGas": 16001740,
   "measuredSafe": {
     "safe": "0xa14D468F959c1736Bb13f67D50aeCFdD1e4015cB",
     "guard": "0x0f912AC33a58094622dF7508C6D2Ce9Dc4aa3391",
