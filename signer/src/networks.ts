@@ -19,6 +19,17 @@ export const DEFAULT_EXECUTION_RPC: Record<number, string> = {
   1: "https://rpc.flashbots.net",
 };
 
+/** Development chains registered at startup (anvil in tests); their keys are not looked up on mainnet. */
+export const LOCAL_CHAINS = new Set<number>();
+
+/** Adds a development chain and its RPC, for local testing only. */
+export function registerLocalChain(chain: Chain, rpc: string): void {
+  if (CHAINS[chain.id] && !LOCAL_CHAINS.has(chain.id)) throw new Error(`chain ${chain.id} is already known`);
+  CHAINS[chain.id] = chain;
+  DEFAULT_RPCS[chain.id] = [rpc];
+  LOCAL_CHAINS.add(chain.id);
+}
+
 export function chainFor(chainId: number): Chain {
   const chain = CHAINS[chainId];
   if (!chain) throw new Error(`the tree is for chain ${chainId}; only mainnet and Sepolia are supported`);

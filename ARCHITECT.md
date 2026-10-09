@@ -64,6 +64,8 @@ signer/src/                      the signing session and everything it needs (no
 signer/desktop/                  Electron main process, preloads, vault, profiles, dApp browser
 signer/ui/                       React UI (shared by the desktop app and the local web server)
 signer/test/                     signer tests on a local Anvil chain with real Safe and guard contracts
+signer/ui/test/                  unit tests for the UI's logic (signer/ui/src/lib)
+signer/e2e/                      the desktop app driven by Playwright against Anvil and a fake Transaction Service
 app/                             the original Safe App
 deployments/sepolia.json         deployed addresses on Sepolia
 PLAN.md                          design, decisions, progress
@@ -333,6 +335,9 @@ React, built with Vite; the same UI runs in the desktop app (through the preload
 | `pages/Signers.tsx`, `pages/Manage.tsx` | Every slot's state; add, remove, re-threshold, escape hatch. |
 | `pages/Settings.tsx` | Profile (rename, remove), Safe (add another, remove from Keyturn), connection. |
 | `ui.tsx`, `icons.tsx`, `format.ts`, `styles.css` | Shared components, icons, formatting and the design tokens. |
+| `lib/` | The UI's logic as plain functions, unit tested in `ui/test`: contract-call parsing and encoding, profile form checks, slot package preview, execution state. Components keep only state and markup. |
+
+Tests: `npm test -w @rotating-msig/signer` runs the session, desktop and UI unit tests. `npm run test:app -w @rotating-msig/signer` builds the desktop app and drives it with Playwright (`playwright-core`, Electron mode): it starts Anvil with a guarded Safe whose keys use the app's two-level path, points the app at it through the `ROTATION_SIGNER_TEST_CHAIN` hook (registers the local chain, its contracts and a local Transaction Service), then adds a seed profile and joins, proposes, executes with gas funding and sweep, and removes the profile. Set `E2E_SCREENSHOTS` to a folder to keep a screenshot after each test. Joining still probes mainnet and Sepolia public RPCs during network detection, so it needs internet.
 
 ### 7.4 How the dApp browser works
 

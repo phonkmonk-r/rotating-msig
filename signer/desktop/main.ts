@@ -8,18 +8,22 @@ import {
   encodePackage,
   loadTreeFile,
   readSafeState,
+  registerDeployments,
+  registerTxService,
   verifySignedPackages,
+  type SafeDeployments,
   type SafeInvite,
   type SlotPackage,
   type TreeFile,
 } from "@rotating-msig/core";
 import { openLedgerSource, OPERATOR_ACCOUNT, seedSource, type AddressSource } from "@rotating-msig/keys";
 import { app, BrowserWindow, ipcMain, shell } from "electron";
-import { isHex, type Hex } from "viem";
+import { defineChain, isHex, type Hex } from "viem";
+import { foundry } from "viem/chains";
 
 import { createSession } from "../src/create.js";
 import { detectChains, JoinError, joinSafe, readClient, type JoinProgress } from "../src/join.js";
-import { chainFor } from "../src/networks.js";
+import { chainFor, registerLocalChain } from "../src/networks.js";
 import { createSafe, planSafe, prepareNewSlot, prepareSlot, type NewSafeContext } from "../src/newsafe.js";
 import type { SignerSession } from "../src/session.js";
 import { clearDappStorage, DappBrowser, type Bounds } from "./browser.js";
@@ -78,6 +82,18 @@ if (process.env.ROTATION_SIGNER_USER_DATA) {
   if (!existsSync(current) && existsSync(previous)) renameSync(previous, current);
   app.setPath("userData", current);
 }
+/**
+ * Test hook: a development chain (anvil) with its contracts and a local Transaction Service, so end-to-end tests can
+ * drive the app against a chain they control. Never set in normal use.
+ */
+const testChain = process.env.ROTATION_SIGNER_TEST_CHAIN;
+if (testChain) {
+  const local = JSON.parse(testChain) as { chainId: number; rpc: string; txServiceUrl: string; deployments: SafeDeployments };
+  registerDeployments(local.chainId, local.deployments);
+  registerTxService(local.chainId, local.txServiceUrl);
+  registerLocalChain(defineChain({ ...foundry, id: local.chainId, rpcUrls: { default: { http: [local.rpc] } } }), local.rpc);
+}
+
 const iconPath = () => join(appRoot(), "desktop/assets/icon.png");
 const profiles = new ProfileStore(app.getPath("userData"));
 /** The profile in use; its seed or Ledger is unlocked separately (`source`). */

@@ -5,8 +5,18 @@ import { safeTxHash, type SafeTx } from "./safetx.js";
 
 const NETWORK_SHORT_NAMES: Record<number, string> = { 1: "eth", [SEPOLIA_CHAIN_ID]: "sep" };
 
+const LOCAL_TX_SERVICES: Record<number, string> = {};
+
+/** Points a development chain at a local Transaction Service (a test double); real chains use Safe's service. */
+export function registerTxService(chainId: number, baseUrl: string): void {
+  if (NETWORK_SHORT_NAMES[chainId]) throw new Error(`chain ${chainId} uses Safe's Transaction Service`);
+  LOCAL_TX_SERVICES[chainId] = baseUrl;
+}
+
 /** Base URL of the Safe Transaction Service for a chain (the per-network domains now redirect here). */
 export function txServiceUrl(chainId: number): string {
+  const local = LOCAL_TX_SERVICES[chainId];
+  if (local) return local;
   const name = NETWORK_SHORT_NAMES[chainId];
   if (!name) throw new Error(`no Safe Transaction Service known for chain ${chainId}`);
   return `https://api.safe.global/tx-service/${name}`;

@@ -19,8 +19,8 @@ import {
 import { mnemonicToAccount, type HDAccount } from "viem/accounts";
 import { foundry } from "viem/chains";
 
-import { createTreeFile, installTx, loadTreeFile, plainSafeTx, safeAbi, safeTxHash, slotConfig, stageEntries, type SafeTx, type TreeFile } from "@rotating-msig/core";
-import { seedSource } from "@rotating-msig/keys";
+import { createTreeFile, installTx, loadTreeFile, plainSafeTx, safeAbi, safeKeyPath, safeTxHash, slotConfig, stageEntries, type SafeTx, type TreeFile } from "@rotating-msig/core";
+import { generateTree, OPERATOR_ACCOUNT, seedSource } from "@rotating-msig/keys";
 
 const OUT = new URL("../../out/", import.meta.url);
 const ANVIL_MNEMONIC = "test test test test test test test test test test test junk";
@@ -56,8 +56,17 @@ export interface Chain {
   stop(): void;
 }
 
+export interface ChainOptions {
+  /**
+   * Where the signers' keys live: "range" (`m/44'/60'/{BASE + i}'/0/0`, the default) or "branch", the two-level path
+   * the app derives for a Safe, so the desktop app can join it from a seed alone. "branch" also funds each signer's
+   * gas account.
+   */
+  layout?: "range" | "branch";
+}
+
 /** Starts anvil with a guarded 2-of-3 Safe whose three slots belong to three independent signer seeds. */
-export async function startChain(port: number): Promise<Chain> {
+export async function startChain(port: number, options: ChainOptions = {}): Promise<Chain> {
   const rpc = `http://127.0.0.1:${port}`;
   const anvil = spawn("anvil", ["--port", String(port), "--silent"], { stdio: "ignore" });
   const client = createPublicClient({ chain: foundry, transport: http(rpc) }) as PublicClient;
@@ -97,10 +106,19 @@ export async function startChain(port: number): Promise<Chain> {
   const trees: TreeFile[] = [];
   for (const [slot, seed] of SIGNER_SEEDS.entries()) {
     const source = seedSource(seed);
-    const addresses: Address[] = [];
-    for (let i = 0; i < TREE_SIZE; i++) addresses.push(await source.address(BASE + i));
-    trees.push(createTreeFile({ chainId: foundry.id, safe, slotId: slot, base: BASE }, "m/44'/60'/{account}'/0/0", addresses));
-    for (const address of addresses) {
+    let tree: TreeFile;
+    if (options.layout === "branch") {
+      const path = safeKeyPath(foundry.id, safe);
+      tree = await generateTree(source, { chainId: foundry.id, safe, slotId: slot, base: path.account, branch: path.branch }, TREE_SIZE);
+      const operator = await source.address(OPERATOR_ACCOUNT);
+      await client.waitForTransactionReceipt({ hash: await deployer.sendTransaction({ to: operator, value: parseEther("1") }) });
+    } else {
+      const addresses: Address[] = [];
+      for (let i = 0; i < TREE_SIZE; i++) addresses.push(await source.address(BASE + i));
+      tree = createTreeFile({ chainId: foundry.id, safe, slotId: slot, base: BASE }, "m/44'/60'/{account}'/0/0", addresses);
+    }
+    trees.push(tree);
+    for (const address of tree.addresses as Address[]) {
       await client.waitForTransactionReceipt({ hash: await deployer.sendTransaction({ to: address, value: parseEther("0.05") }) });
     }
   }

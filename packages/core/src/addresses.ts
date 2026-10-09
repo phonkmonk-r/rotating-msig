@@ -33,13 +33,24 @@ const SAFE_L2_SINGLETON: Address = "0xEdd160fEBBD92E350D4D398fb636302fccd67C7e";
 export const SEPOLIA_CHAIN_ID = 11155111;
 
 /** Chains the project supports: mainnet for production, Sepolia for testing with Safe{Wallet}. */
-export const DEPLOYMENTS: Readonly<Record<number, SafeDeployments>> = {
+const deployments: Record<number, SafeDeployments> = {
   1: { ...CANONICAL, creationSingleton: CANONICAL.safeSingleton },
   [SEPOLIA_CHAIN_ID]: { ...CANONICAL, creationSingleton: SAFE_L2_SINGLETON, rotationGuard: "0x0f912AC33a58094622dF7508C6D2Ce9Dc4aa3391",
     rotationGuardBlock: 11_872_066,
     previousGuards: ["0xbE621d916B9a75Ace3ff47Cc8b24aF22c0c05E36"],
   },
 };
+
+export const DEPLOYMENTS: Readonly<Record<number, SafeDeployments>> = deployments;
+
+/**
+ * Adds a development chain (anvil) with contracts deployed by the caller. For local testing only: real chains are
+ * the fixed entries above.
+ */
+export function registerDeployments(chainId: number, value: SafeDeployments): void {
+  if (chainId === 1 || chainId === SEPOLIA_CHAIN_ID) throw new Error(`chain ${chainId} has fixed deployments`);
+  deployments[chainId] = value;
+}
 
 export const MAINNET = { chainId: 1, ...CANONICAL } as const;
 

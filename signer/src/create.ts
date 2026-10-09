@@ -4,10 +4,10 @@ import { createPublicClient, fallback, http, type Chain, type PublicClient } fro
 
 import { readClient } from "./join.js";
 import { KeyChecker } from "./keycheck.js";
-import { chainFor, DEFAULT_EXECUTION_RPC, DEFAULT_RPCS } from "./networks.js";
+import { chainFor, DEFAULT_EXECUTION_RPC, DEFAULT_RPCS, LOCAL_CHAINS } from "./networks.js";
 import { SignerSession } from "./session.js";
 
-export { chainFor, CHAINS, DEFAULT_EXECUTION_RPC, DEFAULT_RPCS } from "./networks.js";
+export { chainFor, CHAINS, DEFAULT_EXECUTION_RPC, DEFAULT_RPCS, registerLocalChain } from "./networks.js";
 
 export interface SessionConfig {
   tree: TreeFile;
@@ -29,7 +29,7 @@ export function keyCheckerFor(chainId: number, client: PublicClient): KeyChecker
     deployment?.rotationGuard && deployment.rotationGuardBlock !== undefined
       ? { client, guards: [deployment.rotationGuard, ...(deployment.previousGuards ?? [])], fromBlock: BigInt(deployment.rotationGuardBlock) }
       : undefined;
-  return new KeyChecker(chainId === 1 ? [client] : [client, readClient(1)], history);
+  return new KeyChecker(chainId === 1 || LOCAL_CHAINS.has(chainId) ? [client] : [client, readClient(1)], history);
 }
 
 /** Builds the session the CLI and the desktop app both run. */
