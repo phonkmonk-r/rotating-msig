@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { Recover } from "./Recover";
 import { RenewKeys } from "./RenewKeys";
 import { api, type ProposalInput, type ProposalResult, type QueueItem, type StatusView } from "../api";
 import { LOW_GAS_WEI } from "../data";
@@ -94,6 +95,7 @@ export function Overview({ status, queue, onOpenTransactions }: { status: Status
               </li>
             ))}
           </ul>
+          {status.exposure && !status.exposure.openAttempt && <Recover exposure={status.exposure} />}
           {me?.usedKeys && me.usedKeys.length > 0 && <SkipUsedKeys />}
           {me && status.findings.some((f) => f.slotId === me.slotId && /keys left|Tree used up/.test(f.message)) && <RenewKeys compact />}
         </section>

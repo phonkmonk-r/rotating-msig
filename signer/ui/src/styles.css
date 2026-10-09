@@ -1880,6 +1880,19 @@ dd.positive {
   white-space: nowrap;
 }
 
+.recover {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stuck {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .skip-keys {
   margin-top: 12px;
 }

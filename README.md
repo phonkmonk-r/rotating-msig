@@ -67,7 +67,7 @@ This is a testnet project. It has not been audited, and it should not hold anyth
 
 Off-chain confirmations are public before execution. Every confirmation posted to the Transaction Service reveals a public key that is still an owner until the transaction executes. The app caps that at one below the threshold, so what is exposed is never enough to sign, and allows one pending proposal at a time. The window is real, though. A signed transaction that never executes leaves those keys exposed; force-rotating the slots that signed it is a choice under New transaction, not something the app does on its own.
 
-An execution that is sent but never mined exposes a full threshold of keys: the confirmers plus the executor. Handling this (resend, then force-rotate every signer of it at the same nonce) is designed but not built yet.
+An execution that is sent but never mined exposes a full threshold of keys: the confirmers plus the executor. The app keeps a log of every signature it makes and the executions it sent, so this is caught even across a restart and without any view of the mempool. The executor can resend with a higher fee, and if the transaction is abandoned, one button proposes a force-rotate of every exposed slot at the same nonce, which also cancels it. Until that lands, those keys are exposed.
 
 The app refuses to sign messages. Permits, sign-in with Ethereum, off-chain orders and anything else EIP-1271 would expose a key without rotating it, and the signature would stop verifying once owners rotate anyway. dApps that need a signed message to log in do not work through Cicada. CoW Swap and others fall back to on-chain approvals for Safes.
 

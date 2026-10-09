@@ -167,7 +167,7 @@ describe("rotation signer end to end", { skip }, () => {
       await new Promise((resolve) => setTimeout(resolve, 1200));
       const { body } = await api(stuckSigner, `/api/executions/${hash}`);
       assert.equal(body.status, "stuck");
-      assert.match(String(body.message), /only one can ever be mined/);
+      assert.match(String(body.message), /Speed up sends it again/);
       assert.equal(blackHole.swallowed(), 1);
       assert.equal(BigInt((await api(servers[0]!, "/api/status")).body.nonce as string), nonce, "nothing reached the chain");
       service.drop(hash);

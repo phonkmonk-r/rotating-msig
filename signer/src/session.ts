@@ -25,6 +25,7 @@ import {
   guardCalls,
   loadTreeFile,
   stageEntries,
+  treeKeyPath,
   rotationGuardAbi,
   safeTxHash,
   safeTxTypedData,
@@ -39,6 +40,7 @@ import {
 } from "@rotating-msig/core";
 import { KeyChecker, type UsedKey } from "./keycheck.js";
 import { readAfter, simulateCalls, type ReadCall, type Simulation } from "./simulate.js";
+import { memoryStore, type SessionStore } from "./store.js";
 import { generateTree, OPERATOR_ACCOUNT, resolveCurrentOwner, type AddressSource, type CurrentOwner } from "@rotating-msig/keys";
 import {
   createWalletClient,
@@ -84,7 +86,14 @@ export interface SessionOptions {
   candidateTrees?: TreeFile[];
   /** Called after switching to a renewed key list, so it can be saved as the slot's tree. */
   onTreeChange?: (tree: TreeFile) => void;
+  /** Keeps the signing log and open executions across restarts; in memory when absent. */
+  store?: SessionStore;
 }
+
+const SIGNING_LOG_FILE = "signing-log.json";
+const EXECUTIONS_FILE = "executions.json";
+/** A speed-up must raise both fees by at least this much over the transaction it replaces (nodes require 10%). */
+const SPEED_UP_BUMP = { numerator: 113n, denominator: 100n };
 
 export const DEFAULT_EXECUTION_TIMEOUT_MS = 180_000;
 
@@ -154,6 +163,8 @@ export interface StatusView {
   signers: SignerView[];
   /** Set when the Transaction Service could not be read; confirmations are then unknown. */
   queueError?: string;
+  /** Set while keys that signed something that never went through are still owners. */
+  exposure?: Exposure;
 }
 
 export interface QueueItem {
@@ -163,6 +174,8 @@ export interface QueueItem {
   confirmations: { owner: Address; signatureType: string; counts: boolean }[];
   verdict: Pick<Verdict, "action" | "blockers" | "warnings">;
   submissionDate?: string;
+  /** This signer's execution of it, when one is out (also after a restart). */
+  attempt?: Execution;
 }
 
 export interface ProposalResult {
@@ -201,8 +214,11 @@ export interface Execution {
   /** Host of the RPC it was sent through. */
   sentThrough: string;
   sentAt?: string;
-  /** `preparing`: funding the key or signing; `failed`: nothing was sent (see message). */
-  status: "preparing" | "pending" | "success" | "reverted" | "stuck" | "failed";
+  /**
+   * `preparing`: funding the key or signing; `failed`: nothing was sent (see message); `stuck`: sent, not included
+   * after the timeout; `replaced`: another transaction used the Safe nonce, so this one can never be mined.
+   */
+  status: "preparing" | "pending" | "success" | "reverted" | "stuck" | "failed" | "replaced";
   steps: ExecutionStep[];
   gasUsed?: string;
   rotated?: { slotId: number; from: Address; to: Address }[];
@@ -211,6 +227,48 @@ export interface Execution {
   funding?: { transactionHash: Hex; amount: string };
   /** Returning the executing key's remainder to the operator account once the execution is mined. */
   sweep?: { status: "waiting" | "sent" | "nothing" | "failed"; transactionHash?: Hex; amount?: string; message?: string };
+  /** Earlier sends of the same transaction, replaced by speed-ups; any of them may still be the one mined. */
+  previousHashes?: Hex[];
+}
+
+/** One signature by an owner key, as the app records it the moment it signs. */
+export interface SignedRecord {
+  chainId: number;
+  safe: Address;
+  nonce: string;
+  safeTxHash: Hex;
+  key: Address;
+  slotId: number;
+  /** Tree index of the key. */
+  index: number;
+  role: "confirm" | "execute";
+  at: string;
+}
+
+/** Keys that signed something that never went through and are still owners: a full fix is one force-rotate. */
+export interface Exposure {
+  /** Safe nonce of the transaction that did not go through. */
+  nonce: string;
+  safeTxHash: Hex;
+  keys: { slotId: number; address: Address; role: SignedRecord["role"] }[];
+  slotIds: number[];
+  /** This signer's own execution of it is still out and may yet land (speed up first). */
+  openAttempt: boolean;
+}
+
+/** An execution as kept on disk: enough to keep following it, speed it up and sweep after a restart. */
+interface StoredAttempt {
+  record: Execution;
+  /** Safe nonce of the transaction. */
+  nonce: string;
+  index: number;
+  sentAtMs: number;
+  accountNonce?: number;
+  request?: { to: Address; data: Hex; gas: string; maxFeePerGas: string; maxPriorityFeePerGas: string };
+}
+
+interface Attempt extends StoredAttempt {
+  account?: LocalAccount;
 }
 
 /** Where a proposal stands, read from the Safe's nonce and its execution events. */
@@ -266,6 +324,8 @@ export interface RefillStatus {
 /** Ether amount as a decimal string, for JSON. */
 const wei = (value: bigint) => value.toString();
 
+const isOwner = (state: SafeState, address: Address) => state.owners.some((owner) => isAddressEqual(owner, address));
+
 /**
  * One signer's view of one Safe. Holds the key source; every action re-reads chain and queue state and re-runs the
  * rules engine, so nothing the UI sends can bypass a rule.
@@ -279,9 +339,125 @@ export class SignerSession {
   private readonly proposedDrafts = new Map<string, DraftProposal>();
   private lastRefill?: RefillStatus;
   private keyAlert?: { usedKeys: (UsedKey & { index: number })[]; currentKeyUsed?: string[] };
-  private readonly executions = new Map<string, { record: Execution; before: SafeState; sentAtMs: number; account: LocalAccount }>();
+  private readonly executions = new Map<string, Attempt>();
+  private readonly store: SessionStore;
+  private signingLog: SignedRecord[];
 
-  constructor(private readonly options: SessionOptions) {}
+  constructor(private readonly options: SessionOptions) {
+    this.store = options.store ?? memoryStore();
+    this.signingLog = this.readStored<SignedRecord[]>(SIGNING_LOG_FILE) ?? [];
+    for (const attempt of this.readStored<StoredAttempt[]>(EXECUTIONS_FILE) ?? []) {
+      this.executions.set(attempt.record.safeTxHash.toLowerCase(), attempt);
+      for (const hash of this.hashesOf(attempt.record)) this.executions.set(hash.toLowerCase(), attempt);
+      if (attempt.record.sweep?.status === "waiting" && attempt.record.transactionHash) void this.sweepWhenMined(attempt.record.transactionHash);
+    }
+  }
+
+  private readStored<T>(name: string): T | undefined {
+    const raw = this.store.read(name);
+    if (!raw) return undefined;
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private hashesOf(record: Execution): Hex[] {
+    return [...(record.transactionHash ? [record.transactionHash] : []), ...(record.previousHashes ?? [])];
+  }
+
+  /** Open attempts (sent, not yet final) go to disk; finished ones are dropped from it. */
+  private saveAttempts(): void {
+    const open = new Map<string, StoredAttempt>();
+    for (const attempt of this.executions.values()) {
+      const { record } = attempt;
+      if (!record.transactionHash || record.status === "failed" || record.status === "success" || record.status === "reverted" || record.status === "replaced") continue;
+      const { account: _account, ...stored } = attempt;
+      open.set(record.safeTxHash.toLowerCase(), stored);
+    }
+    this.store.write(EXECUTIONS_FILE, JSON.stringify([...open.values()]));
+  }
+
+  /** Records a signature by an owner key before it leaves the app, so a lost transaction can never hide an exposed key. */
+  private logSigned(owner: CurrentOwner, nonce: bigint, safeTxHash: Hex, role: SignedRecord["role"]): SignedRecord {
+    const entry: SignedRecord = {
+      chainId: this.chainId,
+      safe: this.safe,
+      nonce: nonce.toString(),
+      safeTxHash,
+      key: owner.account.address,
+      slotId: owner.slot.slotId,
+      index: owner.index,
+      role,
+      at: new Date().toISOString(),
+    };
+    this.signingLog.push(entry);
+    this.store.write(SIGNING_LOG_FILE, JSON.stringify(this.signingLog));
+    return entry;
+  }
+
+  private unlogSigned(entry: SignedRecord): void {
+    this.signingLog = this.signingLog.filter((candidate) => candidate !== entry);
+    this.store.write(SIGNING_LOG_FILE, JSON.stringify(this.signingLog));
+  }
+
+  /** The attempt this signer has out for `safeTxHash`, if it was sent and is not final. */
+  private openAttempt(safeTxHash: Hex): Attempt | undefined {
+    const attempt = this.executions.get(safeTxHash.toLowerCase());
+    if (!attempt?.record.transactionHash) return undefined;
+    const { status } = attempt.record;
+    return status === "pending" || status === "stuck" ? attempt : undefined;
+  }
+
+  /** Brings every open attempt up to date with the chain, so one that landed stops counting as out. */
+  private async refreshAttempts(): Promise<void> {
+    for (const attempt of new Set(this.executions.values())) {
+      if (this.openAttempt(attempt.record.safeTxHash)) await this.execution(attempt.record.safeTxHash).catch(() => undefined);
+    }
+  }
+
+  private hasOpenAttempt(): boolean {
+    return [...new Set(this.executions.values())].some((attempt) => this.openAttempt(attempt.record.safeTxHash) !== undefined);
+  }
+
+  /**
+   * Recorded keys that are still owners although the transaction they signed is gone from the queue: an execution
+   * of theirs that never landed, or a confirmation whose transaction was replaced. Entries whose key rotated out are
+   * forgotten. Keys of transactions still pending are not listed, since the queue already counts them.
+   */
+  private exposures(state: SafeState, pending: readonly PendingTx[]): { exposed: Address[]; exposure?: Exposure } {
+    const live = this.signingLog.filter((entry) => entry.chainId === state.chainId && isAddressEqual(entry.safe, state.safe) && isOwner(state, entry.key));
+    if (live.length !== this.signingLog.length) {
+      this.signingLog = live;
+      this.store.write(SIGNING_LOG_FILE, JSON.stringify(live));
+    }
+    const exposed = [...new Set(live.map((entry) => entry.key))];
+    const stillQueued = (entry: SignedRecord) => entry.role === "confirm" && pending.some((tx) => tx.safeTxHash.toLowerCase() === entry.safeTxHash.toLowerCase());
+    const lost = live.filter((entry) => !stillQueued(entry));
+    const first = lost[0];
+    if (!first) return { exposed };
+    // One recovery at a time: the oldest lost transaction's signers (its confirmers, when it is still queued, were exposed
+    // by the same transaction) plus every other recorded key, since the fix is one force-rotate.
+    const keys = live.map((entry) => ({ slotId: entry.slotId, address: entry.key, role: entry.role }));
+    const lostTx = pending.find((tx) => tx.safeTxHash.toLowerCase() === first.safeTxHash.toLowerCase());
+    for (const confirmation of lostTx?.confirmations ?? []) {
+      const slot = state.slots.find((candidate) => isAddressEqual(candidate.owner, confirmation.owner));
+      if (!slot || keys.some((key) => isAddressEqual(key.address, confirmation.owner))) continue;
+      if (confirmation.signatureType === "EOA" || confirmation.signatureType === "ETH_SIGN") keys.push({ slotId: slot.slotId, address: confirmation.owner, role: "confirm" });
+    }
+    const attempt = this.openAttempt(first.safeTxHash);
+    return {
+      exposed,
+      exposure: {
+        nonce: first.nonce,
+        safeTxHash: first.safeTxHash,
+        keys,
+        slotIds: [...new Set(keys.map((key) => key.slotId))].sort((a, b) => a - b),
+        openAttempt: attempt !== undefined && attempt.record.status === "pending",
+      },
+    };
+  }
 
   get safe(): Address {
     return this.options.safe;
@@ -318,6 +494,7 @@ export class SignerSession {
   }
 
   private async snapshot(): Promise<{ state: SafeState; owner?: CurrentOwner; ownerError?: string }> {
+    await this.refreshAttempts();
     const state = await readSafeState(this.options.publicClient, this.options.safe);
     this.adoptRenewedTree(state);
     try {
@@ -338,6 +515,14 @@ export class SignerSession {
     }
     let me: Me | undefined;
     const findings = assess(state, this.options.gasFunding ? { minOwnerGas: 0n } : {});
+    const { exposure } = this.exposures(state, pending);
+    if (exposure && !exposure.openAttempt) {
+      const slots = exposure.slotIds.map((slotId) => `slot ${slotId}`).join(", ");
+      findings.push({
+        severity: "critical",
+        message: `Transaction #${exposure.nonce} was signed but never went through. The keys of ${slots} are exposed without having rotated: replace them now`,
+      });
+    }
     if (owner) {
       const balance = await this.options.publicClient.getBalance({ address: owner.account.address });
       let operator: Me["operator"];
@@ -398,6 +583,7 @@ export class SignerSession {
             .map((tx) => tx.tx.nonce.toString()),
       })),
       queueError,
+      exposure,
     };
   }
 
@@ -407,6 +593,7 @@ export class SignerSession {
     return pending.map((tx) => {
       const verdict = owner ? this.evaluate(state, tx, pending, owner) : undefined;
       return {
+        attempt: this.openAttempt(tx.safeTxHash)?.record,
         safeTxHash: tx.safeTxHash,
         nonce: tx.tx.nonce.toString(),
         actions: verdict?.actions ?? [],
@@ -428,29 +615,51 @@ export class SignerSession {
    * proposer's confirmation. With `preview`, only checks and describes it. Refuses while another transaction is
    * pending, since confirmations spread over several transactions can add up to a threshold of exposed keys.
    */
-  propose(input: ProposalInput, preview = false): Promise<ProposalResult> {
+  propose(input: ProposalInput, preview = false, options: { replacing?: boolean } = {}): Promise<ProposalResult> {
     const run = async (): Promise<ProposalResult> => {
       const { state, owner, ownerError } = await this.snapshot();
       if (!owner) throw new Error(ownerError ?? "your current owner key could not be resolved");
       if (state.threshold < 2) throw new Error("proposing needs a threshold of at least 2: with 1, the executor signs alone");
       const queue = await this.options.txService.pending(this.options.safe, state.nonce);
-      if (queue.length > 0) throw new Error(`transaction #${queue[0]!.tx.nonce} is still pending: execute it or replace it in Safe{Wallet} first`);
+      // A recovery is proposed at the current nonce on purpose: landing it cancels the transaction it replaces.
+      const pendingOthers = options.replacing ? queue.filter((tx) => tx.tx.nonce !== state.nonce) : queue;
+      if (pendingOthers.length > 0) throw new Error(`transaction #${pendingOthers[0]!.tx.nonce} is still pending: execute it or replace it in Safe{Wallet} first`);
 
       const call = buildProposal(input, this.context(state));
       await this.check(input, state, call);
 
       const tx = plainSafeTx({ ...call, nonce: state.nonce }, await this.safeTxGasFor(input, state));
       const hash = safeTxHash(state.chainId, state.safe, tx);
-      const verdict = this.evaluate(state, { safeTxHash: hash, tx, confirmations: [] }, [], owner);
+      const verdict = this.evaluate(state, { safeTxHash: hash, tx, confirmations: [] }, queue, owner);
       if (verdict.action !== "confirm") throw new Error(`cannot propose: ${verdict.blockers.join("; ")}`);
 
       const result = { safeTxHash: hash, nonce: tx.nonce.toString(), actions: verdict.actions, warnings: verdict.warnings, proposed: false };
       if (preview) return result;
-      const signature = await owner.account.signTypedData(safeTxTypedData(state.chainId, state.safe, tx));
-      await this.options.txService.propose(state.safe, tx, owner.account.address, signature);
+      const signed = this.logSigned(owner, tx.nonce, hash, "confirm");
+      try {
+        const signature = await owner.account.signTypedData(safeTxTypedData(state.chainId, state.safe, tx));
+        await this.options.txService.propose(state.safe, tx, owner.account.address, signature);
+      } catch (error) {
+        this.unlogSigned(signed);
+        throw error;
+      }
       return { ...result, proposed: true };
     };
     return preview ? run() : this.exclusive(run);
+  }
+
+  /**
+   * The fix for keys that signed something that never went through: a force-rotate of every exposed slot, proposed at
+   * the current nonce so it also cancels the lost transaction. Its own signers rotate as usual. With `preview`, only
+   * describes it.
+   */
+  async recover(preview = false): Promise<ProposalResult & { slotIds: number[] }> {
+    const { state } = await this.snapshot();
+    const pending = await this.options.txService.pending(this.options.safe, state.nonce);
+    const { exposure } = this.exposures(state, pending);
+    if (!exposure) throw new Error("no exposed keys to replace");
+    const result = await this.propose({ kind: "force-rotate", slotIds: exposure.slotIds }, preview, { replacing: true });
+    return { ...result, slotIds: exposure.slotIds };
   }
 
   /**
@@ -638,8 +847,14 @@ export class SignerSession {
       const { state, owner, pending, tx } = await this.load(safeTxHash);
       const verdict = this.evaluate(state, tx, pending, owner);
       if (verdict.action !== "confirm") throw new Error(`cannot confirm: ${[...verdict.blockers, `allowed action is ${verdict.action}`].join("; ")}`);
-      const signature = await owner.account.signTypedData(safeTxTypedData(state.chainId, state.safe, tx.tx));
-      await this.options.txService.confirm(tx.safeTxHash, signature);
+      const signed = this.logSigned(owner, tx.tx.nonce, tx.safeTxHash, "confirm");
+      try {
+        const signature = await owner.account.signTypedData(safeTxTypedData(state.chainId, state.safe, tx.tx));
+        await this.options.txService.confirm(tx.safeTxHash, signature);
+      } catch (error) {
+        this.unlogSigned(signed);
+        throw error;
+      }
       return { owner: owner.account.address };
     });
   }
@@ -706,14 +921,15 @@ export class SignerSession {
       ...(gasFunding ? [{ id: "sweep" as const, label: "Unused gas returned", status: "waiting" as const }] : []),
     ];
     const record: Execution = { safeTxHash: tx.safeTxHash, sentThrough: host, status: "preparing", steps, sweep: gasFunding ? { status: "waiting" } : undefined };
-    this.executions.set(tx.safeTxHash.toLowerCase(), { record, before: state, sentAtMs: Date.now(), account: owner.account });
-    return { record, state, data, from, gasLimit: (gas * 12n) / 10n, fees, account: owner.account };
+    this.executions.set(tx.safeTxHash.toLowerCase(), { record, nonce: tx.tx.nonce.toString(), index: owner.index, sentAtMs: Date.now(), account: owner.account });
+    return { record, state, data, from, gasLimit: (gas * 12n) / 10n, fees, owner, nonce: tx.tx.nonce };
   }
 
   /** Funds the key if needed, then signs and sends. Inclusion and the sweep are followed by `execution`. */
   private async sendExecution(prepared: Awaited<ReturnType<SignerSession["prepareExecution"]>>): Promise<void> {
-    const { chain, executionRpcUrl, gasFunding } = this.options;
-    const { record, state, data, from, gasLimit, fees, account } = prepared;
+    const { chain, executionRpcUrl, gasFunding, publicClient } = this.options;
+    const { record, state, data, from, gasLimit, fees, owner, nonce } = prepared;
+    const { account } = owner;
     const step = (id: ExecutionStepId, patch: Partial<ExecutionStep>) => {
       const found = record.steps.find((candidate) => candidate.id === id);
       if (found) Object.assign(found, patch);
@@ -730,21 +946,73 @@ export class SignerSession {
 
     step("send", { status: "active", detail: "signing" });
     const wallet = createWalletClient({ account, chain, transport: http(executionRpcUrl) });
-    const transactionHash = await wallet.sendTransaction({
-      to: state.safe,
-      data,
-      gas: gasLimit,
-      maxFeePerGas: fees.maxFeePerGas,
-      maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
-      chain,
-    });
+    // The account nonce is pinned so a speed-up can replace exactly this transaction.
+    const accountNonce = await publicClient.getTransactionCount({ address: from, blockTag: "pending" });
+    const request = { to: state.safe, data, gas: gasLimit, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas };
+    const signed = this.logSigned(owner, nonce, record.safeTxHash, "execute");
+    let transactionHash: Hex;
+    try {
+      transactionHash = await wallet.sendTransaction({ ...request, nonce: accountNonce, chain });
+    } catch (error) {
+      this.unlogSigned(signed);
+      throw error;
+    }
     Object.assign(record, { transactionHash, sentAt: new Date().toISOString(), status: "pending" });
     step("send", { status: "done", detail: undefined, transactionHash });
     step("include", { status: "active", detail: "waiting for a block" });
     const entry = this.executions.get(record.safeTxHash.toLowerCase())!;
     entry.sentAtMs = Date.now();
+    entry.accountNonce = accountNonce;
+    entry.request = { ...request, gas: request.gas.toString(), maxFeePerGas: request.maxFeePerGas.toString(), maxPriorityFeePerGas: request.maxPriorityFeePerGas.toString() };
     this.executions.set(transactionHash.toLowerCase(), entry);
+    this.saveAttempts();
     if (gasFunding) void this.sweepWhenMined(transactionHash);
+  }
+
+  /**
+   * Resends an execution that has not landed: the same transaction from the same key and account nonce with higher
+   * fees, so at most one of the two can ever be mined. Works after a restart and through a changed execution RPC.
+   */
+  speedUp(safeTxHash: Hex): Promise<Execution> {
+    return this.exclusive(async () => {
+      const attempt = this.openAttempt(safeTxHash);
+      if (!attempt?.request || attempt.accountNonce === undefined) throw new Error("no execution of this transaction is out from this signer");
+      const { record, request } = attempt;
+      await this.execution(record.safeTxHash);
+      if (record.status !== "pending" && record.status !== "stuck") throw new Error("this execution is already final");
+      const { chain, executionRpcUrl, publicClient } = this.options;
+      const account = await this.attemptAccount(attempt);
+      const fees = await publicClient.estimateFeesPerGas();
+      const bump = (previous: bigint) => (previous * SPEED_UP_BUMP.numerator) / SPEED_UP_BUMP.denominator + 1n;
+      const maxFeePerGas = fees.maxFeePerGas > bump(BigInt(request.maxFeePerGas)) ? fees.maxFeePerGas : bump(BigInt(request.maxFeePerGas));
+      const maxPriorityFeePerGas = fees.maxPriorityFeePerGas > bump(BigInt(request.maxPriorityFeePerGas)) ? fees.maxPriorityFeePerGas : bump(BigInt(request.maxPriorityFeePerGas));
+      const wallet = createWalletClient({ account, chain, transport: http(executionRpcUrl) });
+      const transactionHash = await wallet.sendTransaction({ to: request.to, data: request.data, gas: BigInt(request.gas), maxFeePerGas, maxPriorityFeePerGas, nonce: attempt.accountNonce, chain });
+      record.previousHashes = [...(record.previousHashes ?? []), record.transactionHash!];
+      record.transactionHash = transactionHash;
+      record.sentAt = new Date().toISOString();
+      record.status = "pending";
+      record.message = undefined;
+      record.sentThrough = new URL(executionRpcUrl).host;
+      const step = record.steps.find((candidate) => candidate.id === "send");
+      if (step) Object.assign(step, { label: `Sent again via ${record.sentThrough}`, transactionHash });
+      const include = record.steps.find((candidate) => candidate.id === "include");
+      if (include) Object.assign(include, { status: "active", detail: "waiting for a block" });
+      attempt.sentAtMs = Date.now();
+      attempt.request = { ...request, maxFeePerGas: maxFeePerGas.toString(), maxPriorityFeePerGas: maxPriorityFeePerGas.toString() };
+      this.executions.set(transactionHash.toLowerCase(), attempt);
+      this.saveAttempts();
+      return record;
+    });
+  }
+
+  /** The key an attempt was sent from, derived again after a restart. */
+  private async attemptAccount(attempt: Attempt): Promise<LocalAccount> {
+    if (attempt.account) return attempt.account;
+    const tree = this.options.tree;
+    const path = treeKeyPath(tree, attempt.index);
+    attempt.account = await this.options.source.signer(path.account, path.index, path.branch);
+    return attempt.account;
   }
 
   /**
@@ -952,7 +1220,7 @@ export class SignerSession {
         }
         await new Promise((resolve) => setTimeout(resolve, SWEEP_POLL_MS));
       }
-      await this.sweep(entry.account, sweep);
+      await this.sweep(await this.attemptAccount(entry), sweep);
     } catch (error) {
       sweep.status = "failed";
       sweep.message = (error as Error).message;
@@ -991,7 +1259,7 @@ export class SignerSession {
   async execution(hash: Hex): Promise<Execution> {
     const entry = this.executions.get(hash.toLowerCase());
     if (!entry) throw new Error(`no execution ${hash} was started by this signer`);
-    const { record, before, sentAtMs } = entry;
+    const { record, sentAtMs } = entry;
     const step = (id: ExecutionStepId, patch: Partial<ExecutionStep>) => {
       const found = record.steps.find((candidate) => candidate.id === id);
       if (found) Object.assign(found, patch);
@@ -1003,20 +1271,32 @@ export class SignerSession {
       else if (sweep.status === "nothing") step("sweep", { status: "skipped", detail: "nothing left to return" });
       else step("sweep", { status: "failed", detail: sweep.message });
     };
-    if (!record.transactionHash || record.status === "failed") return record;
+    if (!record.transactionHash || record.status === "failed" || record.status === "replaced") return record;
     if (record.status === "success" || record.status === "reverted") {
       syncSweep();
       return record;
     }
 
-    const receipt = await this.options.publicClient.getTransactionReceipt({ hash: record.transactionHash }).catch(() => undefined);
+    let receipt: Awaited<ReturnType<PublicClient["getTransactionReceipt"]>> | undefined;
+    for (const candidate of this.hashesOf(record)) {
+      receipt = await this.options.publicClient.getTransactionReceipt({ hash: candidate }).catch(() => undefined);
+      if (receipt) {
+        if (candidate !== record.transactionHash) {
+          // An earlier send won the race: it is the execution; the speed-up can never be mined.
+          record.previousHashes = this.hashesOf(record).filter((other) => other !== candidate);
+          record.transactionHash = candidate;
+          step("send", { transactionHash: candidate });
+        }
+        break;
+      }
+    }
     if (receipt) {
       record.gasUsed = receipt.gasUsed.toString();
       if (receipt.status === "success") {
         record.status = "success";
         // From the receipt's own logs: a load-balanced RPC may not have caught up with the receipt's block yet.
         record.rotated = parseEventLogs({ abi: rotationGuardAbi, eventName: "OwnerRotated", logs: receipt.logs })
-          .filter((log) => isAddressEqual(log.args.safe, before.safe))
+          .filter((log) => isAddressEqual(log.args.safe, this.safe))
           .map((log) => ({ slotId: Number(log.args.slotId), from: log.args.oldOwner, to: log.args.newOwner }));
         record.message = undefined;
         step("include", { status: "done", detail: `block ${receipt.blockNumber}, ${receipt.gasUsed.toLocaleString("en-US")} gas` });
@@ -1024,21 +1304,36 @@ export class SignerSession {
         if (record.sweep?.status === "waiting") step("sweep", { status: "active", detail: "sending the rest back" });
       } else {
         record.status = "reverted";
-        record.message = "The transaction was mined but reverted: its signatures are public and nobody rotated. Refill buffers and force-rotate those signers now.";
+        record.message = "The transaction was mined but reverted: its signatures are public and nobody rotated. Replace the keys that signed it now.";
         step("include", { status: "failed", detail: "mined but reverted" });
         step("rotate", { status: "failed", detail: "nobody rotated" });
       }
       syncSweep();
+      this.saveAttempts();
       return record;
     }
 
+    if (record.status === "stuck") {
+      // Not mined, and the Safe moved past its nonce: another transaction took its place (a recovery, or a resend by another signer).
+      const state = await readSafeState(this.options.publicClient, this.safe);
+      if (state.nonce > BigInt(entry.nonce)) {
+        record.status = "replaced";
+        record.message = `Another transaction used nonce ${entry.nonce}, so this one can never be mined.`;
+        step("include", { status: "skipped", detail: "replaced by another transaction" });
+        step("rotate", { status: "skipped" });
+        this.saveAttempts();
+        return record;
+      }
+    }
     const timeout = this.options.executionTimeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS;
-    if (Date.now() - sentAtMs > timeout) {
-      step("include", { detail: `not included yet after ${Math.round(timeout / 60_000) || 1} minute(s)` });
+    if (Date.now() - sentAtMs > timeout && record.status !== "stuck") {
+      const minutes = Math.round(timeout / 60_000) || 1;
+      step("include", { detail: `still waiting for the network after ${minutes} minute${minutes === 1 ? "" : "s"}` });
       record.status = "stuck";
       record.message =
-        `Not included after ${Math.round(timeout / 60_000) || 1} minute(s) through ${record.sentThrough}; it may still land. ` +
-        "To resend through another RPC, restart the signer with --execution-rpc and execute again: both use your account's next nonce, so only one can ever be mined.";
+        `Still waiting for the network: not included after ${minutes} minute${minutes === 1 ? "" : "s"} through ${record.sentThrough}. It may still land. ` +
+        "Speed up sends it again with a higher fee; if it never lands, replace the keys that signed it.";
+      this.saveAttempts();
     }
     return record;
   }
@@ -1048,6 +1343,8 @@ export class SignerSession {
       state,
       pending: tx,
       queue,
+      exposed: this.exposures(state, queue).exposed,
+      openAttempt: this.hasOpenAttempt(),
       me: owner.account.address,
       decode: {
         safe: state.safe,

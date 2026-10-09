@@ -1,5 +1,6 @@
-import { isAddressEqual, type Address } from "viem";
+import { decodeFunctionData, isAddressEqual, type Address } from "viem";
 
+import { rotationGuardAbi } from "./abi/rotationGuard.js";
 import { decodeActions, type Action, type DecodeContext } from "./decode.js";
 import { type OwnerSignature } from "./safetx.js";
 import type { SafeState } from "./state.js";
@@ -31,9 +32,29 @@ export interface EvaluateInput {
   /** ETH the executor needs for gas; omit to skip the check. */
   executionCost?: bigint;
   myBalance?: bigint;
+  /**
+   * Current owners whose keys are exposed outside the queue: they signed an execution or a confirmation that never
+   * went through (recorded by the app's signing log). They count like confirmations when exposure is added up.
+   */
+  exposed?: readonly Address[];
+  /** This signer's key already sent an execution that has not landed; it holds the key's account nonce. */
+  openAttempt?: boolean;
 }
 
 const isOwner = (state: SafeState, address: Address) => state.owners.some((owner) => isAddressEqual(owner, address));
+
+/** The slots a plain `forceRotate` call on the guard rotates, or undefined for any other transaction. */
+export function forceRotatedSlots(pending: PendingTx, guard: Address): number[] | undefined {
+  const { tx } = pending;
+  if (!isAddressEqual(tx.to, guard) || tx.operation !== 0 || tx.value !== 0n) return undefined;
+  try {
+    const decoded = decodeFunctionData({ abi: rotationGuardAbi, data: tx.data });
+    if (decoded.functionName !== "forceRotate") return undefined;
+    return (decoded.args[0] as readonly bigint[]).map(Number);
+  } catch {
+    return undefined;
+  }
+}
 
 /** Confirmations that count toward the guard: from current owners, as ECDSA or eth_sign signatures. */
 function usableConfirmations(state: SafeState, pending: PendingTx): Confirmation[] {
@@ -96,6 +117,7 @@ export function evaluate(input: EvaluateInput): Verdict {
   }
 
   if (valid.length >= threshold - 1) {
+    if (input.openAttempt) blockers.push("your key already sent an execution that has not landed yet: speed it up, or replace the exposed keys, instead of sending again");
     const chosen = valid.slice(0, threshold - 1);
     if (valid.length > threshold - 1) {
       const extra = valid.slice(threshold - 1).map((c) => c.owner);
@@ -110,15 +132,19 @@ export function evaluate(input: EvaluateInput): Verdict {
   }
 
   requireStaged(me, "you");
-  const exposedElsewhere = new Set<string>();
-  for (const other of queue) {
-    if (other.safeTxHash === pending.safeTxHash) continue;
-    for (const c of usableConfirmations(state, other)) exposedElsewhere.add(c.owner.toLowerCase());
-  }
-  const exposedAfter = new Set([...exposedElsewhere, ...valid.map((c) => c.owner.toLowerCase()), me.toLowerCase()]);
-  if (exposedAfter.size >= threshold) {
+  // Keys exposed before this confirmation: confirmations across the queue, plus what the signing log recorded.
+  const exposedBefore = new Set<string>();
+  for (const other of queue) for (const c of usableConfirmations(state, other)) exposedBefore.add(c.owner.toLowerCase());
+  for (const key of input.exposed ?? []) if (isOwner(state, key)) exposedBefore.add(key.toLowerCase());
+  const exposedSlots = state.slots.filter((slot) => exposedBefore.has(slot.owner.toLowerCase())).map((slot) => slot.slotId);
+  const rotates = forceRotatedSlots(pending, state.guard);
+  const recovery = exposedSlots.length > 0 && rotates !== undefined && exposedSlots.every((slotId) => rotates.includes(slotId));
+  if (recovery) return verdict("confirm");
+  if (exposedBefore.size >= threshold) {
+    blockers.push(`${exposedBefore.size} owners have exposed but unrotated keys (threshold ${threshold}): replace them (force-rotate slots ${exposedSlots.join(", ")}) before anything else`);
+  } else if (!exposedBefore.has(me.toLowerCase()) && exposedBefore.size + 1 >= threshold) {
     blockers.push(
-      `confirming would leave ${exposedAfter.size} owners with exposed but unrotated keys (threshold ${threshold}); execute or replace the other pending transactions first`,
+      `confirming would leave ${exposedBefore.size + 1} owners with exposed but unrotated keys (threshold ${threshold}); execute or replace the other pending transactions first`,
     );
   }
   return verdict("confirm");

@@ -6,6 +6,7 @@ import { readClient } from "./join.js";
 import { KeyChecker } from "./keycheck.js";
 import { chainFor, DEFAULT_EXECUTION_RPC, DEFAULT_RPCS, LOCAL_CHAINS } from "./networks.js";
 import { SignerSession } from "./session.js";
+import { fileStore } from "./store.js";
 
 export { chainFor, CHAINS, DEFAULT_EXECUTION_RPC, DEFAULT_RPCS, registerLocalChain } from "./networks.js";
 
@@ -20,6 +21,8 @@ export interface SessionConfig {
   /** Renewed key lists proposed earlier, and where to save the one the session switches to. */
   candidateTrees?: TreeFile[];
   onTreeChange?: (tree: TreeFile) => void;
+  /** Where the signing log and open executions are kept across restarts; in memory when absent. */
+  dataDir?: string;
 }
 
 /** Nonces on this network and mainnet, and the guard's staging history on this network since its first deployment. */
@@ -51,6 +54,7 @@ export function createSession(config: SessionConfig, source: AddressSource): { s
     gasFunding: true,
     candidateTrees: config.candidateTrees,
     onTreeChange: config.onTreeChange,
+    store: config.dataDir ? fileStore(config.dataDir) : undefined,
   });
   return { session, chain, executionRpc };
 }

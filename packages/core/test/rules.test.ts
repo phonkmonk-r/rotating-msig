@@ -5,7 +5,7 @@ import { getAddress, type Address, type Hex } from "viem";
 import { MAINNET } from "../src/addresses.js";
 import { batch, guardCalls, safeCalls } from "../src/calls.js";
 import { decodeActions } from "../src/decode.js";
-import { evaluate, type EvaluateInput } from "../src/rules.js";
+import { evaluate, forceRotatedSlots, type EvaluateInput } from "../src/rules.js";
 import { plainSafeTx } from "../src/safetx.js";
 import type { SafeState, SlotState } from "../src/state.js";
 import type { Confirmation, PendingTx } from "../src/txservice.js";
@@ -138,6 +138,35 @@ describe("decodeActions", () => {
     assert.match(actions[0]!.summary, /Rotate slot\(s\) 2 to their next keys/);
     assert.match(actions[1]!.summary, /Require 3 signature\(s\)/);
     assert.match(actions[2]!.summary, /Send 0.5 ETH/);
+  });
+
+  it("counts keys the signing log recorded as exposed, unless the signer's own key is one of them", () => {
+    const blocked = run({ exposed: [B] });
+    assert.equal(blocked.action, "none");
+    assert.match(blocked.blockers.join(), /2 owners with exposed but unrotated keys/);
+    assert.equal(run({ me: B, exposed: [B] }).action, "confirm", "confirming again exposes nothing new");
+    assert.equal(run({ exposed: [ROTATED] }).action, "confirm", "a key that rotated out no longer counts");
+  });
+
+  it("with a threshold of exposed keys, allows only the force-rotate that replaces all of them", () => {
+    const transfer = run({ exposed: [B, C] });
+    assert.equal(transfer.action, "none");
+    assert.match(transfer.blockers.join(), /2 owners have exposed but unrotated keys.*force-rotate slots 1, 2/);
+    const partial = run({ exposed: [B, C], pending: pending([], guardCalls.forceRotate(GUARD, [1])) });
+    assert.equal(partial.action, "none");
+    const recovery = run({ exposed: [B, C], pending: pending([], guardCalls.forceRotate(GUARD, [1, 2])) });
+    assert.equal(recovery.action, "confirm");
+    const byExposed = run({ me: B, exposed: [B, C], pending: pending([], guardCalls.forceRotate(GUARD, [1, 2])) });
+    assert.equal(byExposed.action, "confirm");
+    assert.deepEqual(forceRotatedSlots(pending([], guardCalls.forceRotate(GUARD, [1, 2])), GUARD), [1, 2]);
+    assert.equal(forceRotatedSlots(pending(), GUARD), undefined);
+  });
+
+  it("refuses a second execution while the signer's key still has one out", () => {
+    const verdict = run({ pending: pending([confirmation(B)]), openAttempt: true });
+    assert.equal(verdict.action, "none");
+    assert.match(verdict.blockers.join(), /already sent an execution/);
+    assert.equal(run({ openAttempt: true }).action, "confirm", "confirming needs no account nonce");
   });
 
   it("summarises staging compactly and decodes ERC-20 transfers", () => {

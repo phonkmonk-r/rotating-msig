@@ -66,13 +66,22 @@ export async function serve(session: SignerSession, options: ServeOptions): Prom
 
     if (req.method === "GET" && url.pathname === "/api/status") return send(res, 200, await session.status());
     if (req.method === "GET" && url.pathname === "/api/queue") return send(res, 200, await session.queue());
-    if (req.method === "POST" && (url.pathname === "/api/confirm" || url.pathname === "/api/execute")) {
+    if (req.method === "POST" && (url.pathname === "/api/confirm" || url.pathname === "/api/execute" || url.pathname === "/api/speed-up")) {
       const body = await readJson(req);
       const hash = (body as { safeTxHash?: unknown }).safeTxHash;
       if (typeof hash !== "string" || !isHex(hash) || hash.length !== 66) return send(res, 400, { error: "safeTxHash must be a 32-byte hex string" });
       try {
-        const result = url.pathname === "/api/confirm" ? await session.confirm(hash) : await session.execute(hash, { untilSent: false });
+        const result =
+          url.pathname === "/api/confirm" ? await session.confirm(hash) : url.pathname === "/api/speed-up" ? await session.speedUp(hash) : await session.execute(hash, { untilSent: false });
         return send(res, 200, result);
+      } catch (error) {
+        return send(res, 409, { error: (error as Error).message });
+      }
+    }
+    if (req.method === "POST" && url.pathname === "/api/recover") {
+      const body = (await readJson(req)) as { preview?: unknown };
+      try {
+        return send(res, 200, await session.recover(body.preview === true));
       } catch (error) {
         return send(res, 409, { error: (error as Error).message });
       }

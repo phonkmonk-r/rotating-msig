@@ -1,10 +1,10 @@
 import type { DappCall, ProposalInput } from "@rotating-msig/core";
 
 import type { DappRequest } from "../../src/dapp.js";
-import type { DraftItem, DraftView, Execution, ProposalResult, QueueItem, Refill, SignerView, StatusView, TokenInfo } from "../../src/session.js";
+import type { DraftItem, DraftView, Execution, Exposure, ProposalResult, QueueItem, Refill, SignerView, StatusView, TokenInfo } from "../../src/session.js";
 import type { Simulation } from "../../src/simulate.js";
 
-export type { DappCall, DappRequest, DraftItem, DraftView, Execution, ProposalInput, ProposalResult, QueueItem, Refill, Simulation, SignerView, StatusView, TokenInfo };
+export type { DappCall, DappRequest, DraftItem, DraftView, Execution, Exposure, ProposalInput, ProposalResult, QueueItem, Refill, Simulation, SignerView, StatusView, TokenInfo };
 
 /** The dApp browser's page, as the main process reports it. */
 export interface BrowserState {
@@ -152,6 +152,8 @@ interface DesktopBridge {
   confirm(hash: string): Promise<Result<{ owner: string }>>;
   execute(hash: string): Promise<Result<Execution>>;
   execution(hash: string): Promise<Result<Execution>>;
+  speedUp(hash: string): Promise<Result<Execution>>;
+  recover(preview: boolean): Promise<Result<ProposalResult & { slotIds: number[] }>>;
   propose(input: ProposalInput, preview: boolean): Promise<Result<ProposalResult>>;
   token(address: string): Promise<Result<TokenInfo>>;
   refill(): Promise<Result<Refill | null>>;
@@ -245,6 +247,9 @@ export const api = {
   confirm: (hash: string) => (bridge ? unwrap(bridge.confirm(hash)) : http<{ owner: string }>("/api/confirm", post(hash))),
   execute: (hash: string) => (bridge ? unwrap(bridge.execute(hash)) : http<Execution>("/api/execute", post(hash))),
   execution: (hash: string) => (bridge ? unwrap(bridge.execution(hash)) : http<Execution>(`/api/executions/${hash}`)),
+  speedUp: (hash: string) => (bridge ? unwrap(bridge.speedUp(hash)) : http<Execution>("/api/speed-up", post(hash))),
+  recover: (preview: boolean) =>
+    bridge ? unwrap(bridge.recover(preview)) : http<ProposalResult & { slotIds: number[] }>("/api/recover", { method: "POST", body: JSON.stringify({ preview }) }),
   propose: (input: ProposalInput, preview: boolean) =>
     bridge ? unwrap(bridge.propose(input, preview)) : http<ProposalResult>("/api/propose", { method: "POST", body: JSON.stringify({ input, preview }) }),
   draft: () => (bridge ? unwrap(bridge.draft()) : http<DraftView>("/api/draft")),

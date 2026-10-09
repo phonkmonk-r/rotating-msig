@@ -9,7 +9,7 @@ export function executionInFlight(execution: Pick<Execution, "status" | "sweep">
 export function executionTone(status: Execution["status"]): "ok" | "critical" | "warning" | "pending" {
   if (status === "success") return "ok";
   if (status === "reverted" || status === "failed") return "critical";
-  if (status === "stuck") return "warning";
+  if (status === "stuck" || status === "replaced") return "warning";
   return "pending";
 }
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { api, type DraftView, type Execution, type QueueItem, type StatusView } from "../api";
 import { explorer, short } from "../format";
@@ -7,6 +7,7 @@ import { executionInFlight, executionTone } from "../lib/execution";
 import { Avatar, Badge, PageHeader } from "../ui";
 import { NewTransaction } from "./NewTransaction";
 import { QueueCard } from "./QueueCard";
+import { Recover } from "./Recover";
 
 const EXECUTION_POLL_MS = 3_000;
 
@@ -71,6 +72,7 @@ export function Transactions({
               item={item}
               status={status}
               onBusy={onBusy}
+              onRefresh={onRefresh}
               onFinished={(execution) => setFinished((list) => [{ item, execution }, ...list.filter((entry) => entry.item.safeTxHash !== item.safeTxHash)])}
             />
           ))}
@@ -92,39 +94,73 @@ function TxCard({
   item,
   status,
   onBusy,
+  onRefresh,
   onFinished,
 }: {
   item: QueueItem;
   status: StatusView;
   onBusy: (busy: boolean) => void;
+  onRefresh: () => void;
   onFinished: (execution: Execution) => void;
 }) {
-  const [stage, setStage] = useState<Stage>({ kind: "idle" });
+  // An execution this signer already has out (also after a restart) is followed instead of offering Execute again.
+  const [stage, setStage] = useState<Stage>(() => (item.attempt ? { kind: "executing", execution: item.attempt } : { kind: "idle" }));
+  const busy = useRef(false);
   const needed = Math.max(status.threshold - 1, 0);
   const counting = item.confirmations.filter((c) => c.counts).length;
   const { action, blockers, warnings } = item.verdict;
 
+  // Polling pauses while the execution is being sent or waiting for a block; a stuck one lets the app keep syncing.
+  const setBusy = (value: boolean) => {
+    if (busy.current === value) return;
+    busy.current = value;
+    onBusy(value);
+  };
+
+  useEffect(() => {
+    if (stage.kind !== "executing") return;
+    const { execution } = stage;
+    if (!executionInFlight(execution)) {
+      setBusy(false);
+      onFinished(execution);
+      return;
+    }
+    setBusy(execution.status !== "stuck");
+    const timer = setTimeout(() => {
+      api.execution(execution.safeTxHash).then(
+        (next) => setStage({ kind: "executing", execution: next }),
+        (caught: Error) => {
+          setBusy(false);
+          setStage({ kind: "failed", message: caught.message });
+        },
+      );
+    }, execution.status === "preparing" ? 1_000 : EXECUTION_POLL_MS);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage]);
+
   async function run() {
     setStage({ kind: "working" });
-    onBusy(true);
+    setBusy(true);
     try {
       if (action === "confirm") {
         await api.confirm(item.safeTxHash);
         setStage({ kind: "confirmed" });
+        setBusy(false);
       } else {
-        let execution = await api.execute(item.safeTxHash);
-        setStage({ kind: "executing", execution });
-        while (executionInFlight(execution)) {
-          await new Promise((resolve) => setTimeout(resolve, execution.status === "preparing" ? 1_000 : EXECUTION_POLL_MS));
-          execution = await api.execution(execution.safeTxHash);
-          setStage({ kind: "executing", execution });
-        }
-        onFinished(execution);
+        setStage({ kind: "executing", execution: await api.execute(item.safeTxHash) });
       }
     } catch (caught) {
+      setBusy(false);
       setStage({ kind: "failed", message: (caught as Error).message });
-    } finally {
-      onBusy(false);
+    }
+  }
+
+  async function speedUp() {
+    try {
+      setStage({ kind: "executing", execution: await api.speedUp(item.safeTxHash) });
+    } catch (caught) {
+      setStage({ kind: "failed", message: (caught as Error).message });
     }
   }
 
@@ -180,6 +216,16 @@ function TxCard({
         </div>
       )}
       {stage.kind === "executing" && <ExecutionStatus execution={stage.execution} chainId={status.chainId} />}
+      {stage.kind === "executing" && stage.execution.status === "stuck" && (
+        <div className="stuck">
+          <div className="tx-footer">
+            <button type="button" className="primary" onClick={() => void speedUp()}>
+              Speed up
+            </button>
+          </div>
+          {status.exposure && <Recover exposure={status.exposure} onProposed={onRefresh} />}
+        </div>
+      )}
       {stage.kind === "failed" && (
         <div className="note critical">
           <IconAlert width="15" height="15" />

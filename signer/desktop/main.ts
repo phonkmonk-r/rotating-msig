@@ -127,6 +127,9 @@ function renewedTrees(entry: Pick<SafeEntry, "chainId" | "safe" | "slotId">): Tr
 
 const treePath = (settings: Pick<SafeEntry, "chainId" | "safe" | "slotId">) =>
   join(profileDir(), "trees", `${settings.chainId}-${settings.safe.toLowerCase()}-slot${settings.slotId}.json`);
+/** The Safe's signing log and open executions. */
+const sessionDir = (settings: Pick<SafeEntry, "chainId" | "safe" | "slotId">) =>
+  join(profileDir(), "sessions", `${settings.chainId}-${settings.safe.toLowerCase()}-slot${settings.slotId}`);
 
 let session: SignerSession | undefined;
 /** Present only while the wallet is unlocked: the decrypted seed never leaves this process. */
@@ -195,6 +198,7 @@ async function start(entry: SafeEntry): Promise<void> {
       txServiceUrl: entry.txServiceUrl,
       safeApiKey: process.env.SAFE_API_KEY,
       candidateTrees: renewedTrees(entry),
+      dataDir: sessionDir(entry),
       // A renewal executed: the new list becomes the slot's tree, and the saved candidate is no longer needed.
       onTreeChange: (renewed) => {
         writeFileSync(treePath(entry), JSON.stringify(renewed));
@@ -681,6 +685,8 @@ handle("safes:remove", (key: unknown) => {
   const settings = readSettings();
   if (!settings) return true;
   stopSafe(String(key));
+  const removed = settings.safes.find((candidate) => safeKey(candidate) === key);
+  if (removed) rmSync(sessionDir(removed), { recursive: true, force: true });
   const safes = settings.safes.filter((candidate) => safeKey(candidate) !== key);
   if (activeKey === key) {
     browser?.close();
@@ -695,6 +701,8 @@ handle("signer:queue", () => requireSession().queue());
 handle("signer:confirm", (hash: unknown) => requireSession().confirm(requireHash(hash)));
 handle("signer:execute", (hash: unknown) => requireSession().execute(requireHash(hash), { untilSent: false }));
 handle("signer:execution", (hash: unknown) => requireSession().execution(requireHash(hash)));
+handle("signer:speedUp", (hash: unknown) => requireSession().speedUp(requireHash(hash)));
+handle("signer:recover", (preview: unknown) => requireSession().recover(preview === true));
 handle("signer:propose", (input: unknown, preview: unknown) => requireSession().propose(input as never, preview === true));
 handle("signer:refill", () => requireSession().refill());
 handle("signer:skipUsedKeys", () => requireSession().skipUsedKeysInput());
