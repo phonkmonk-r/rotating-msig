@@ -2,7 +2,7 @@ import {
   createInvite,
   creationCall,
   DEFAULT_TREE_SIZE,
-  defaultBase,
+  safeAccount,
   deploymentsFor,
   describeRevert,
   execTransactionData,
@@ -86,7 +86,7 @@ export async function prepareSlot(
   size = DEFAULT_TREE_SIZE,
 ): Promise<{ tree: TreeFile; package: SlotPackage }> {
   const { slotId } = await readInvite(context, source, invite);
-  const meta = { chainId: invite.chainId, safe: invite.safe, slotId, base: defaultBase(invite.chainId, invite.safe) };
+  const meta = { chainId: invite.chainId, safe: invite.safe, slotId, base: safeAccount(invite.chainId, invite.safe) };
   const tree = await generateTree(source, meta, size, onProgress);
   return { tree, package: createSlotPackage(invite, loadTreeFile(JSON.stringify(tree)), await freshStart(context, tree)) };
 }
@@ -171,8 +171,8 @@ export async function prepareNewSlot(
 ): Promise<{ tree: TreeFile; package: SlotPackage }> {
   const state = await readSafeState(context.client, safe);
   if (!state.installed) throw new Error("this Safe does not have the rotation guard installed");
-  const meta = { chainId: context.chain.id, safe: state.safe, slotId: state.slotCount, base: defaultBase(context.chain.id, state.safe) };
-  const first = await source.address(meta.base);
+  const meta = { chainId: context.chain.id, safe: state.safe, slotId: state.slotCount, base: safeAccount(context.chain.id, state.safe) };
+  const first = await source.address(meta.base, 0);
   if (state.owners.some((owner) => isAddressEqual(owner, first))) throw new Error("this seed is already a signer of this Safe");
   const tree = await generateTree(source, meta, size, onProgress);
   const loaded = loadTreeFile(JSON.stringify(tree));

@@ -4,8 +4,21 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { getAddress, isAddress, isHex, type Address } from "viem";
 
-import { createTreeFile, defaultBase, loadTreeFile, proofFor, slotConfig, stageEntries, validateMeta, type TreeMeta } from "@rotating-msig/core";
-import { openLedgerSource, PATH_TEMPLATE, readSecret, seedSource, type AddressSource } from "@rotating-msig/keys";
+import {
+  createTreeFile,
+  defaultBase,
+  loadTreeFile,
+  proofFor,
+  RANGE_PATH_TEMPLATE,
+  SAFE_PATH_TEMPLATE,
+  safeAccount,
+  slotConfig,
+  stageEntries,
+  treeKeyPath,
+  validateMeta,
+  type TreeMeta,
+} from "@rotating-msig/core";
+import { openLedgerSource, readSecret, seedSource, type AddressSource } from "@rotating-msig/keys";
 
 
 /** Account indexes below this are where wallets put everyday accounts, whose keys may already be exposed. */
@@ -16,11 +29,12 @@ export const MAINNET_CHAIN_ID = 1;
 const USAGE = `rotation-tree: offline generator for RotationGuard signer trees
 
 Commands:
-  generate  --safe <address> --slot <id> --out <file> [--base <account>]
+  generate  --safe <address> --slot <id> --out <file> [--base <account>] [--layout safe|range]
             [--size ${DEFAULT_SIZE}] [--chain-id ${MAINNET_CHAIN_ID}] [--source seed|ledger] [--mnemonic-file <file>]
             [--passphrase] [--allow-low-base] [--force]
-      Derives <size> addresses at ${PATH_TEMPLATE} for account = base..base+size-1 and writes the tree file.
-      The base defaults to one derived from the chain and Safe address, unique per Safe (the signer app finds it).
+      Derives <size> addresses and writes the tree file. Layout "safe" (default): ${SAFE_PATH_TEMPLATE} with one
+      account per Safe. Layout "range" (earlier trees): ${RANGE_PATH_TEMPLATE} for account = base..base+size-1.
+      The account (or range start) defaults to one derived from the chain and Safe address (the signer app finds it).
   verify    --tree <file> [--root <hex>] [--source seed|ledger] [--mnemonic-file <file>] [--passphrase] [--sample <n>]
       Rebuilds the root from the file, optionally compares it with an expected (on-chain) root, and optionally
       re-derives addresses from the seed or device to confirm the file is yours.
@@ -48,6 +62,7 @@ const OPTIONS = {
   safe: { type: "string" },
   slot: { type: "string" },
   base: { type: "string" },
+  layout: { type: "string" },
   size: { type: "string" },
   "chain-id": { type: "string" },
   source: { type: "string" },
@@ -114,7 +129,11 @@ async function generate(values: Values, io: Io): Promise<number> {
     slotId: integer(values.slot, "--slot"),
     base: 0,
   };
-  meta.base = values.base === undefined ? defaultBase(meta.chainId, meta.safe) : integer(values.base, "--base");
+  const layout = values.layout ?? "safe";
+  if (layout !== "safe" && layout !== "range") throw new Error(`--layout must be safe or range, not ${layout}`);
+  const pathTemplate = layout === "safe" ? SAFE_PATH_TEMPLATE : RANGE_PATH_TEMPLATE;
+  const derivedBase = layout === "safe" ? safeAccount(meta.chainId, meta.safe) : defaultBase(meta.chainId, meta.safe);
+  meta.base = values.base === undefined ? derivedBase : integer(values.base, "--base");
   const size = values.size === undefined ? DEFAULT_SIZE : integer(values.size, "--size");
   validateMeta(meta, size);
   if (meta.base < MIN_BASE && !values["allow-low-base"]) {
@@ -127,7 +146,8 @@ async function generate(values: Values, io: Io): Promise<number> {
   const addresses: Address[] = [];
   try {
     for (let i = 0; i < size; i++) {
-      addresses.push(await source.address(meta.base + i));
+      const path = treeKeyPath({ base: meta.base, pathTemplate }, i);
+      addresses.push(await source.address(path.account, path.index));
       if ((i + 1) % 500 === 0 || i + 1 === size) io.stderr(`derived ${i + 1}/${size}\r`);
     }
     io.stderr("\n");
@@ -135,7 +155,7 @@ async function generate(values: Values, io: Io): Promise<number> {
     await source.close();
   }
 
-  const file = createTreeFile(meta, PATH_TEMPLATE, addresses);
+  const file = createTreeFile(meta, pathTemplate, addresses);
   const tmp = `${out}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(file, null, 2)}\n`, { mode: 0o644 });
   renameSync(tmp, out);
@@ -145,7 +165,7 @@ async function generate(values: Values, io: Io): Promise<number> {
       `wrote ${out}`,
       `root      ${file.root}`,
       `safe      ${file.safe} (chain ${file.chainId}), slot ${file.slotId}`,
-      `accounts  ${file.base}..${file.base + file.size - 1} at ${PATH_TEMPLATE}`,
+      layout === "safe" ? `keys      account ${file.base}, indexes 0..${file.size - 1} at ${pathTemplate}` : `accounts  ${file.base}..${file.base + file.size - 1} at ${pathTemplate}`,
       `index 0   ${file.addresses[0]}`,
       "Before the setup transaction is signed, check that this root is the one committed for your slot.",
       "",
@@ -171,7 +191,8 @@ async function verify(values: Values, io: Io): Promise<number> {
     const source = await openSource(values, io);
     try {
       for (const index of indexes) {
-        const derived = await source.address(file.base + index);
+        const path = treeKeyPath(file, index);
+        const derived = await source.address(path.account, path.index);
         if (derived !== file.addresses[index]) {
           throw new Error(`address ${index} does not match: derived ${derived}, tree file has ${file.addresses[index]}`);
         }

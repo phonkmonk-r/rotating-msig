@@ -3,7 +3,7 @@ import { after, before, describe, it } from "node:test";
 import { createWalletClient, http, numberToHex, parseEther, type Address } from "viem";
 import { foundry } from "viem/chains";
 
-import { defaultBase, decodeInvite, decodePackage, encodeInvite, encodePackage, readSafeState, verifyPackages, type SafeDeployments, type SlotPackage } from "@rotating-msig/core";
+import { safeAccount, decodeInvite, decodePackage, encodeInvite, encodePackage, readSafeState, verifyPackages, type SafeDeployments, type SlotPackage } from "@rotating-msig/core";
 import { seedSource } from "@rotating-msig/keys";
 
 import { joinSafe } from "../src/join.js";
@@ -67,8 +67,7 @@ describe("creating a new Safe from the app", { skip }, () => {
 
   it("starts a slot past keys that were already used elsewhere", async () => {
     const invite = await planSafe(context, operators, 2);
-    const base = defaultBase(foundry.id, invite.safe);
-    const usedKey = await sources[2]!.signer(base + 1);
+    const usedKey = await sources[2]!.signer(safeAccount(foundry.id, invite.safe), 1);
     await chain.client.request({ method: "anvil_setBalance" as never, params: [usedKey.address, numberToHex(parseEther("1"))] as never });
     const wallet = createWalletClient({ account: usedKey, chain: foundry, transport: http(chain.rpc) });
     await chain.client.waitForTransactionReceipt({ hash: await wallet.sendTransaction({ to: usedKey.address, value: 0n }) });

@@ -10,6 +10,26 @@ export const TREE_FORMAT = "rotation-tree/v1";
 /** Largest account index usable as a hardened BIP-32 child. */
 export const MAX_ACCOUNT_INDEX = 2 ** 31 - 1;
 
+/**
+ * How a tree's keys are derived. Per-Safe (current): one hardened account per Safe, keys at index `i` under it, so two
+ * Safes' keys only meet if their accounts collide (about 1 in 2 billion). Ranged (earlier trees): key `i` at hardened
+ * account `base + i`, so two Safes' ranges of 10,000 could overlap (about 1 in 50,000).
+ */
+export const SAFE_PATH_TEMPLATE = "m/44'/60'/{account}'/0/{index}";
+export const RANGE_PATH_TEMPLATE = "m/44'/60'/{account}'/0/0";
+
+/** Where key `index` of a tree is derived. */
+export interface KeyPath {
+  account: number;
+  index: number;
+}
+
+export function treeKeyPath(layout: Pick<TreeFile, "base" | "pathTemplate">, index: number): KeyPath {
+  if (layout.pathTemplate === SAFE_PATH_TEMPLATE) return { account: layout.base, index };
+  if (layout.pathTemplate === RANGE_PATH_TEMPLATE) return { account: layout.base + index, index: 0 };
+  throw new Error(`unknown derivation path template ${layout.pathTemplate}`);
+}
+
 export type LeafValue = [chainId: string, safe: Address, slotId: string, index: string, owner: Address];
 
 /** Identifies which Safe slot a tree belongs to. All of it is bound into every leaf. */
@@ -17,7 +37,7 @@ export interface TreeMeta {
   chainId: number;
   safe: Address;
   slotId: number;
-  /** First BIP-32 account index; address `i` is derived at account `base + i`. */
+  /** The hardened account the keys live under (per-Safe layout), or the first account of the range (ranged layout). */
   base: number;
 }
 

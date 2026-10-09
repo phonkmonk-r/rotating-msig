@@ -1,13 +1,14 @@
 import type { Address, LocalAccount } from "viem";
 
-/** Ledger Live style path: hardened per account, so one account's xpub never reveals another account's keys. */
+/** The ranged layout's path (earlier trees); also the shape of the operator account. */
 export const PATH_TEMPLATE = "m/44'/60'/{account}'/0/0";
 
 /** The seed's standard first account (`m/44'/60'/0'/0/0`): the signer's operator account, which pays for gas. */
 export const OPERATOR_ACCOUNT = 0;
 
-export function derivationPath(account: number): string {
-  return PATH_TEMPLATE.replace("{account}", String(account));
+/** `m/44'/60'/{account}'/0/{index}`: hardened account, plain index (0 for the operator and ranged trees). */
+export function derivationPath(account: number, index = 0): string {
+  return `m/44'/60'/${account}'/0/${index}`;
 }
 
 /**
@@ -16,8 +17,8 @@ export function derivationPath(account: number): string {
  */
 export interface AddressSource {
   readonly kind: "seed" | "ledger";
-  address(account: number): Promise<Address>;
-  /** A viem account that signs as the owner at this account index. */
-  signer(account: number): Promise<LocalAccount>;
+  address(account: number, index?: number): Promise<Address>;
+  /** A viem account that signs as the owner at this account (and index under it). */
+  signer(account: number, index?: number): Promise<LocalAccount>;
   close(): Promise<void>;
 }

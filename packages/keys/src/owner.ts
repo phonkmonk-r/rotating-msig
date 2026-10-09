@@ -1,6 +1,6 @@
 import { isAddressEqual, type Address, type LocalAccount } from "viem";
 
-import type { SafeState, SlotState, TreeFile } from "@rotating-msig/core";
+import { treeKeyPath, type SafeState, type SlotState, type TreeFile } from "@rotating-msig/core";
 
 import type { AddressSource } from "./source.js";
 
@@ -27,9 +27,10 @@ export async function resolveCurrentOwner(source: AddressSource, tree: TreeFile,
     throw new Error(`slot ${tree.slotId}'s owner ${slot.owner} is not address ${index} of this tree; is it the right tree file?`);
   }
 
-  const account = await source.signer(tree.base + index);
+  const path = treeKeyPath(tree, index);
+  const account = await source.signer(path.account, path.index);
   if (!isAddressEqual(account.address, slot.owner)) {
-    throw new Error(`the key at account ${tree.base + index} is ${account.address}, not the slot owner ${slot.owner}; wrong seed or passphrase?`);
+    throw new Error(`the key at account ${path.account}, index ${path.index} is ${account.address}, not the slot owner ${slot.owner}; wrong seed or passphrase?`);
   }
   return { slot, index, account };
 }

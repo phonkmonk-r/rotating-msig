@@ -18,11 +18,12 @@ export function seedSource(mnemonic: string, passphrase = ""): AddressSource {
 
   let coinType: HDKey | undefined = HDKey.fromMasterSeed(mnemonicToSeedSync(normalized, passphrase)).derive("m/44'/60'");
 
-  function signer(account: number): LocalAccount {
+  function signer(account: number, index = 0): LocalAccount {
     if (!coinType) throw new Error("seed source is closed");
-    const key = coinType.deriveChild(account + HARDENED).deriveChild(0).deriveChild(0);
+    if (!Number.isInteger(index) || index < 0 || index >= HARDENED) throw new Error(`invalid key index ${index}`);
+    const key = coinType.deriveChild(account + HARDENED).deriveChild(0).deriveChild(index);
     const privateKey = key.privateKey;
-    if (!privateKey) throw new Error(`no private key at account ${account}`);
+    if (!privateKey) throw new Error(`no private key at account ${account}, index ${index}`);
     const local = privateKeyToAccount(toHex(privateKey));
     key.wipePrivateData();
     return local;
@@ -30,11 +31,11 @@ export function seedSource(mnemonic: string, passphrase = ""): AddressSource {
 
   return {
     kind: "seed",
-    async address(account: number): Promise<Address> {
-      return signer(account).address;
+    async address(account: number, index = 0): Promise<Address> {
+      return signer(account, index).address;
     },
-    async signer(account: number): Promise<LocalAccount> {
-      return signer(account);
+    async signer(account: number, index = 0): Promise<LocalAccount> {
+      return signer(account, index);
     },
     async close(): Promise<void> {
       coinType?.wipePrivateData();

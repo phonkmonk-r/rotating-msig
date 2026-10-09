@@ -1,11 +1,20 @@
-import { defaultBase, readSafeState, type TreeFile } from "@rotating-msig/core";
-import { discoverSlot, generateTree, type AddressSource } from "@rotating-msig/keys";
+import { defaultBase, RANGE_PATH_TEMPLATE, readSafeState, SAFE_PATH_TEMPLATE, safeAccount, type TreeFile } from "@rotating-msig/core";
+import { discoverSlot, generateTree, type AddressSource, type KeyLayout } from "@rotating-msig/keys";
 import { createPublicClient, fallback, getAddress, http, isAddress, isAddressEqual, type Address, type PublicClient } from "viem";
 
 import { chainFor, DEFAULT_RPCS } from "./networks.js";
 
 /** Account index the first Sepolia test Safe used before ranges were derived per Safe. Tried after the derived one. */
 export const LEGACY_BASES = [100_000];
+
+/** Where a signer's keys for a Safe may live: the per-Safe account first, then the ranged layouts of earlier trees. */
+export function keyLayouts(chainId: number, safe: Address): KeyLayout[] {
+  return [
+    { pathTemplate: SAFE_PATH_TEMPLATE, base: safeAccount(chainId, safe) },
+    { pathTemplate: RANGE_PATH_TEMPLATE, base: defaultBase(chainId, safe) },
+    ...LEGACY_BASES.map((base) => ({ pathTemplate: RANGE_PATH_TEMPLATE, base })),
+  ];
+}
 
 export function readClient(chainId: number, rpc?: string): PublicClient {
   const urls = rpc ? [rpc] : DEFAULT_RPCS[chainId];
@@ -39,7 +48,7 @@ export interface JoinOptions {
   rpc?: string;
   /** Test hook: a client to use instead of building one. */
   client?: PublicClient;
-  /** Candidate tree bases; defaults to the Safe's derived base, then the legacy ones. */
+  /** Test hook: ranged-layout bases to try instead of the defaults. */
   bases?: number[];
   onProgress?: (progress: JoinProgress) => void;
 }
@@ -97,8 +106,7 @@ export async function joinSafe(options: JoinOptions): Promise<JoinResult> {
   }
 
   progress({ stage: "finding" });
-  const bases = options.bases ?? [defaultBase(chainId, safe), ...LEGACY_BASES];
-  const found = await discoverSlot(options.source, state, bases);
+  const found = await discoverSlot(options.source, state, options.bases?.map((base) => ({ pathTemplate: RANGE_PATH_TEMPLATE, base })) ?? keyLayouts(chainId, safe));
   if (!found) {
     throw new JoinError(
       "not-owner",
@@ -107,7 +115,7 @@ export async function joinSafe(options: JoinOptions): Promise<JoinResult> {
   }
 
   const meta = { chainId, safe, slotId: found.slot.slotId, base: found.base };
-  const tree = await generateTree(options.source, meta, found.slot.size, (done, total) => progress({ stage: "deriving", done, total }));
+  const tree = await generateTree(options.source, meta, found.slot.size, (done, total) => progress({ stage: "deriving", done, total }), undefined, found.pathTemplate);
 
   progress({ stage: "verifying" });
   if (tree.root !== found.slot.root) {
