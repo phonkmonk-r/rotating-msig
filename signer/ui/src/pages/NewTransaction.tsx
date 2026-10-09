@@ -4,7 +4,8 @@ import { formatUnits, isAddress, parseEther, parseUnits } from "viem";
 import { api, type DappCall, type ProposalInput, type ProposalResult, type StatusView, type TokenInfo } from "../api";
 import { eth } from "../format";
 import { IconAlert, IconCheck } from "../icons";
-import { Avatar, Badge, Dots } from "../ui";
+import { sendLabel } from "../lib/execution";
+import { Avatar, Badge, Dots, useSoleSigner } from "../ui";
 import { ContractCall } from "./ContractCall";
 
 type Tab = "eth" | "erc20" | "call" | "force-rotate";
@@ -28,6 +29,7 @@ export function NewTransaction({
   onClose: () => void;
   onProposed: () => void;
 }) {
+  const sole = useSoleSigner();
   const [tab, setTab] = useState<Tab>("eth");
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
@@ -119,8 +121,10 @@ export function NewTransaction({
             <IconCheck />
           </span>
           <div>
-            <div className="identity-title">Proposed #{done.nonce}</div>
-            <p className="muted">Your signature counts as a confirmation. Another signer can now execute it.</p>
+            <div className="identity-title">
+              {sole ? "Executing" : "Proposed"} #{done.nonce}
+            </div>
+            <p className="muted">{sole ? "You are the only signer, so it is executing now. Follow its steps below." : "Your signature counts as a confirmation. Another signer can now execute it."}</p>
           </div>
         </div>
         <div className="tx-footer">
@@ -163,8 +167,17 @@ export function NewTransaction({
             </div>
           ))}
           <ul className="checklist">
-            <li>Signed with your current key as your confirmation</li>
-            <li>Another signer executes; you both rotate</li>
+            {sole ? (
+              <>
+                <li>Sent by your current key, the only signature needed</li>
+                <li>You rotate to your next key</li>
+              </>
+            ) : (
+              <>
+                <li>Signed with your current key as your confirmation</li>
+                <li>Another signer executes; you both rotate</li>
+              </>
+            )}
           </ul>
         </div>
       ) : tab === "call" ? (
@@ -254,7 +267,7 @@ export function NewTransaction({
               Back
             </button>
             <button type="button" className="primary" onClick={() => void submit(false)} disabled={working}>
-              {working ? "Signing…" : "Sign & propose"}
+              {working ? "Signing…" : sendLabel(sole)}
             </button>
           </>
         ) : (

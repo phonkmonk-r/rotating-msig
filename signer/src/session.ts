@@ -190,6 +190,11 @@ export interface ProposalResult {
   warnings: string[];
   /** False for a preview: nothing was signed or sent. */
   proposed: boolean;
+  /**
+   * True when this signer is the Safe's only signer (threshold 1): nothing goes to the Transaction Service, the
+   * transaction is executed at once instead (follow it with `execution`, or in the queue).
+   */
+  direct?: boolean;
 }
 
 export interface TokenInfo {
@@ -355,6 +360,8 @@ export class SignerSession {
   private lastRefill?: RefillStatus;
   private keyAlert?: { usedKeys: (UsedKey & { index: number })[]; currentKeyUsed?: string[] };
   private readonly executions = new Map<string, Attempt>();
+  /** Transactions of a threshold-1 Safe, executed directly instead of proposed; kept until their nonce is used. */
+  private readonly directTxs = new Map<string, PendingTx>();
   private readonly store: SessionStore;
   private signingLog: SignedRecord[];
 
@@ -528,6 +535,7 @@ export class SignerSession {
     } catch (error) {
       queueError = (error as Error).message;
     }
+    pending = this.withDirect(state, pending);
     let me: Me | undefined;
     const findings = assess(state, this.options.gasFunding ? { minOwnerGas: 0n } : {});
     const { exposure } = this.exposures(state, pending);
@@ -604,7 +612,7 @@ export class SignerSession {
 
   async queue(): Promise<QueueItem[]> {
     const { state, owner } = await this.snapshot();
-    const pending = await this.options.txService.pending(this.options.safe, state.nonce);
+    const pending = this.withDirect(state, await this.options.txService.pending(this.options.safe, state.nonce));
     return pending.map((tx) => {
       const verdict = owner ? this.evaluate(state, tx, pending, owner) : undefined;
       return {
@@ -632,12 +640,11 @@ export class SignerSession {
    * proposer's confirmation. With `preview`, only checks and describes it. Refuses while another transaction is
    * pending, since confirmations spread over several transactions can add up to a threshold of exposed keys.
    */
-  propose(input: ProposalInput, preview = false, options: { replacing?: boolean } = {}): Promise<ProposalResult> {
+  async propose(input: ProposalInput, preview = false, options: { replacing?: boolean } = {}): Promise<ProposalResult> {
     const run = async (): Promise<ProposalResult> => {
       const { state, owner, ownerError } = await this.snapshot();
       if (!owner) throw new Error(ownerError ?? "your current owner key could not be resolved");
-      if (state.threshold < 2) throw new Error("proposing needs a threshold of at least 2: with 1, the executor signs alone");
-      const queue = await this.options.txService.pending(this.options.safe, state.nonce, { fresh: true });
+      const queue = this.withDirect(state, await this.options.txService.pending(this.options.safe, state.nonce, { fresh: true }));
       // A recovery is proposed at the current nonce on purpose: landing it cancels the transaction it replaces.
       const pendingOthers = options.replacing ? queue.filter((tx) => tx.tx.nonce !== state.nonce) : queue;
       if (pendingOthers.length > 0) throw new Error(`transaction #${pendingOthers[0]!.tx.nonce} is still pending: execute it or replace it in Safe{Wallet} first`);
@@ -647,11 +654,19 @@ export class SignerSession {
 
       const tx = plainSafeTx({ ...call, nonce: state.nonce }, await this.safeTxGasFor(input, state));
       const hash = safeTxHash(state.chainId, state.safe, tx);
+      // With threshold 1 the proposer alone completes it: the rules call for executing rather than confirming.
+      const direct = state.threshold === 1;
       const verdict = this.evaluate(state, { safeTxHash: hash, tx, confirmations: [] }, queue, owner);
-      if (verdict.action !== "confirm") throw new Error(`cannot propose: ${verdict.blockers.join("; ")}`);
+      if (verdict.action !== (direct ? "execute" : "confirm")) throw new Error(`cannot propose: ${verdict.blockers.join("; ")}`);
 
-      const result = { safeTxHash: hash, nonce: tx.nonce.toString(), actions: verdict.actions, warnings: verdict.warnings, proposed: false };
+      const result = { safeTxHash: hash, nonce: tx.nonce.toString(), actions: verdict.actions, warnings: verdict.warnings, proposed: false, direct };
       if (preview) return result;
+      if (direct) {
+        // Nothing is signed for the Transaction Service: the executor's own pre-validated signature is the only one,
+        // and it is given when the execution is sent.
+        this.directTxs.set(hash.toLowerCase(), { safeTxHash: hash, tx, confirmations: [] });
+        return { ...result, proposed: true };
+      }
       const signed = this.logSigned(owner, tx.nonce, hash, "confirm");
       try {
         const signature = await owner.account.signTypedData(safeTxTypedData(state.chainId, state.safe, tx));
@@ -662,7 +677,18 @@ export class SignerSession {
       }
       return { ...result, proposed: true };
     };
-    return preview ? run() : this.exclusive(run);
+    if (preview) return run();
+    const result = await this.exclusive(run);
+    if (result.direct) await this.execute(result.safeTxHash, { untilSent: false });
+    return result;
+  }
+
+  /** The Transaction Service's pending transactions plus this session's direct ones (threshold 1) not yet executed. */
+  private withDirect(state: SafeState, pending: readonly PendingTx[]): PendingTx[] {
+    for (const [key, tx] of this.directTxs) if (tx.tx.nonce < state.nonce) this.directTxs.delete(key);
+    const known = new Set(pending.map((tx) => tx.safeTxHash.toLowerCase()));
+    const direct = [...this.directTxs.values()].filter((tx) => !known.has(tx.safeTxHash.toLowerCase()));
+    return [...pending, ...direct].sort((a, b) => (a.tx.nonce < b.tx.nonce ? -1 : a.tx.nonce > b.tx.nonce ? 1 : 0));
   }
 
   /**
@@ -1376,7 +1402,7 @@ export class SignerSession {
   private async load(safeTxHash: Hex) {
     const { state, owner, ownerError } = await this.snapshot();
     if (!owner) throw new Error(ownerError ?? "your current owner key could not be resolved");
-    const pending = await this.options.txService.pending(this.options.safe, state.nonce, { fresh: true });
+    const pending = this.withDirect(state, await this.options.txService.pending(this.options.safe, state.nonce, { fresh: true }));
     const tx = pending.find((candidate) => candidate.safeTxHash.toLowerCase() === safeTxHash.toLowerCase());
     if (!tx) throw new Error(`transaction ${safeTxHash} is not pending for this Safe`);
     return { state, owner, pending, tx };

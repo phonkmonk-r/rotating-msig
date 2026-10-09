@@ -2,12 +2,15 @@ import { useEffect, useState } from "react";
 
 import { api, desktop, type JoinProgress, type ProposalInput, type ProposalResult } from "../api";
 import { IconAlert, IconCheck } from "../icons";
+import { sendLabel } from "../lib/execution";
+import { useSoleSigner } from "../ui";
 
 /**
  * Renews this signer's key list: derives a fresh list from the seed (or Ledger), then proposes switching the slot to
  * it and staging its first keys, in one Safe transaction that needs the threshold like any other.
  */
 export function RenewKeys({ compact = false }: { compact?: boolean }) {
+  const sole = useSoleSigner();
   const [stage, setStage] = useState<"idle" | "deriving" | "review" | "signing" | "done">("idle");
   const [progress, setProgress] = useState<JoinProgress>();
   const [review, setReview] = useState<ProposalResult & { input: ProposalInput }>();
@@ -80,7 +83,7 @@ export function RenewKeys({ compact = false }: { compact?: boolean }) {
       {stage === "done" && review && (
         <div className="note ok">
           <IconCheck width="15" height="15" />
-          <span>Proposed #{review.nonce}. Once another signer executes it, Cicada switches to your new key list by itself.</span>
+          <span>{sole ? `Executing #${review.nonce}. Cicada switches to your new key list once it lands.` : `Proposed #${review.nonce}. Once another signer executes it, Cicada switches to your new key list by itself.`}</span>
         </div>
       )}
       {error && <div className="note critical">{error.charAt(0).toUpperCase() + error.slice(1)}</div>}
@@ -92,7 +95,7 @@ export function RenewKeys({ compact = false }: { compact?: boolean }) {
                 Cancel
               </button>
               <button type="button" className="primary" onClick={() => void propose()} disabled={stage === "signing"}>
-                {stage === "signing" ? "Signing…" : "Sign & propose"}
+                {stage === "signing" ? "Signing…" : sendLabel(sole)}
               </button>
             </>
           ) : (

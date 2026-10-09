@@ -3,18 +3,19 @@ import { useState, type ReactNode } from "react";
 import { api, type ProposalInput, type ProposalResult, type StatusView } from "../api";
 import { IconAlert, IconCheck } from "../icons";
 import { packagePreview } from "../lib/slotPackage";
-import { Address } from "../ui";
+import { nextStep, sendLabel } from "../lib/execution";
+import { Address, useSoleSigner } from "../ui";
 
 type Action = "add" | "remove" | "threshold" | "escape";
 
 const ESCAPE_PHRASE = "remove rotation";
 
-/** Signer management, proposed like any other transaction: another signer executes it and both rotate. */
+/** Signer management, sent like any other transaction: another signer executes it (or the only signer at once) and every signer rotates. */
 export function Manage({ status, pending, queueMode, onQueued }: { status: StatusView; pending: number; queueMode: boolean; onQueued: () => void }) {
   const [open, setOpen] = useState<Action>();
   const owners = status.signers.length;
   const blocked =
-    status.threshold < 2 ? "Proposing needs a threshold of at least 2" : pending > 0 && !queueMode ? "Finish the pending transaction first, or turn on the queue" : undefined;
+    pending > 0 && !queueMode ? "Finish the pending transaction first, or turn on the queue" : undefined;
   const queue = { queueMode, onQueued };
 
   return (
@@ -79,6 +80,7 @@ function Proposal({
   queue?: QueueProps;
   onClose: () => void;
 }) {
+  const sole = useSoleSigner();
   const [review, setReview] = useState<ProposalResult>();
   const [done, setDone] = useState<ProposalResult>();
   const [queued, setQueued] = useState(false);
@@ -136,7 +138,9 @@ function Proposal({
       <div className="manage-panel">
         <div className="note ok">
           <IconCheck width="15" height="15" />
-          <span>Proposed #{done.nonce}. Another signer executes it from Transactions.</span>
+          <span>
+            {sole ? "Executing" : "Proposed"} #{done.nonce}. {nextStep(sole)}
+          </span>
         </div>
         <div className="tx-footer">
           <button type="button" onClick={onClose}>
@@ -173,7 +177,7 @@ function Proposal({
         </button>
         {review ? (
           <button type="button" className="primary" disabled={working} onClick={() => void submit(false)}>
-            {working ? "Signing…" : "Sign & propose"}
+            {working ? "Signing…" : sendLabel(sole)}
           </button>
         ) : (
           <>

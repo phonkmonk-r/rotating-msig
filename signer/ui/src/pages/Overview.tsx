@@ -6,7 +6,8 @@ import { api, type ProposalInput, type ProposalResult, type QueueItem, type Stat
 import { LOW_GAS_WEI } from "../data";
 import { eth } from "../format";
 import { IconAlert, IconTransactions } from "../icons";
-import { Address, Avatar, Badge, Dots, PageHeader } from "../ui";
+import { nextStep, sendLabel } from "../lib/execution";
+import { Address, Avatar, Badge, Dots, PageHeader, useSoleSigner } from "../ui";
 
 export function Overview({ status, queue, onOpenTransactions }: { status: StatusView; queue: QueueItem[]; onOpenTransactions: () => void }) {
   const me = status.me;
@@ -106,6 +107,7 @@ export function Overview({ status, queue, onOpenTransactions }: { status: Status
 
 /** Proposes moving this signer's slot past keys that were used elsewhere, staging fresh ones in the same transaction. */
 function SkipUsedKeys() {
+  const sole = useSoleSigner();
   const [review, setReview] = useState<ProposalResult & { input: ProposalInput }>();
   const [done, setDone] = useState<string>();
   const [error, setError] = useState<string>();
@@ -124,7 +126,13 @@ function SkipUsedKeys() {
     }
   }
 
-  if (done) return <p className="muted small">Proposed #{done}. Another signer executes it from Transactions.</p>;
+  if (done) {
+    return (
+      <p className="muted small">
+        {sole ? "Executing" : "Proposed"} #{done}. {nextStep(sole)}
+      </p>
+    );
+  }
   return (
     <div className="skip-keys">
       {review && (
@@ -149,7 +157,7 @@ function SkipUsedKeys() {
               })
             }
           >
-            {working ? "Signing…" : "Sign & propose"}
+            {working ? "Signing…" : sendLabel(sole)}
           </button>
         ) : (
           <button

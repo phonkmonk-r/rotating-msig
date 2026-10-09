@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { createContext, type ReactNode, useContext, useState } from "react";
 
 import { explorer, short } from "./format";
 import { IconCheck, IconCopy, IconExternal } from "./icons";
@@ -71,4 +71,11 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
       {actions && <div className="page-actions">{actions}</div>}
     </header>
   );
+}
+
+/** Whether this signer is the Safe's only signer (threshold 1): actions then execute at once instead of being proposed. */
+export const SoleSignerContext = createContext(false);
+
+export function useSoleSigner(): boolean {
+  return useContext(SoleSignerContext);
 }

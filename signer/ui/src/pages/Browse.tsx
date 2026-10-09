@@ -4,8 +4,8 @@ import { formatEther } from "viem";
 import { browser, type BrowserState, type DappRequest, type ProposalResult, type StatusView } from "../api";
 import { short } from "../format";
 import { IconAlert, IconBack, IconCheck, IconForward, IconGlobe, IconRefresh } from "../icons";
-import { requestValue } from "../lib/execution";
-import { Badge } from "../ui";
+import { requestValue, sendLabel } from "../lib/execution";
+import { Badge, useSoleSigner } from "../ui";
 
 const SUGGESTIONS = [
   { name: "Uniswap", url: "https://app.uniswap.org", note: "Swap tokens" },
@@ -21,6 +21,7 @@ const EMPTY: BrowserState = { url: "", title: "", loading: false, canGoBack: fal
  * whenever a request is under review, so the review can never be covered or imitated by the page.
  */
 export function Browse({ status, request, queueMode }: { status: StatusView; request: DappRequest | null; queueMode: boolean }) {
+  const sole = useSoleSigner();
   const [state, setState] = useState<BrowserState>(EMPTY);
   const [address, setAddress] = useState("");
   const [editing, setEditing] = useState(false);
@@ -118,7 +119,7 @@ export function Browse({ status, request, queueMode }: { status: StatusView; req
       {proposed && request === null && (
         <div className="note ok browser-note">
           <IconCheck width="15" height="15" />
-          <span>Proposed #{proposed.nonce}. The dApp waits until another signer executes it, then continues.</span>
+          <span>{sole ? `Executing #${proposed.nonce}. The dApp continues once it lands.` : `Proposed #${proposed.nonce}. The dApp waits until another signer executes it, then continues.`}</span>
           <button type="button" className="link" onClick={() => setProposed(undefined)}>
             Dismiss
           </button>
@@ -191,6 +192,7 @@ function RequestReview({
   onProposed: (result: ProposalResult) => void;
   onQueued: () => void;
 }) {
+  const sole = useSoleSigner();
   const [preview, setPreview] = useState<ProposalResult>();
   const [error, setError] = useState<string>();
   const [working, setWorking] = useState(false);
@@ -262,8 +264,17 @@ function RequestReview({
             </dd>
           </dl>
           <ul className="checklist">
-            <li>Signed with your current key as your confirmation</li>
-            <li>Another signer executes; you both rotate</li>
+            {sole ? (
+              <>
+                <li>Sent by your current key, the only signature needed</li>
+                <li>You rotate to your next key</li>
+              </>
+            ) : (
+              <>
+                <li>Signed with your current key as your confirmation</li>
+                <li>Another signer executes; you both rotate</li>
+              </>
+            )}
           </ul>
         </div>
       ) : (
@@ -274,8 +285,9 @@ function RequestReview({
         <div className="note warning">
           <IconAlert width="15" height="15" />
           <span>
-            This dApp reads the chain itself, so it only sees transactions once they are on-chain. Sign & propose: it waits until another signer executes, then continues. Queued, it
-            would keep waiting.
+            {sole
+              ? "This dApp reads the chain itself, so it only sees transactions once they are on-chain. Execute: it continues once the transaction lands. Queued, it would keep waiting."
+              : "This dApp reads the chain itself, so it only sees transactions once they are on-chain. Sign & propose: it waits until another signer executes, then continues. Queued, it would keep waiting."}
           </span>
         </div>
       )}
@@ -300,7 +312,7 @@ function RequestReview({
           Add to queue
         </button>
         <button type="button" className={queueFirst ? "" : "primary"} onClick={() => void approve()} disabled={working || !preview}>
-          {working ? "Signing…" : "Sign & propose"}
+          {working ? "Signing…" : sendLabel(sole)}
         </button>
       </div>
     </section>

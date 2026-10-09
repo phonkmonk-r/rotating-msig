@@ -46,7 +46,7 @@ Concretely:
 
 1. **Create or join.** Cicada creates a Safe through Safe's factory and installs the guard (or joins an existing guarded Safe and rebuilds the signer's tree from the seed).
 2. **Install.** One Safe transaction: enable the guard as module, set it as transaction guard and module guard, call `initialize` (each slot's root and first owner), stage each slot's next 5 keys, set the threshold.
-3. **Use.** A signer proposes a transaction (signing it is their confirmation), other signers confirm, and the last signer executes. Every signer rotates.
+3. **Use.** A signer proposes a transaction (signing it is their confirmation), other signers confirm, and the last signer executes. Every signer rotates. With threshold 1, the only signer executes directly.
 4. **Maintain.** Each Cicada refills its own slot's staged keys from its gas account, skips keys found to be used elsewhere, and admin actions (add or remove signers, threshold) go through the same transaction flow.
 
 ## 2. Repository map
@@ -303,7 +303,7 @@ Everything that signs, proposes, executes and maintains a slot. Runs inside the 
 `SignerSession` in more detail:
 
 - **Reading:** `status` (Safe, this signer, every slot, findings, gas account), `queue` (pending transactions with this signer's verdict), `tokenInfo`, `rpc`, `proposalStatus`.
-- **Signing:** `propose` (checks, signs the Safe transaction hash with the current key, posts it; the signature is the proposer's confirmation), `confirm`, `execute`.
+- **Signing:** `propose` (checks, signs the Safe transaction hash with the current key, posts it; the signature is the proposer's confirmation), `confirm`, `execute`. On a Safe with threshold 1 the proposer is the only signature needed, so `propose` posts nothing: it keeps the transaction in the session (`directTxs`, listed in the queue and the status until its nonce is used) and starts the normal execution at once, with the same steps. The UI's `SoleSignerContext` turns "Sign & propose" into "Execute" and adjusts the messages.
 - **Executing:** `execute` returns at once with a list of steps the UI follows: simulate, fund the key from the gas account if needed (`fund`, waits for the transfer), sign and send through the execution RPC, wait for inclusion, record rotations (read from the receipt's `OwnerRotated` events), sweep the key's remaining ETH back to the gas account (`sweepWhenMined`, `sweep`; the transfer's gas is estimated so the key ends at zero or within a fraction of a gwei). `execution` reports progress.
 - **Maintaining:** `refill` stages the slot's next keys from the gas account (skipping past any used key), `autoRefill` and `startAutoRefill` run it every minute once two buffer places are free, `skipUsedKeysInput` builds a proposal that skips used keys and restages in one transaction, `renewKeys` derives the next generation of the slot's key list and builds the `setRoot` plus staging proposal, and `adoptRenewedTree` switches the session to that list once its root is on-chain.
 - **Queue:** `draft`, `setQueueMode`, `addToDraft`, `removeFromDraft`, `moveInDraft`, `clearDraft`, `simulateDraft`, `readAfterDraft`, `proposeDraft` (the whole queue as one MultiSend transaction).

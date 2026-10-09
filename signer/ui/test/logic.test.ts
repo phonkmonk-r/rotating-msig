@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { eth, explorer, short, signedAmount, UNLIMITED_APPROVAL } from "../src/format.js";
-import { executionInFlight, executionTone, requestValue } from "../src/lib/execution.js";
+import { executionInFlight, executionTone, nextStep, requestValue, sendLabel } from "../src/lib/execution.js";
 import { profileFormProblems, seedWordCount, type ProfileForm } from "../src/lib/profileForm.js";
 import { packagePreview } from "../src/lib/slotPackage.js";
 
@@ -104,5 +104,14 @@ describe("executions", () => {
   it("adds up the ETH a dApp request sends, in hex or decimal", () => {
     assert.equal(requestValue([]), 0n);
     assert.equal(requestValue([{ to: SAFE, value: "0xde0b6b3a7640000" }, { to: SAFE, value: "5" }, { to: SAFE, value: "0x" }, { to: SAFE }]), 10n ** 18n + 5n);
+  });
+});
+
+describe("the only signer", () => {
+  it("executes at once where others propose", () => {
+    assert.equal(sendLabel(false), "Sign & propose");
+    assert.equal(sendLabel(true), "Execute");
+    assert.match(nextStep(false), /Another signer executes it/);
+    assert.match(nextStep(true), /only signer, so it is executing now/);
   });
 });

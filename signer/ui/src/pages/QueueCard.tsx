@@ -4,13 +4,15 @@ import { formatUnits } from "viem";
 import { api, type DraftView, type ProposalResult, type Simulation } from "../api";
 import { short, signedAmount, UNLIMITED_APPROVAL } from "../format";
 import { IconAlert, IconCheck } from "../icons";
-import { Badge } from "../ui";
+import { sendLabel } from "../lib/execution";
+import { Badge, useSoleSigner } from "../ui";
 
 /**
  * Actions waiting in the local queue: simulated together as the Safe would run them, then proposed as one transaction,
  * so each signer signs (and rotates) once for all of them.
  */
 export function QueueCard({ draft, pending, onChanged }: { draft: DraftView; pending: number; onChanged: () => void }) {
+  const sole = useSoleSigner();
   const [simulation, setSimulation] = useState<Simulation>();
   const [simulating, setSimulating] = useState(false);
   const [review, setReview] = useState<ProposalResult>();
@@ -69,7 +71,7 @@ export function QueueCard({ draft, pending, onChanged }: { draft: DraftView; pen
         <div className="note ok">
           <IconCheck width="15" height="15" />
           <span>
-            Proposed #{done.nonce} with {done.actions.length} action(s). Another signer executes it below.
+            {sole ? "Executing" : "Proposed"} #{done.nonce} with {done.actions.length} action(s). {sole ? "Follow it below." : "Another signer executes it below."}
           </span>
           <button type="button" className="link" onClick={() => setDone(undefined)}>
             Dismiss
@@ -185,7 +187,7 @@ export function QueueCard({ draft, pending, onChanged }: { draft: DraftView; pen
         </button>
         {review ? (
           <button type="button" className="primary" disabled={working} onClick={() => void propose(false)}>
-            {working ? "Signing…" : `Sign & propose ${draft.items.length} action${draft.items.length === 1 ? "" : "s"}`}
+            {working ? "Signing…" : `${sendLabel(sole)} ${draft.items.length} action${draft.items.length === 1 ? "" : "s"}`}
           </button>
         ) : (
           <button type="button" className="primary" disabled={working || blocked !== undefined || failed >= 0} onClick={() => void propose(true)}>

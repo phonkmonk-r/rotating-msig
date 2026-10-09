@@ -2,12 +2,15 @@ import { useState } from "react";
 
 import { api, type Exposure, type ProposalResult } from "../api";
 import { IconAlert } from "../icons";
+import { sendLabel } from "../lib/execution";
+import { useSoleSigner } from "../ui";
 
 /**
  * The fix for keys that signed something that never went through: one force-rotate of every exposed slot, proposed
  * at the current nonce so it also cancels the lost transaction. Preview first, then sign and propose.
  */
 export function Recover({ exposure, onProposed }: { exposure: Exposure; onProposed?: () => void }) {
+  const sole = useSoleSigner();
   const [review, setReview] = useState<ProposalResult & { slotIds: number[] }>();
   const [done, setDone] = useState<string>();
   const [error, setError] = useState<string>();
@@ -27,7 +30,13 @@ export function Recover({ exposure, onProposed }: { exposure: Exposure; onPropos
   }
 
   const slots = exposure.slotIds.map((slotId) => `slot ${slotId}`).join(", ");
-  if (done) return <p className="muted small">Proposed #{done}: fresh keys for {slots}. Another signer executes it from Transactions, and everyone who signed rotates.</p>;
+  if (done) {
+    return (
+      <p className="muted small">
+        {sole ? `Executing #${done}: fresh keys for ${slots}. Follow it on Transactions.` : `Proposed #${done}: fresh keys for ${slots}. Another signer executes it from Transactions, and everyone who signed rotates.`}
+      </p>
+    );
+  }
   return (
     <div className="recover">
       <p className="small">
@@ -62,7 +71,7 @@ export function Recover({ exposure, onProposed }: { exposure: Exposure; onPropos
               })
             }
           >
-            {working ? "Signing…" : "Sign & propose"}
+            {working ? "Signing…" : sendLabel(sole)}
           </button>
         ) : (
           <button type="button" className="primary" disabled={working} onClick={() => void run(async () => setReview(await api.recover(true)))}>
