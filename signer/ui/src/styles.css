@@ -1065,10 +1065,6 @@ button.large {
 
 /* ---------- Transactions ---------- */
 
-.tx.actionable {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-}
-
 .tx-top {
   display: flex;
   align-items: flex-start;
@@ -1076,9 +1072,14 @@ button.large {
 }
 
 .tx-nonce {
-  font-weight: 650;
+  flex: none;
+  width: 32px;
+  padding: 2px 0;
+  border-radius: 6px;
+  background: var(--surface-2);
   color: var(--muted);
-  min-width: 28px;
+  font: 600 12px/18px var(--mono);
+  text-align: center;
 }
 
 .tx-actions-list {
@@ -1088,6 +1089,7 @@ button.large {
 
 .tx-action {
   font-weight: 600;
+  line-height: 22px;
   overflow-wrap: anywhere;
 }
 
@@ -1097,11 +1099,10 @@ button.large {
 }
 
 .tx-details {
-  margin: 8px 0 0 40px;
+  margin: 12px 0 0 44px;
 }
 
 .tx-details-body {
-  margin-top: 10px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1161,17 +1162,42 @@ button.large {
 
 .tx-meta {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
   align-items: center;
-  margin: 12px 0 0 40px;
-  gap: 12px;
+  margin: 4px 0 0 44px;
+  gap: 4px 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.tx-meta-sep {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.tx-hash {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tx-hash:hover {
+  color: var(--text);
 }
 
 .signatures {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
 }
 
 .signature-avatars {
@@ -1197,7 +1223,7 @@ button.large {
 .tx .review,
 .tx .tx-footer,
 .tx .blocked {
-  margin-left: 40px;
+  margin-left: 44px;
 }
 
 .blocked {
@@ -1212,9 +1238,23 @@ button.large {
 }
 
 .review {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
+  margin-top: 16px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
+.review .tx-footer {
+  margin-left: 0;
+}
+
+.review-label {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 10px;
 }
 
 .kv {
@@ -1241,25 +1281,33 @@ button.large {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   font-size: 13px;
+  line-height: 20px;
+  counter-reset: step;
 }
 
 .checklist li {
-  padding-left: 22px;
   position: relative;
+  padding-left: 30px;
+  counter-increment: step;
 }
 
 .checklist li::before {
-  content: "";
+  content: counter(step);
   position: absolute;
-  left: 4px;
-  top: 5px;
-  width: 9px;
-  height: 5px;
-  border-left: 2px solid var(--accent);
-  border-bottom: 2px solid var(--accent);
-  transform: rotate(-45deg);
+  left: 0;
+  top: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 20px;
+  text-align: center;
 }
 
 .empty-state {

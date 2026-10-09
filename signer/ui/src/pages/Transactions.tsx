@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from "react";
 
 import { api, type DraftView, type Execution, type QueueItem, type StatusView } from "../api";
 import { explorer, short } from "../format";
-import { IconAlert, IconCheck, IconExternal, IconInbox, IconPlus } from "../icons";
+import { IconAlert, IconCheck, IconCopy, IconExternal, IconInbox, IconPlus } from "../icons";
 import { executionInFlight, executionTone } from "../lib/execution";
-import { Avatar, Badge, PageHeader } from "../ui";
+import { Avatar, Badge, PageHeader, useSoleSigner } from "../ui";
 import { NewTransaction } from "./NewTransaction";
 import { QueueCard } from "./QueueCard";
 import { Recover } from "./Recover";
@@ -118,6 +118,8 @@ function TxCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.attempt?.safeTxHash]);
   const busy = useRef(false);
+  const sole = useSoleSigner();
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const needed = Math.max(status.threshold - 1, 0);
   const counting = item.confirmations.filter((c) => c.counts).length;
   const { action, blockers, warnings } = item.verdict;
@@ -196,25 +198,33 @@ function TxCard({
       </div>
 
       <div className="tx-meta">
-        <span className="signatures">
-          <span className="muted">Signatures</span>
-          <span className="signature-avatars">
-            {item.confirmations.map((c) => (
-              <span key={c.owner} title={`${c.owner}${c.counts ? "" : " (no longer counts)"}`} className={c.counts ? "" : "stale"}>
-                <Avatar address={c.owner} size={20} />
+        {sole ? (
+          <span>Only your signature is needed</span>
+        ) : (
+          <span className="signatures">
+            {item.confirmations.length > 0 && (
+              <span className="signature-avatars">
+                {item.confirmations.map((c) => (
+                  <span key={c.owner} title={`${c.owner}${c.counts ? "" : " (no longer counts)"}`} className={c.counts ? "" : "stale"}>
+                    <Avatar address={c.owner} size={18} />
+                  </span>
+                ))}
               </span>
-            ))}
+            )}
+            <span className={counting >= needed ? "ok-text" : ""}>
+              {counting} of {needed} {needed === 1 ? "confirmation" : "confirmations"}
+            </span>
           </span>
-          <span className={counting >= needed ? "ok-text" : ""}>
-            {counting}/{needed}
-          </span>
-        </span>
-        <span className="mono muted small" title={item.safeTxHash}>
-          {short(item.safeTxHash)}
-        </span>
+        )}
+        <span className="tx-meta-sep" />
+        <CopyHash hash={item.safeTxHash} />
+        <span className="tx-meta-sep" />
+        <button type="button" className="link-button small" aria-expanded={detailsOpen} onClick={() => setDetailsOpen(!detailsOpen)}>
+          {detailsOpen ? "Hide details" : "Details"}
+        </button>
       </div>
 
-      <TxDetails item={item} status={status} />
+      {detailsOpen && <TxDetails item={item} status={status} />}
 
       {warnings.map((w) => (
         <div key={w} className="note warning">
@@ -258,7 +268,7 @@ function TxCard({
               </button>
             </div>
           ) : (
-            <Review action={action} status={status} item={item} working={stage.kind === "working"} onRun={() => void run()} onCancel={() => setStage({ kind: "idle" })} />
+            <Review action={action} status={status} item={item} sole={sole} working={stage.kind === "working"} onRun={() => void run()} onCancel={() => setStage({ kind: "idle" })} />
           )}
         </>
       )}
@@ -270,6 +280,7 @@ function Review({
   action,
   item,
   status,
+  sole,
   working,
   onRun,
   onCancel,
@@ -277,10 +288,12 @@ function Review({
   action: "confirm" | "execute";
   item: QueueItem;
   status: StatusView;
+  sole: boolean;
   working: boolean;
   onRun: () => void;
   onCancel: () => void;
 }) {
+  const gasAccount = status.gasFunding ? status.me?.operator?.address : undefined;
   return (
     <div className="review">
       {action === "confirm" ? (
@@ -291,11 +304,21 @@ function Review({
           <dd className="mono small">{item.safeTxHash}</dd>
         </dl>
       ) : (
-        <ul className="checklist">
-          <li>Simulated before sending</li>
-          <li>Sent via {status.executionHost}</li>
-          <li>Signers rotate to fresh keys</li>
-        </ul>
+        <>
+          <div className="review-label">What happens</div>
+          <ol className="checklist">
+            <li>Simulated against the latest block; nothing is sent if it would fail</li>
+            {gasAccount ? (
+              <li>
+                Your gas account <span className="mono">{short(gasAccount)}</span> funds your key for the gas; what is left goes back to it
+              </li>
+            ) : null}
+            <li>
+              Sent from your key {status.me && <span className="mono">{short(status.me.address)}</span>} via {status.executionHost}
+            </li>
+            <li>{sole ? "Your slot rotates" : "Every signer rotates"} to a fresh key in the same transaction</li>
+          </ol>
+        </>
       )}
       <div className="tx-footer">
         <button type="button" onClick={onCancel} disabled={working}>
@@ -306,6 +329,26 @@ function Review({
         </button>
       </div>
     </div>
+  );
+}
+
+/** The Safe transaction hash, shortened, copied on click. */
+function CopyHash({ hash }: { hash: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="tx-hash mono"
+      title={`${hash}\nClick to copy`}
+      onClick={() => {
+        void navigator.clipboard.writeText(hash).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1_200);
+        });
+      }}
+    >
+      {short(hash)} {copied ? <IconCheck width="12" height="12" /> : <IconCopy width="12" height="12" />}
+    </button>
   );
 }
 
