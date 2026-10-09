@@ -315,7 +315,7 @@ function Shell({
           {status?.queueError && <div className="note warning banner-top">Transaction Service unavailable: pending transactions may be missing.</div>}
           {!status && !data.error && <OverviewSkeleton />}
           {status && page === "overview" && <Overview status={status} queue={queue} onOpenTransactions={() => setPage("transactions")} />}
-          {status && page === "transactions" && <Transactions status={status} queue={queue} draft={data.draft} onBusy={data.setBusy} onRefresh={() => void data.refresh()} />}
+          {status && page === "transactions" && <Transactions status={status} queue={queue} draft={data.draft} executions={data.executions} onBusy={data.setBusy} onRefresh={() => void data.refresh()} />}
           {status && page === "browse" && <Browse status={status} request={dappRequest} queueMode={data.draft.enabled} />}
           {status && page === "signers" && <Signers status={status} pending={queue.length} queueMode={data.draft.enabled} onQueued={() => void data.refresh()} />}
           {status && page === "settings" && desktopState && <Settings status={status} desktopState={desktopState} onChangeSafe={onChangeSafe!} onLock={onLock!} onProfileChanged={onProfileChanged!} onSwitchProfile={onSwitchProfile!} />}

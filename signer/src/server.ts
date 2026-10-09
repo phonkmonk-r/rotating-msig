@@ -148,6 +148,7 @@ export async function serve(session: SignerSession, options: ServeOptions): Prom
         return send(res, 404, { error: (error as Error).message });
       }
     }
+    if (req.method === "GET" && url.pathname === "/api/executions") return send(res, 200, await session.recentExecutions());
     const execution = url.pathname.match(/^\/api\/executions\/(0x[0-9a-fA-F]{64})$/);
     if (req.method === "GET" && execution) {
       try {

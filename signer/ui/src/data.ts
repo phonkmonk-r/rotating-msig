@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { api, canConnect, type DraftView, type QueueItem, type StatusView } from "./api";
+import { api, canConnect, type DraftView, type Execution, type QueueItem, type StatusView } from "./api";
 
 const REFRESH_MS = 10_000;
 
@@ -9,6 +9,8 @@ export interface SignerData {
   queue: QueueItem[];
   /** The local queue of actions not yet proposed. */
   draft: DraftView;
+  /** Executions this signer started recently, also after their transaction left the queue. */
+  executions: Execution[];
   error?: string;
   updatedAt?: Date;
   refreshing: boolean;
@@ -24,6 +26,7 @@ export function useSignerData(): SignerData {
   const [status, setStatus] = useState<StatusView>();
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [draft, setDraft] = useState<DraftView>({ enabled: false, items: [] });
+  const [executions, setExecutions] = useState<Execution[]>([]);
   const [error, setError] = useState<string>();
   const [updatedAt, setUpdatedAt] = useState<Date>();
   const [refreshing, setRefreshing] = useState(false);
@@ -35,10 +38,16 @@ export function useSignerData(): SignerData {
     try {
       // The queue comes from the Transaction Service, which can be briefly unavailable or rate-limited: keep the last
       // queue then, and let the status's own queueError warn, instead of reporting the signer as unreachable.
-      const [nextStatus, nextQueue, nextDraft] = await Promise.all([api.status(), api.queue().catch(() => undefined), api.draft()]);
+      const [nextStatus, nextQueue, nextDraft, nextExecutions] = await Promise.all([
+        api.status(),
+        api.queue().catch(() => undefined),
+        api.draft(),
+        api.executions().catch(() => undefined),
+      ]);
       setStatus(nextStatus);
       if (nextQueue) setQueue(nextQueue);
       setDraft(nextDraft);
+      if (nextExecutions) setExecutions(nextExecutions);
       setError(undefined);
       setUpdatedAt(new Date());
     } catch (caught) {
@@ -77,7 +86,7 @@ export function useSignerData(): SignerData {
     }
   }, []);
 
-  return { status, queue, draft, error, updatedAt, refreshing, refresh, setBusy, setQueueMode };
+  return { status, queue, draft, executions, error, updatedAt, refreshing, refresh, setBusy, setQueueMode };
 }
 
 export const LOW_GAS_WEI = 5_000_000_000_000_000n;

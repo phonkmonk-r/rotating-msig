@@ -699,6 +699,7 @@ handle("signer:queue", () => requireSession().queue());
 handle("signer:confirm", (hash: unknown) => requireSession().confirm(requireHash(hash)));
 handle("signer:execute", (hash: unknown) => requireSession().execute(requireHash(hash), { untilSent: false }));
 handle("signer:execution", (hash: unknown) => requireSession().execution(requireHash(hash)));
+handle("signer:executions", () => requireSession().recentExecutions());
 handle("signer:speedUp", (hash: unknown) => requireSession().speedUp(requireHash(hash)));
 handle("signer:recover", (preview: unknown) => requireSession().recover(preview === true));
 handle("signer:propose", (input: unknown, preview: unknown) => requireSession().propose(input as never, preview === true));

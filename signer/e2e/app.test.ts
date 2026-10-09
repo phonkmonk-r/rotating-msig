@@ -10,7 +10,7 @@ import { _electron as electron, type ElectronApplication, type Page } from "play
 import { parseEther, type Address } from "viem";
 import { foundry } from "viem/chains";
 
-import { DEPLOYMENTS, plainSafeTx, TxService } from "@rotating-msig/core";
+import { DEPLOYMENTS, plainSafeTx, readSafeState, TxService } from "@rotating-msig/core";
 import { seedSource } from "@rotating-msig/keys";
 
 import { SignerSession } from "../src/session.js";
@@ -231,6 +231,40 @@ describe("Cicada desktop app", { skip, timeout: 5 * TIMEOUT }, () => {
     await saved.getByRole("button", { name: "Remove Plain page" }).click();
     await page.getByText("Save a page with the star").waitFor();
     assert.equal(await page.getByRole("button", { name: "Save this page" }).getAttribute("aria-pressed"), "false");
+  });
+
+  it("as the only signer, executes at once from a Safe that holds no ETH, and rotates its key", async () => {
+    // Two outside signers lower the threshold to 1, which leaves the app's user as a sole signer.
+    const lower = await signer(1).propose({ kind: "threshold", threshold: 1 });
+    const sent = await signer(2).execute(lower.safeTxHash);
+    assert.equal((await chain.client.waitForTransactionReceipt({ hash: sent.transactionHash! })).status, "success");
+    // An empty Safe: Safe's gas refund must still be covered (on Sepolia it was not, and every execution reverted).
+    await chain.client.request({ method: "anvil_setBalance" as never, params: [chain.safe, "0x0"] as never });
+    const before = await readSafeState(chain.client, chain.safe);
+
+    await nav("Overview");
+    await page.getByText(`1 of 3 signers · nonce ${before.nonce}`).waitFor();
+    await nav("Transactions");
+    await page.getByRole("button", { name: "New transaction" }).click();
+    const composer = page.locator(".composer");
+    // An empty Safe cannot send ETH; rotating another signer's slot is a transaction it can make (the same kind as a
+    // recovery), and it moves slot 1 as well as the executor.
+    await composer.getByRole("button", { name: "Rotate signer" }).click();
+    await composer.getByRole("checkbox").nth(1).check();
+    await composer.getByRole("button", { name: "Review" }).click();
+    await composer.getByRole("button", { name: "Execute", exact: true }).click();
+
+    const card = page.locator(".tx.finished");
+    await card.getByText("Executed").waitFor();
+    const steps = card.locator(".execution-steps.ok");
+    for (const label of ["Simulated", "Gas for your key", "Included in a block", "Signers rotated", "Unused gas returned"]) {
+      await steps.locator(".step.done", { hasText: label }).waitFor();
+    }
+    const after = await readSafeState(chain.client, chain.safe);
+    assert.equal(after.nonce, before.nonce + 1n);
+    assert.notEqual(after.slots[0]!.owner, before.slots[0]!.owner, "the app's key rotated");
+    assert.notEqual(after.slots[1]!.owner, before.slots[1]!.owner, "the chosen slot rotated");
+    assert.equal(after.slots[2]!.owner, before.slots[2]!.owner, "nobody else did");
   });
 
   it("removes the profile and its files from this computer", async () => {

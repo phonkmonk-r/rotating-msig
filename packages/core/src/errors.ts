@@ -29,8 +29,10 @@ export function describeRevert(error: unknown): string | undefined {
   });
   if (data && data.length >= 10) {
     try {
-      const decoded = decodeErrorResult({ abi: rotationGuardAbi, data });
-      return `${decoded.errorName}(${(decoded.args ?? []).map(String).join(", ")})`;
+      const decoded: { errorName: string; args?: readonly unknown[] } = decodeErrorResult({ abi: rotationGuardAbi, data });
+      // Solidity's built-in Error(string) decodes too; Safe reverts with its GSxxx codes that way.
+      if (decoded.errorName === "Error") reason = String(decoded.args?.[0] ?? "");
+      else return `${decoded.errorName}(${(decoded.args ?? []).map(String).join(", ")})`;
     } catch {
       // Not a guard error; fall through to Safe reason strings.
     }

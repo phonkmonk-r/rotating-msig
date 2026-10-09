@@ -11,6 +11,7 @@ import { hasAnvil, hasArtifacts, SIGNER_SEEDS, startChain, startFakeTxService, t
 
 const skip = !hasAnvil ? "anvil not installed" : !hasArtifacts ? "run `forge build` first" : false;
 const RECIPIENT: Address = "0x000000000000000000000000000000000000c0de";
+const show = (value: unknown) => JSON.stringify(value, (_key, item) => (typeof item === "bigint" ? item.toString() : item));
 
 describe("a Safe with threshold 1", { skip }, () => {
   let chain: Chain;
@@ -71,7 +72,7 @@ describe("a Safe with threshold 1", { skip }, () => {
     assert.equal((await sessions[2]!.queue())[0]?.safeTxHash, result.safeTxHash, "the queue shows it while it executes");
 
     const execution = await settled(sessions[2]!, result.safeTxHash);
-    assert.equal(execution.status, "success", JSON.stringify(execution));
+    assert.equal(execution.status, "success", show(execution));
     assert.equal(await chain.client.getBalance({ address: RECIPIENT }), 1000n);
 
     const after = await readSafeState(chain.client, chain.safe);
@@ -81,6 +82,18 @@ describe("a Safe with threshold 1", { skip }, () => {
     assert.equal(after.slots[1]!.owner, owners[1]);
     assert.deepEqual(await txService.pending(chain.safe, before.nonce), [], "nothing went to the Transaction Service");
     assert.deepEqual(await sessions[2]!.queue(), [], "the executed transaction leaves the queue");
+  });
+
+  it("executes from a Safe that holds no ETH: the executor covers Safe's gas refund", async () => {
+    // Guarded transactions sign gasPrice 1 wei, so Safe refunds the executor from its own balance; on Sepolia an empty
+    // Safe made every execution revert (GS011) after its signatures were public.
+    await chain.client.request({ method: "anvil_setBalance" as never, params: [chain.safe, "0x0"] as never });
+    const before = (await readSafeState(chain.client, chain.safe)).slots[2]!.owner;
+    const result = await sessions[2]!.propose({ kind: "force-rotate", slotIds: [0] });
+    const execution = await settled(sessions[2]!, result.safeTxHash);
+    assert.equal(execution.status, "success", show(execution));
+    assert.notEqual((await readSafeState(chain.client, chain.safe)).slots[2]!.owner, before, "the executor rotated");
+    await chain.client.request({ method: "anvil_setBalance" as never, params: [chain.safe, "0xde0b6b3a7640000"] as never });
   });
 
   it("lets the next transaction go out from the rotated key", async () => {

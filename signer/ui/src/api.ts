@@ -168,6 +168,7 @@ interface DesktopBridge {
   confirm(hash: string): Promise<Result<{ owner: string }>>;
   execute(hash: string): Promise<Result<Execution>>;
   execution(hash: string): Promise<Result<Execution>>;
+  executions(): Promise<Result<Execution[]>>;
   speedUp(hash: string): Promise<Result<Execution>>;
   recover(preview: boolean): Promise<Result<ProposalResult & { slotIds: number[] }>>;
   propose(input: ProposalInput, preview: boolean): Promise<Result<ProposalResult>>;
@@ -270,6 +271,7 @@ export const api = {
   confirm: (hash: string) => (bridge ? unwrap(bridge.confirm(hash)) : http<{ owner: string }>("/api/confirm", post(hash))),
   execute: (hash: string) => (bridge ? unwrap(bridge.execute(hash)) : http<Execution>("/api/execute", post(hash))),
   execution: (hash: string) => (bridge ? unwrap(bridge.execution(hash)) : http<Execution>(`/api/executions/${hash}`)),
+  executions: () => (bridge ? unwrap(bridge.executions()) : http<Execution[]>("/api/executions")),
   speedUp: (hash: string) => (bridge ? unwrap(bridge.speedUp(hash)) : http<Execution>("/api/speed-up", post(hash))),
   recover: (preview: boolean) =>
     bridge ? unwrap(bridge.recover(preview)) : http<ProposalResult & { slotIds: number[] }>("/api/recover", { method: "POST", body: JSON.stringify({ preview }) }),

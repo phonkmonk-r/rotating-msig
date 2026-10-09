@@ -12,23 +12,29 @@ import { TxDetails } from "./TxDetails";
 
 const EXECUTION_POLL_MS = 3_000;
 
+/** Executions dismissed in this run of the app; the session keeps listing recent ones until then. */
+const dismissedExecutions = new Set<string>();
+
 export function Transactions({
   status,
   queue,
   draft,
+  executions,
   onBusy,
   onRefresh,
 }: {
   status: StatusView;
   queue: QueueItem[];
   draft: DraftView;
+  executions: Execution[];
   onBusy: (busy: boolean) => void;
   onRefresh: () => void;
 }) {
   const [composing, setComposing] = useState(() => window.location.hash.includes("compose"));
-  // Executions this window ran: kept after the transaction leaves the queue, so the final steps stay readable.
-  const [finished, setFinished] = useState<{ item: QueueItem; execution: Execution }[]>([]);
-  const done = finished.filter((entry) => !queue.some((item) => item.safeTxHash === entry.item.safeTxHash));
+  const [, setDismissed] = useState(0);
+  // Executions this signer started whose transaction has left the queue (or never showed in it, as a sole signer's
+  // can land before the next refresh): shown with their steps until dismissed.
+  const done = executions.filter((execution) => !queue.some((item) => item.safeTxHash === execution.safeTxHash) && !dismissedExecutions.has(execution.safeTxHash));
   return (
     <>
       <PageHeader
@@ -50,13 +56,15 @@ export function Transactions({
       />
       {composing && <NewTransaction status={status} queueMode={draft.enabled} onClose={() => setComposing(false)} onProposed={onRefresh} />}
       <QueueCard draft={draft} pending={queue.length} onChanged={onRefresh} />
-      {done.map(({ item, execution }) => (
-        <FinishedCard
-          key={item.safeTxHash}
-          item={item}
-          execution={execution}
+      {done.map((execution) => (
+        <ExecutionCard
+          key={execution.safeTxHash}
+          initial={execution}
           chainId={status.chainId}
-          onDismiss={() => setFinished((list) => list.filter((entry) => entry.item.safeTxHash !== item.safeTxHash))}
+          onDismiss={() => {
+            dismissedExecutions.add(execution.safeTxHash);
+            setDismissed((count) => count + 1);
+          }}
         />
       ))}
       {queue.length === 0 && !composing && draft.items.length === 0 && done.length === 0 ? (
@@ -74,7 +82,6 @@ export function Transactions({
               status={status}
               onBusy={onBusy}
               onRefresh={onRefresh}
-              onFinished={(execution) => setFinished((list) => [{ item, execution }, ...list.filter((entry) => entry.item.safeTxHash !== item.safeTxHash)])}
             />
           ))}
         </div>
@@ -96,13 +103,11 @@ function TxCard({
   status,
   onBusy,
   onRefresh,
-  onFinished,
 }: {
   item: QueueItem;
   status: StatusView;
   onBusy: (busy: boolean) => void;
   onRefresh: () => void;
-  onFinished: (execution: Execution) => void;
 }) {
   // An execution this signer already has out (also after a restart) is followed instead of offering Execute again.
   const [stage, setStage] = useState<Stage>(() => (item.attempt ? { kind: "executing", execution: item.attempt } : { kind: "idle" }));
@@ -122,8 +127,8 @@ function TxCard({
     if (stage.kind !== "executing") return;
     const { execution } = stage;
     if (!executionInFlight(execution)) {
+      // Ending the busy state refreshes; the transaction leaves the queue and its card moves to the executions above.
       setBusy(false);
-      onFinished(execution);
       return;
     }
     setBusy(execution.status !== "stuck");
@@ -298,28 +303,39 @@ function Review({
   );
 }
 
-/** An execution that has left the queue, with its final steps, until the signer dismisses it. */
-function FinishedCard({ item, execution, chainId, onDismiss }: { item: QueueItem; execution: Execution; chainId: number; onDismiss: () => void }) {
+/** An execution whose transaction has left the queue: followed live until it is final, then kept until dismissed. */
+function ExecutionCard({ initial, chainId, onDismiss }: { initial: Execution; chainId: number; onDismiss: () => void }) {
+  const [execution, setExecution] = useState(initial);
+  useEffect(() => {
+    if (!executionInFlight(execution)) return;
+    const timer = setTimeout(() => {
+      api.execution(execution.safeTxHash).then(setExecution, () => undefined);
+    }, execution.status === "preparing" ? 1_000 : EXECUTION_POLL_MS);
+    return () => clearTimeout(timer);
+  }, [execution]);
   const tone = executionTone(execution.status);
+  const label = execution.status === "success" ? "Executed" : executionInFlight(execution) ? "Executing" : execution.status;
   return (
     <article className="card tx finished">
       <div className="tx-top">
-        <span className="tx-nonce">#{item.nonce}</span>
+        {execution.nonce !== undefined && <span className="tx-nonce">#{execution.nonce}</span>}
         <div className="tx-actions-list">
-          {item.actions.map((a, i) => (
+          {(execution.actions ?? []).map((a, i) => (
             <div key={i} className={`tx-action ${a.kind}`}>
               {a.summary}
             </div>
           ))}
         </div>
-        <Badge tone={tone === "pending" ? "neutral" : tone}>{execution.status === "success" ? "Executed" : execution.status}</Badge>
+        <Badge tone={tone === "pending" ? "neutral" : tone}>{label}</Badge>
       </div>
       <ExecutionStatus execution={execution} chainId={chainId} />
-      <div className="tx-footer">
-        <button type="button" onClick={onDismiss}>
-          Dismiss
-        </button>
-      </div>
+      {!executionInFlight(execution) && (
+        <div className="tx-footer">
+          <button type="button" onClick={onDismiss}>
+            Dismiss
+          </button>
+        </div>
+      )}
     </article>
   );
 }

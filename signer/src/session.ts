@@ -34,6 +34,7 @@ import {
   type PendingTx,
   type ProposalInput,
   type SafeState,
+  type SafeTx,
   type TreeFile,
   type TxService,
   type Verdict,
@@ -102,6 +103,8 @@ export const DEFAULT_EXECUTION_TIMEOUT_MS = 180_000;
  * more for some recipients), so the sweep itself estimates its exact cost.
  */
 const SWEEP_GAS_ALLOWANCE = 60_000n;
+/** How long the app keeps showing an execution it started, after its transaction has left the queue. */
+const RECENT_EXECUTIONS_MS = 30 * 60_000;
 /** Per-transaction gas cap (EIP-7825). */
 const TRANSACTION_GAS_CAP = 16_777_216n;
 /** An execution's gas allowance for warning when the operator account runs low. */
@@ -239,6 +242,9 @@ export interface Execution {
   sweep?: { status: "waiting" | "sent" | "nothing" | "failed"; transactionHash?: Hex; amount?: string; message?: string };
   /** Earlier sends of the same transaction, replaced by speed-ups; any of them may still be the one mined. */
   previousHashes?: Hex[];
+  /** The Safe transaction's nonce and what it does, so the execution can be shown once it has left the queue. */
+  nonce?: string;
+  actions?: Action[];
 }
 
 /** One signature by an owner key, as the app records it the moment it signs. */
@@ -274,7 +280,7 @@ interface StoredAttempt {
   index: number;
   sentAtMs: number;
   accountNonce?: number;
-  request?: { to: Address; data: Hex; gas: string; maxFeePerGas: string; maxPriorityFeePerGas: string };
+  request?: { to: Address; data: Hex; gas: string; maxFeePerGas: string; maxPriorityFeePerGas: string; value?: string };
 }
 
 interface Attempt extends StoredAttempt {
@@ -339,6 +345,18 @@ const wei = (value: bigint) => value.toString();
  * all of `safeTxGas` on-chain even if it used less in simulation (a callee that behaves differently once sent), and
  * the rotation after it must still have its gas, or the whole transaction reverts with every signature public.
  */
+/**
+ * ETH the executor sends along with `execTransaction` so Safe's gas refund is always covered. A guarded transaction
+ * signs `gasPrice` > 0, so Safe pays the executor `(gasUsed + baseGas) * min(gasPrice, tx.gasprice)` from its own
+ * balance after the call; a Safe holding less (an empty one, seen on Sepolia 2026-10-09) fails that refund (GS011)
+ * and the whole transaction reverts after its signatures are public. `execTransaction` is payable, so the executor
+ * attaches the most the refund can be, and the refund pays it back: about gas limit x 1 wei, effectively nothing.
+ * Simulations run at gas price 0, where the refund is 0, so they cannot catch a missing balance themselves.
+ */
+export function refundCover(tx: Pick<SafeTx, "gasPrice" | "baseGas">, gasLimit: bigint): bigint {
+  return tx.gasPrice === 0n ? 0n : (gasLimit + tx.baseGas) * tx.gasPrice;
+}
+
 export function executionGasLimit(simulated: bigint, safeTxGas: bigint): bigint {
   const limit = (simulated * 12n) / 10n + safeTxGas;
   return limit < TRANSACTION_GAS_CAP ? limit : TRANSACTION_GAS_CAP;
@@ -398,7 +416,8 @@ export class SignerSession {
       const { account: _account, ...stored } = attempt;
       open.set(record.safeTxHash.toLowerCase(), stored);
     }
-    this.store.write(EXECUTIONS_FILE, JSON.stringify([...open.values()]));
+    // Records carry decoded actions, whose amounts are bigints.
+    this.store.write(EXECUTIONS_FILE, JSON.stringify([...open.values()], (_key, value) => (typeof value === "bigint" ? value.toString() : value)));
   }
 
   /** Records a signature by an owner key before it leaves the app, so a lost transaction can never hide an exposed key. */
@@ -664,6 +683,8 @@ export class SignerSession {
       if (direct) {
         // Nothing is signed for the Transaction Service: the executor's own pre-validated signature is the only one,
         // and it is given when the execution is sent.
+        // A newer transaction at the same nonce (a recovery after a failed one) replaces it: only one can execute.
+        for (const [key, other] of this.directTxs) if (other.tx.nonce === tx.nonce) this.directTxs.delete(key);
         this.directTxs.set(hash.toLowerCase(), { safeTxHash: hash, tx, confirmations: [] });
         return { ...result, proposed: true };
       }
@@ -965,15 +986,24 @@ export class SignerSession {
       { id: "rotate", label: "Signers rotated", status: "waiting" },
       ...(gasFunding ? [{ id: "sweep" as const, label: "Unused gas returned", status: "waiting" as const }] : []),
     ];
-    const record: Execution = { safeTxHash: tx.safeTxHash, sentThrough: host, status: "preparing", steps, sweep: gasFunding ? { status: "waiting" } : undefined };
+    const record: Execution = {
+      safeTxHash: tx.safeTxHash,
+      sentThrough: host,
+      status: "preparing",
+      steps,
+      sweep: gasFunding ? { status: "waiting" } : undefined,
+      nonce: tx.tx.nonce.toString(),
+      actions: verdict.actions,
+    };
     this.executions.set(tx.safeTxHash.toLowerCase(), { record, nonce: tx.tx.nonce.toString(), index: owner.index, sentAtMs: Date.now(), account: owner.account });
-    return { record, state, data, from, gasLimit: executionGasLimit(gas, tx.tx.safeTxGas), fees, owner, nonce: tx.tx.nonce };
+    const gasLimit = executionGasLimit(gas, tx.tx.safeTxGas);
+    return { record, state, data, from, gasLimit, refundCover: refundCover(tx.tx, gasLimit), fees, owner, nonce: tx.tx.nonce };
   }
 
   /** Funds the key if needed, then signs and sends. Inclusion and the sweep are followed by `execution`. */
   private async sendExecution(prepared: Awaited<ReturnType<SignerSession["prepareExecution"]>>): Promise<void> {
     const { chain, executionRpcUrl, gasFunding, publicClient } = this.options;
-    const { record, state, data, from, gasLimit, fees, owner, nonce } = prepared;
+    const { record, state, data, from, gasLimit, refundCover, fees, owner, nonce } = prepared;
     const { account } = owner;
     const step = (id: ExecutionStepId, patch: Partial<ExecutionStep>) => {
       const found = record.steps.find((candidate) => candidate.id === id);
@@ -982,7 +1012,7 @@ export class SignerSession {
 
     if (gasFunding) {
       step("gas", { status: "active", detail: "checking your key's balance" });
-      const funding = await this.fund(from, (gasLimit + SWEEP_GAS_ALLOWANCE) * fees.maxFeePerGas, () =>
+      const funding = await this.fund(from, (gasLimit + SWEEP_GAS_ALLOWANCE) * fees.maxFeePerGas + refundCover, () =>
         step("gas", { detail: "sending gas from your gas account, waiting for it to be mined" }),
       );
       record.funding = funding;
@@ -993,7 +1023,7 @@ export class SignerSession {
     const wallet = createWalletClient({ account, chain, transport: http(executionRpcUrl) });
     // The account nonce is pinned so a speed-up can replace exactly this transaction.
     const accountNonce = await publicClient.getTransactionCount({ address: from, blockTag: "pending" });
-    const request = { to: state.safe, data, gas: gasLimit, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas };
+    const request = { to: state.safe, data, value: refundCover, gas: gasLimit, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas };
     const signed = this.logSigned(owner, nonce, record.safeTxHash, "execute");
     let transactionHash: Hex;
     try {
@@ -1008,7 +1038,7 @@ export class SignerSession {
     const entry = this.executions.get(record.safeTxHash.toLowerCase())!;
     entry.sentAtMs = Date.now();
     entry.accountNonce = accountNonce;
-    entry.request = { ...request, gas: request.gas.toString(), maxFeePerGas: request.maxFeePerGas.toString(), maxPriorityFeePerGas: request.maxPriorityFeePerGas.toString() };
+    entry.request = { ...request, value: request.value.toString(), gas: request.gas.toString(), maxFeePerGas: request.maxFeePerGas.toString(), maxPriorityFeePerGas: request.maxPriorityFeePerGas.toString() };
     this.executions.set(transactionHash.toLowerCase(), entry);
     this.saveAttempts();
     if (gasFunding) void this.sweepWhenMined(transactionHash);
@@ -1032,7 +1062,7 @@ export class SignerSession {
       const maxFeePerGas = fees.maxFeePerGas > bump(BigInt(request.maxFeePerGas)) ? fees.maxFeePerGas : bump(BigInt(request.maxFeePerGas));
       const maxPriorityFeePerGas = fees.maxPriorityFeePerGas > bump(BigInt(request.maxPriorityFeePerGas)) ? fees.maxPriorityFeePerGas : bump(BigInt(request.maxPriorityFeePerGas));
       const wallet = createWalletClient({ account, chain, transport: http(executionRpcUrl) });
-      const transactionHash = await wallet.sendTransaction({ to: request.to, data: request.data, gas: BigInt(request.gas), maxFeePerGas, maxPriorityFeePerGas, nonce: attempt.accountNonce, chain });
+      const transactionHash = await wallet.sendTransaction({ to: request.to, data: request.data, value: BigInt(request.value ?? "0"), gas: BigInt(request.gas), maxFeePerGas, maxPriorityFeePerGas, nonce: attempt.accountNonce, chain });
       record.previousHashes = [...(record.previousHashes ?? []), record.transactionHash!];
       record.transactionHash = transactionHash;
       record.sentAt = new Date().toISOString();
@@ -1301,6 +1331,40 @@ export class SignerSession {
   }
 
   /** Current status of an execution this signer sent. */
+  /**
+   * Executions this signer started in the last half hour, newest first, so the app can show them after their
+   * transaction has left the queue (a sole signer's transaction may land before the next refresh).
+   */
+  async recentExecutions(): Promise<Execution[]> {
+    const since = Date.now() - RECENT_EXECUTIONS_MS;
+    const entries = [...new Set(this.executions.values())].filter((entry) => entry.sentAtMs >= since).sort((a, b) => b.sentAtMs - a.sentAtMs);
+    // Each brought up to date (receipt, rotation, returned gas), as `execution` does for one.
+    return Promise.all(entries.map((entry) => this.execution(entry.record.safeTxHash).catch(() => entry.record)));
+  }
+
+  /**
+   * Why a mined execution reverted: the same call replayed on the state just before its block, at the gas price it
+   * paid (Safe's refund depends on it, and simulations at gas price 0 never see that). Undefined if it cannot be told.
+   */
+  private async revertReason(entry: Attempt, receipt: { from: Address; blockNumber: bigint; effectiveGasPrice: bigint }): Promise<string | undefined> {
+    const request = entry.request;
+    if (!request) return undefined;
+    try {
+      await this.options.publicClient.call({
+        account: receipt.from,
+        to: request.to,
+        data: request.data,
+        value: BigInt(request.value ?? "0"),
+        gas: BigInt(request.gas),
+        gasPrice: receipt.effectiveGasPrice,
+        blockNumber: receipt.blockNumber - 1n,
+      });
+      return undefined;
+    } catch (error) {
+      return describeRevert(error);
+    }
+  }
+
   async execution(hash: Hex): Promise<Execution> {
     const entry = this.executions.get(hash.toLowerCase());
     if (!entry) throw new Error(`no execution ${hash} was started by this signer`);
@@ -1349,8 +1413,9 @@ export class SignerSession {
         if (record.sweep?.status === "waiting") step("sweep", { status: "active", detail: "sending the rest back" });
       } else {
         record.status = "reverted";
-        record.message = "The transaction was mined but reverted: its signatures are public and nobody rotated. Replace the keys that signed it now.";
-        step("include", { status: "failed", detail: "mined but reverted" });
+        const reason = await this.revertReason(entry, receipt);
+        record.message = `The transaction was mined but reverted${reason ? ` (${reason})` : ""}: its signatures are public and nobody rotated. Replace the keys that signed it now.`;
+        step("include", { status: "failed", detail: reason ? `mined but reverted: ${reason}` : "mined but reverted" });
         step("rotate", { status: "failed", detail: "nobody rotated" });
       }
       syncSweep();

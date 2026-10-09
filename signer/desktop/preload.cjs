@@ -35,6 +35,7 @@ contextBridge.exposeInMainWorld("signer", {
   confirm: call("signer:confirm"),
   execute: call("signer:execute"),
   execution: call("signer:execution"),
+  executions: call("signer:executions"),
   speedUp: call("signer:speedUp"),
   recover: call("signer:recover"),
   propose: call("signer:propose"),
