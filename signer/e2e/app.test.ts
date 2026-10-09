@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { createServer, type Server } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,6 +30,8 @@ describe("Cicada desktop app", { skip, timeout: 5 * TIMEOUT }, () => {
   let userData: string;
   let app: ElectronApplication;
   let page: Page;
+  let dapp: Server;
+  let dappUrl: string;
 
   /** Another signer of the same Safe, outside the app. */
   const signer = (slot: number) =>
@@ -76,6 +79,7 @@ describe("Cicada desktop app", { skip, timeout: 5 * TIMEOUT }, () => {
   });
 
   after(async () => {
+    dapp?.close();
     await app?.close();
     await service?.stop();
     chain?.stop();
@@ -142,6 +146,31 @@ describe("Cicada desktop app", { skip, timeout: 5 * TIMEOUT }, () => {
     assert.equal(await chain.client.getBalance({ address: RECIPIENT }), parseEther("0.03"));
     await card.getByRole("button", { name: "Dismiss" }).click();
     await page.getByText("No pending transactions").waitFor();
+  });
+
+  it("gives dApps a wallet they can extend, as MetaMask-era code expects", async () => {
+    // Uniswap sets a legacy MetaMask field on window.ethereum at startup; a frozen provider made that throw and
+    // the whole app render blank. This page does the same before asking for a transaction.
+    dapp = createServer((_req, res) => {
+      res.setHeader("content-type", "text/html");
+      res.end(`<!doctype html><title>Legacy dApp</title><body><script>
+        "use strict"; // like a bundled dApp: writing to a frozen object throws instead of failing silently
+        window.ethereum.autoRefreshOnNetworkChange = false;
+        window.ethereum.request({ method: "eth_requestAccounts" })
+          .then(([from]) => window.ethereum.request({ method: "eth_sendTransaction", params: [{ from, to: "${RECIPIENT}", value: "0x1" }] }))
+          .catch((error) => { document.body.textContent = "refused " + error.code; });
+      </script></body>`);
+    });
+    await new Promise<void>((resolve) => dapp.listen(0, "127.0.0.1", resolve));
+    dappUrl = `http://127.0.0.1:${(dapp.address() as { port: number }).port}/`;
+
+    await nav("Browse dApps");
+    const address = page.getByPlaceholder(/Enter a dApp address/);
+    await address.fill(dappUrl);
+    await address.press("Enter");
+    await page.getByRole("heading", { name: "Wants the Safe to" }).waitFor();
+    await page.getByRole("button", { name: "Reject" }).click();
+    await page.getByRole("heading", { name: "Wants the Safe to" }).waitFor({ state: "detached" });
   });
 
   it("removes the profile and its files from this computer", async () => {

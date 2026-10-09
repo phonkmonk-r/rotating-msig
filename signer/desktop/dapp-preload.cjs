@@ -48,9 +48,10 @@ contextBridge.executeInMainWorld({
     };
     provider.addListener = provider.on;
     provider.off = provider.removeListener;
-    Object.freeze(provider);
-
-    Object.defineProperty(window, "ethereum", { value: provider, configurable: true, writable: false });
+    // Left extensible and writable on purpose: many dApps set legacy MetaMask fields on window.ethereum (Uniswap sets
+    // `autoRefreshOnNetworkChange` at startup) and crash if that throws. Freezing protected nothing: the page owns its
+    // own scripts, and every request is still reviewed in the app, out of the page's reach.
+    Object.defineProperty(window, "ethereum", { value: provider, configurable: true, writable: true });
 
     const info = Object.freeze({
       uuid: crypto.randomUUID(),
