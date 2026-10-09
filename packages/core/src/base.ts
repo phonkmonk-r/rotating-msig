@@ -7,6 +7,9 @@ const BASE_SPAN = 1_000_000_000n;
 /** Default number of addresses per signer tree. */
 export const DEFAULT_TREE_SIZE = 10_000;
 
+/** Renewals a slot's key list can go through; joining tries every generation of the two-level path up to this. */
+export const MAX_KEY_GENERATIONS = 8;
+
 /** Keeps a per-Safe account below the top of the hardened space, so validators that add the tree size never overflow. */
 const SAFE_ACCOUNT_SPAN = BigInt(2 ** 31 - 2 ** 20 - MIN_TREE_BASE);
 
@@ -15,8 +18,15 @@ const SAFE_ACCOUNT_SPAN = BigInt(2 ** 31 - 2 ** 20 - MIN_TREE_BASE);
  * hardened levels come from one hash of chain and Safe, so every device finds them from the Safe alone, and two Safes
  * of one seed share keys only if both collide (about 1 in 4.6 × 10^18 per pair).
  */
-export function safeKeyPath(chainId: number, safe: Address): { account: number; branch: number } {
-  const hash = BigInt(keccak256(encodeAbiParameters([{ type: "uint256" }, { type: "address" }, { type: "string" }], [BigInt(chainId), getAddress(safe), "keyturn/two-level"])));
+export function safeKeyPath(chainId: number, safe: Address, generation = 0): { account: number; branch: number } {
+  // Generation 0 keeps the original hash input; each renewal of a slot's key list moves to the next generation.
+  const hash = BigInt(
+    keccak256(
+      generation === 0
+        ? encodeAbiParameters([{ type: "uint256" }, { type: "address" }, { type: "string" }], [BigInt(chainId), getAddress(safe), "keyturn/two-level"])
+        : encodeAbiParameters([{ type: "uint256" }, { type: "address" }, { type: "string" }, { type: "uint256" }], [BigInt(chainId), getAddress(safe), "keyturn/two-level", BigInt(generation)]),
+    ),
+  );
   return { account: MIN_TREE_BASE + Number(hash % SAFE_ACCOUNT_SPAN), branch: Number((hash >> 128n) % 2n ** 31n) };
 }
 

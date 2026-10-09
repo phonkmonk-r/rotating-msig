@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld("signer", {
   token: call("signer:token"),
   refill: call("signer:refill"),
   skipUsedKeys: call("signer:skipUsedKeys"),
+  renewKeys: call("signer:renewKeys"),
   browserOpen: call("browser:open"),
   browserBounds: call("browser:bounds"),
   browserNavigate: call("browser:navigate"),

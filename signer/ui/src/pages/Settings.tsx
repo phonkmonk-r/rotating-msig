@@ -3,6 +3,7 @@ import { useState } from "react";
 import { desktop, type DesktopState, type StatusView } from "../api";
 import { IconLock } from "../icons";
 import { Address, Badge, PageHeader } from "../ui";
+import { RenewKeys } from "./RenewKeys";
 
 export function Settings({
   status,
@@ -77,6 +78,15 @@ export function Settings({
             </span>
           </div>
         )}
+      </section>
+
+      <section className="card">
+        <h2 className="card-title">Your key list</h2>
+        <dl className="kv">
+          <dt>Current key</dt>
+          <dd>{status.me ? `#${status.me.index.toLocaleString()} of ${status.me.treeSize.toLocaleString()} (${(status.me.treeSize - status.me.index - 1).toLocaleString()} left)` : "Unknown"}</dd>
+        </dl>
+        <RenewKeys />
       </section>
 
       {profile && (

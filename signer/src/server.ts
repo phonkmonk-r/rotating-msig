@@ -111,6 +111,13 @@ export async function serve(session: SignerSession, options: ServeOptions): Prom
         return send(res, 409, { error: (error as Error).message });
       }
     }
+    if (req.method === "POST" && url.pathname === "/api/renew-keys") {
+      try {
+        return send(res, 200, (await session.renewKeys()).input);
+      } catch (error) {
+        return send(res, 409, { error: (error as Error).message });
+      }
+    }
     if (req.method === "POST" && url.pathname === "/api/skip-used-keys") {
       try {
         return send(res, 200, await session.skipUsedKeysInput());

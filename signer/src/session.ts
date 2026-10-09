@@ -5,6 +5,11 @@ import {
   decodeActions,
   checkPackage,
   decodePackage,
+  BRANCH_PATH_TEMPLATE,
+  DEFAULT_TREE_SIZE,
+  entriesProven,
+  MAX_KEY_GENERATIONS,
+  safeKeyPath,
   packageSignedByOperator,
   packageKeys,
   deploymentsFor,
@@ -32,7 +37,7 @@ import {
 } from "@rotating-msig/core";
 import { KeyChecker, type UsedKey } from "./keycheck.js";
 import { readAfter, simulateCalls, type ReadCall, type Simulation } from "./simulate.js";
-import { OPERATOR_ACCOUNT, resolveCurrentOwner, type AddressSource, type CurrentOwner } from "@rotating-msig/keys";
+import { generateTree, OPERATOR_ACCOUNT, resolveCurrentOwner, type AddressSource, type CurrentOwner } from "@rotating-msig/keys";
 import {
   createWalletClient,
   custom,
@@ -73,6 +78,10 @@ export interface SessionOptions {
   gasFunding?: boolean;
   /** Checks this signer's upcoming keys for earlier use; defaults to the Safe's network only. */
   keyChecker?: KeyChecker;
+  /** Renewed key lists proposed earlier; the session switches to one once the slot's root on-chain is its root. */
+  candidateTrees?: TreeFile[];
+  /** Called after switching to a renewed key list, so it can be saved as the slot's tree. */
+  onTreeChange?: (tree: TreeFile) => void;
 }
 
 export const DEFAULT_EXECUTION_TIMEOUT_MS = 180_000;
@@ -308,6 +317,7 @@ export class SignerSession {
 
   private async snapshot(): Promise<{ state: SafeState; owner?: CurrentOwner; ownerError?: string }> {
     const state = await readSafeState(this.options.publicClient, this.options.safe);
+    this.adoptRenewedTree(state);
     try {
       return { state, owner: await resolveCurrentOwner(this.options.source, this.options.tree, state) };
     } catch (error) {
@@ -479,6 +489,14 @@ export class SignerSession {
       if (!(await packageSignedByOperator(pkg))) errors.push(`it is not signed by its signer address ${pkg.operator}`);
       if (errors.length > 0) throw new Error(`the new signer's package does not fit: ${errors.join("; ")}`);
       checkThreshold(input.threshold, owners + 1);
+    }
+    if (input.kind === "renew-keys") {
+      const slot = state.slots.find((candidate) => candidate.slotId === input.slotId);
+      if (!slot) throw new Error(`slot ${input.slotId} has no owner`);
+      if (input.root === slot.root) throw new Error("this is the slot's current key list");
+      if (!entriesProven(input.root, { chainId: state.chainId, safe: state.safe, slotId: input.slotId }, input.stage)) throw new Error("the new keys are not in the new key list");
+      const used = await this.checker().used(input.stage.map((entry) => entry.owner), { ownSafe: state.safe });
+      if (used.length > 0) throw new Error(`key ${used[0]!.address} of the new list was already used on ${used[0]!.networks.join(", ")}`);
     }
     if (input.kind === "skip-keys") {
       const slot = state.slots.find((candidate) => candidate.slotId === input.slotId);
@@ -774,6 +792,52 @@ export class SignerSession {
       this.lastRefill = { at: new Date().toISOString(), error: (error as Error).message };
       return undefined;
     }
+  }
+
+  /** Switches to a renewed key list once a renewal executed (the slot's root on-chain is that list's root). */
+  private adoptRenewedTree(state: SafeState): void {
+    const { tree, candidateTrees } = this.options;
+    const onChain = state.slots.find((slot) => slot.slotId === tree.slotId)?.root;
+    if (!onChain || onChain === tree.root) return;
+    const renewed = candidateTrees?.find((candidate) => candidate.root === onChain);
+    if (!renewed) return;
+    this.options.tree = renewed;
+    this.loadedTree = undefined;
+    this.options.candidateTrees = candidateTrees!.filter((candidate) => candidate !== renewed);
+    this.options.onTreeChange?.(renewed);
+  }
+
+  /**
+   * Builds a renewal of this signer's key list: derives the next generation of the Safe's two-level path, starts at
+   * its first run of unused keys, and returns the proposal (`setRoot` plus staging, one transaction) with the new tree,
+   * which is kept as a candidate until the renewal executes.
+   */
+  async renewKeys(onProgress?: (done: number, total: number) => void, size = DEFAULT_TREE_SIZE): Promise<{ input: ProposalInput; tree: TreeFile }> {
+    const { state, owner, ownerError } = await this.snapshot();
+    if (!owner) throw new Error(ownerError ?? "your current owner key could not be resolved");
+    const { tree: current, source, safe } = this.options;
+    const chainId = state.chainId;
+    let generation = 0;
+    for (let g = 0; g < MAX_KEY_GENERATIONS; g++) {
+      const path = safeKeyPath(chainId, safe, g);
+      if (current.pathTemplate === BRANCH_PATH_TEMPLATE && current.base === path.account && current.branch === path.branch) generation = g + 1;
+    }
+    if (generation >= MAX_KEY_GENERATIONS) throw new Error("this slot has used every key list generation; set a new root manually");
+    const path = safeKeyPath(chainId, safe, generation);
+    const tree = await generateTree(source, { chainId, safe, slotId: owner.slot.slotId, base: path.account, branch: path.branch }, size, onProgress);
+    const start = await this.checker().firstUnusedRun((index) => tree.addresses[index], 0, state.bufferSize + 1);
+    if (start === undefined) throw new Error("could not find unused keys at the start of the new list");
+    const loaded = loadTreeFile(JSON.stringify(tree));
+    const input: ProposalInput = {
+      kind: "renew-keys",
+      slotId: owner.slot.slotId,
+      root: tree.root,
+      size: tree.size,
+      startIndex: start,
+      stage: stageEntries(loaded.tree, loaded.file, start, state.bufferSize),
+    };
+    this.options.candidateTrees = [...(this.options.candidateTrees ?? []), tree];
+    return { input, tree };
   }
 
   private checker(): KeyChecker {

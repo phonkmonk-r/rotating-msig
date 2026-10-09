@@ -1,10 +1,10 @@
-import type { ProposalInput } from "@rotating-msig/core";
+import type { DappCall, ProposalInput } from "@rotating-msig/core";
 
 import type { DappRequest } from "../../src/dapp.js";
 import type { DraftItem, DraftView, Execution, ProposalResult, QueueItem, Refill, SignerView, StatusView, TokenInfo } from "../../src/session.js";
 import type { Simulation } from "../../src/simulate.js";
 
-export type { DappRequest, DraftItem, DraftView, Execution, ProposalInput, ProposalResult, QueueItem, Refill, Simulation, SignerView, StatusView, TokenInfo };
+export type { DappCall, DappRequest, DraftItem, DraftView, Execution, ProposalInput, ProposalResult, QueueItem, Refill, Simulation, SignerView, StatusView, TokenInfo };
 
 /** The dApp browser's page, as the main process reports it. */
 export interface BrowserState {
@@ -156,6 +156,7 @@ interface DesktopBridge {
   token(address: string): Promise<Result<TokenInfo>>;
   refill(): Promise<Result<Refill | null>>;
   skipUsedKeys(): Promise<Result<ProposalInput>>;
+  renewKeys(): Promise<Result<ProposalInput>>;
   browserQueue(id: string): Promise<Result<DraftItem>>;
   draft(): Promise<Result<DraftView>>;
   draftMode(enabled: boolean): Promise<Result<DraftView>>;
@@ -254,6 +255,7 @@ export const api = {
   draftClear: () => (bridge ? unwrap(bridge.draftClear()) : draftHttp<DraftView>({ action: "clear" })),
   draftSimulate: () => (bridge ? unwrap(bridge.draftSimulate()) : draftHttp<Simulation>({ action: "simulate" })),
   draftPropose: (preview: boolean) => (bridge ? unwrap(bridge.draftPropose(preview)) : draftHttp<ProposalResult>({ action: "propose", preview })),
+  renewKeys: () => (bridge ? unwrap(bridge.renewKeys()) : http<ProposalInput>("/api/renew-keys", { method: "POST", body: "{}" })),
   skipUsedKeys: () => (bridge ? unwrap(bridge.skipUsedKeys()) : http<ProposalInput>("/api/skip-used-keys", { method: "POST", body: "{}" })),
   refill: () => (bridge ? unwrap(bridge.refill()) : http<Refill | null>("/api/refill", { method: "POST", body: "{}" })),
   token: (address: string) => (bridge ? unwrap(bridge.token(address)) : http<TokenInfo>(`/api/token?address=${encodeURIComponent(address)}`)),

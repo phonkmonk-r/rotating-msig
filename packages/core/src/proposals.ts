@@ -28,7 +28,8 @@ export type ProposalInput =
   | { kind: "remove-signer"; slotId: number; threshold: number }
   | { kind: "escape" }
   | { kind: "batch"; items: ProposalInput[] }
-  | { kind: "skip-keys"; slotId: number; index: number; stage: StageEntry[] };
+  | { kind: "skip-keys"; slotId: number; index: number; stage: StageEntry[] }
+  | { kind: "renew-keys"; slotId: number; root: Hex; size: number; startIndex: number; stage: StageEntry[] };
 
 /** Most actions one queued batch may hold. */
 export const MAX_BATCH_ITEMS = 30;
@@ -101,6 +102,20 @@ export function buildProposal(input: ProposalInput, context: { safe: Address; gu
       return safeCalls.escape(context.safe);
     case "batch":
       return batch(batchCalls(input.items, context), context.multiSendCallOnly);
+    case "renew-keys": {
+      // setRoot empties the slot's buffer, and the renewing signer rotates in this same transaction, so the new
+      // list's first keys are staged in the same batch.
+      if (input.stage.length === 0) throw new Error("stage at least one key of the new list");
+      if (input.stage.some((entry, i) => entry.index !== input.startIndex + i)) throw new Error("staged keys must start at the new list's first key and be consecutive");
+      if (input.startIndex + input.stage.length > input.size) throw new Error("the staged keys run past the new list");
+      return batch(
+        [
+          guardCalls.setRoot(context.guard, input.slotId, input.root, input.size, input.startIndex, ""),
+          guardCalls.stage(context.guard, context.safe, input.slotId, input.stage),
+        ],
+        context.multiSendCallOnly,
+      );
+    }
     case "skip-keys": {
       // skipTo empties the slot's buffer, so staging the following keys must happen in the same transaction.
       if (input.stage.length === 0) throw new Error("stage at least one key after the skip");

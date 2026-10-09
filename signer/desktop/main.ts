@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import {
@@ -94,6 +94,21 @@ const settingsPath = () => join(profileDir(), "settings.json");
 const vaultPath = () => join(profileDir(), "vault.json");
 const creatingPath = () => join(profileDir(), "creating.json");
 const addingPath = () => join(profileDir(), "adding.json");
+/** A renewed key list proposed but not yet executed, kept beside the slot's tree until the chain shows its root. */
+const renewedTreePath = (settings: Pick<SafeEntry, "chainId" | "safe" | "slotId">, root: string) =>
+  join(profileDir(), "trees", `${settings.chainId}-${settings.safe.toLowerCase()}-slot${settings.slotId}-renewed-${root.slice(2, 18)}.json`);
+
+function renewedTrees(entry: Pick<SafeEntry, "chainId" | "safe" | "slotId">): TreeFile[] {
+  const prefix = `${entry.chainId}-${entry.safe.toLowerCase()}-slot${entry.slotId}-renewed-`;
+  try {
+    return readdirSync(join(profileDir(), "trees"))
+      .filter((name) => name.startsWith(prefix))
+      .map((name) => loadTreeFile(readFileSync(join(profileDir(), "trees", name), "utf8")).file);
+  } catch {
+    return [];
+  }
+}
+
 const treePath = (settings: Pick<SafeEntry, "chainId" | "safe" | "slotId">) =>
   join(profileDir(), "trees", `${settings.chainId}-${settings.safe.toLowerCase()}-slot${settings.slotId}.json`);
 
@@ -157,7 +172,19 @@ async function start(entry: SafeEntry): Promise<void> {
   stopSafe(key);
   const tree = loadTreeFile(readFileSync(treePath(entry), "utf8")).file;
   const { session: next } = createSession(
-    { tree, rpc: entry.rpc || undefined, executionRpc: entry.executionRpc || undefined, txServiceUrl: entry.txServiceUrl, safeApiKey: process.env.SAFE_API_KEY },
+    {
+      tree,
+      rpc: entry.rpc || undefined,
+      executionRpc: entry.executionRpc || undefined,
+      txServiceUrl: entry.txServiceUrl,
+      safeApiKey: process.env.SAFE_API_KEY,
+      candidateTrees: renewedTrees(entry),
+      // A renewal executed: the new list becomes the slot's tree, and the saved candidate is no longer needed.
+      onTreeChange: (renewed) => {
+        writeFileSync(treePath(entry), JSON.stringify(renewed));
+        rmSync(renewedTreePath(entry, renewed.root), { force: true });
+      },
+    },
     source,
   );
   const status = await next.status();
@@ -655,6 +682,13 @@ handle("signer:execution", (hash: unknown) => requireSession().execution(require
 handle("signer:propose", (input: unknown, preview: unknown) => requireSession().propose(input as never, preview === true));
 handle("signer:refill", () => requireSession().refill());
 handle("signer:skipUsedKeys", () => requireSession().skipUsedKeysInput());
+handle("signer:renewKeys", async () => {
+  const entry = activeEntry();
+  if (!entry) throw new Error("no Safe is shown");
+  const { input, tree } = await requireSession().renewKeys((done, total) => sendToWindow("app:progress", { stage: "deriving", done, total }));
+  writeFileSync(renewedTreePath(entry, tree.root), JSON.stringify(tree));
+  return input;
+});
 handle("signer:token", (address: unknown) => requireSession().tokenInfo(String(address)));
 
 let browser: DappBrowser | undefined;

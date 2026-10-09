@@ -6,6 +6,7 @@ import {
   SAFE_PATH_TEMPLATE,
   safeAccount,
   safeKeyPath,
+  MAX_KEY_GENERATIONS,
   type TreeFile,
 } from "@rotating-msig/core";
 import { discoverSlot, generateTree, type AddressSource, type KeyLayout } from "@rotating-msig/keys";
@@ -18,9 +19,12 @@ export const LEGACY_BASES = [100_000];
 
 /** Where a signer's keys for a Safe may live: the two-level path first, then the layouts of earlier trees. */
 export function keyLayouts(chainId: number, safe: Address): KeyLayout[] {
-  const twoLevel = safeKeyPath(chainId, safe);
   return [
-    { pathTemplate: BRANCH_PATH_TEMPLATE, base: twoLevel.account, branch: twoLevel.branch },
+    // Every generation: a slot whose key list was renewed lives under a later one.
+    ...Array.from({ length: MAX_KEY_GENERATIONS }, (_, generation) => {
+      const path = safeKeyPath(chainId, safe, generation);
+      return { pathTemplate: BRANCH_PATH_TEMPLATE, base: path.account, branch: path.branch };
+    }),
     { pathTemplate: SAFE_PATH_TEMPLATE, base: safeAccount(chainId, safe) },
     { pathTemplate: RANGE_PATH_TEMPLATE, base: defaultBase(chainId, safe) },
     ...LEGACY_BASES.map((base) => ({ pathTemplate: RANGE_PATH_TEMPLATE, base })),

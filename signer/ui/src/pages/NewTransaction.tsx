@@ -1,16 +1,18 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { formatUnits, isAddress, parseEther, parseUnits } from "viem";
 
-import { api, type ProposalInput, type ProposalResult, type StatusView, type TokenInfo } from "../api";
+import { api, type DappCall, type ProposalInput, type ProposalResult, type StatusView, type TokenInfo } from "../api";
 import { eth } from "../format";
 import { IconAlert, IconCheck } from "../icons";
 import { Avatar, Badge, Dots } from "../ui";
+import { ContractCall } from "./ContractCall";
 
-type Tab = "eth" | "erc20" | "force-rotate";
+type Tab = "eth" | "erc20" | "call" | "force-rotate";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "eth", label: "Send ETH" },
   { id: "erc20", label: "Send token" },
+  { id: "call", label: "Contract call" },
   { id: "force-rotate", label: "Rotate signer" },
 ];
 
@@ -33,6 +35,8 @@ export function NewTransaction({
   const [token, setToken] = useState<TokenInfo>();
   const [tokenError, setTokenError] = useState<string>();
   const [slots, setSlots] = useState<number[]>([]);
+  const [custom, setCustom] = useState<{ call?: DappCall; problem?: string }>({});
+  const onCustom = useCallback((call: DappCall | undefined, problem?: string) => setCustom({ call, problem }), []);
   const [review, setReview] = useState<ProposalResult>();
   const [done, setDone] = useState<ProposalResult>();
   const [queued, setQueued] = useState<number>(0);
@@ -55,6 +59,10 @@ export function NewTransaction({
 
   function input(): ProposalInput {
     if (tab === "force-rotate") return { kind: "force-rotate", slotIds: slots };
+    if (tab === "call") {
+      if (!custom.call) throw new Error(custom.problem ?? "Complete the call");
+      return { kind: "calls", origin: "app", calls: [custom.call] };
+    }
     if (!isAddress(to, { strict: false })) throw new Error("Enter a valid recipient address");
     if (!/^\d*\.?\d+$/.test(amount.trim())) throw new Error("Enter an amount");
     if (tab === "eth") return { kind: "eth", to, amount: parseEther(amount.trim()).toString() };
@@ -159,6 +167,8 @@ export function NewTransaction({
             <li>Another signer executes; you both rotate</li>
           </ul>
         </div>
+      ) : tab === "call" ? (
+        <ContractCall onChange={onCustom} />
       ) : tab === "force-rotate" ? (
         <div className="slot-picker">
           {others.map((signer) => {

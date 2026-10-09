@@ -2021,3 +2021,10 @@ button.safe-chip.open {
   margin-top: 2px;
   accent-color: var(--accent);
 }
+
+.renew-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}

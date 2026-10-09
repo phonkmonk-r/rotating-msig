@@ -268,6 +268,18 @@ export function checkPackage(pkg: SlotPackage, expected: { chainId: number; safe
   return errors;
 }
 
+/** Whether every entry is proven against `root` for this Safe and slot. */
+export function entriesProven(root: Hex, where: { chainId: number; safe: Address; slotId: number }, entries: readonly StageEntry[]): boolean {
+  const meta = { ...where, base: 0 };
+  return entries.every((entry) => {
+    try {
+      return StandardMerkleTree.verify(root, [...LEAF_TYPES], leafValue(meta, entry.index, getAddress(entry.owner)), entry.proof);
+    } catch {
+      return false;
+    }
+  });
+}
+
 /** The package's first owner followed by its staged keys. */
 export function packageKeys(pkg: SlotPackage): StageEntry[] {
   return [{ index: pkg.config.startIndex, owner: pkg.config.owner, proof: pkg.config.proof }, ...pkg.stage];

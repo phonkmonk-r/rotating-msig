@@ -1,5 +1,6 @@
 import { useState } from "react";
 
+import { RenewKeys } from "./RenewKeys";
 import { api, type ProposalInput, type ProposalResult, type QueueItem, type StatusView } from "../api";
 import { LOW_GAS_WEI } from "../data";
 import { eth } from "../format";
@@ -94,6 +95,7 @@ export function Overview({ status, queue, onOpenTransactions }: { status: Status
             ))}
           </ul>
           {me?.usedKeys && me.usedKeys.length > 0 && <SkipUsedKeys />}
+          {me && status.findings.some((f) => f.slotId === me.slotId && /keys left|Tree used up/.test(f.message)) && <RenewKeys compact />}
         </section>
       )}
     </>

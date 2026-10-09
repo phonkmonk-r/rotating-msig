@@ -294,7 +294,7 @@ Everything that signs, proposes, executes and maintains a slot. Runs inside the 
 - **Reading:** `status` (Safe, this signer, every slot, findings, gas account), `queue` (pending transactions with this signer's verdict), `tokenInfo`, `rpc`, `proposalStatus`.
 - **Signing:** `propose` (checks, signs the Safe transaction hash with the current key, posts it; the signature is the proposer's confirmation), `confirm`, `execute`.
 - **Executing:** `execute` returns at once with a list of steps the UI follows: simulate, fund the key from the gas account if needed (`fund`, waits for the transfer), sign and send through the execution RPC, wait for inclusion, record rotations (read from the receipt's `OwnerRotated` events), sweep the key's remaining ETH back to the gas account (`sweepWhenMined`, `sweep`; the transfer's gas is estimated so the key ends at zero or within a fraction of a gwei). `execution` reports progress.
-- **Maintaining:** `refill` stages the slot's next keys from the gas account (skipping past any used key), `autoRefill` and `startAutoRefill` run it every minute once two buffer places are free, `skipUsedKeysInput` builds a proposal that skips used keys and restages in one transaction.
+- **Maintaining:** `refill` stages the slot's next keys from the gas account (skipping past any used key), `autoRefill` and `startAutoRefill` run it every minute once two buffer places are free, `skipUsedKeysInput` builds a proposal that skips used keys and restages in one transaction, `renewKeys` derives the next generation of the slot's key list and builds the `setRoot` plus staging proposal, and `adoptRenewedTree` switches the session to that list once its root is on-chain.
 - **Queue:** `draft`, `setQueueMode`, `addToDraft`, `removeFromDraft`, `moveInDraft`, `clearDraft`, `simulateDraft`, `readAfterDraft`, `proposeDraft` (the whole queue as one MultiSend transaction).
 - **Checks:** `check` validates every proposal kind against chain state before anything is signed.
 
@@ -326,7 +326,8 @@ React, built with Vite; the same UI runs in the desktop app (through the preload
 | `SafeSwitcher.tsx` | The Safe card at the top of the sidebar: switch, add, forget Safes. |
 | `pages/Overview.tsx` | This signer's slot, gas account, next keys (manual refill), health findings (skip used keys). |
 | `pages/Transactions.tsx` | Pending transactions with this signer's action, the execution checklist, New transaction, and the queue card. |
-| `pages/NewTransaction.tsx` | Send ETH, send a token, rotate signers. |
+| `pages/NewTransaction.tsx`, `pages/ContractCall.tsx` | Send ETH, send a token, call any contract (ABI or raw data), rotate signers. |
+| `pages/RenewKeys.tsx` | Renew this signer's key list (Settings, and Overview when the list runs low). |
 | `pages/QueueCard.tsx` | The local queue: reorder, simulate, review, propose all. |
 | `pages/Browse.tsx` | The dApp browser's address bar and request review. |
 | `pages/Signers.tsx`, `pages/Manage.tsx` | Every slot's state; add, remove, re-threshold, escape hatch. |
@@ -352,7 +353,7 @@ Each signer's seed (or Ledger) holds:
 
 | Layout | Path of key `i` | Collision between two Safes of one seed | Used by |
 |---|---|---|---|
-| Two-level (current) | `m/44'/60'/{account}'/{branch}'/{i}`, both from one hash | about 1 in 4.6 × 10^18 | Safes created since 2026-10-08 |
+| Two-level (current) | `m/44'/60'/{account}'/{branch}'/{i}`, both from one hash; each renewal of a slot's list uses the next generation of the hash | about 1 in 4.6 × 10^18 | Safes created since 2026-10-08 |
 | One-level per Safe | `m/44'/60'/{account}'/0/{i}` | about 1 in 2 billion | Briefly, the same day |
 | Ranged | `m/44'/60'/{base + i}'/0/0` | about 1 in 50,000 | The first Sepolia Safes |
 

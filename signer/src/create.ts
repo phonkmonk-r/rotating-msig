@@ -17,6 +17,9 @@ export interface SessionConfig {
   /** Overrides the Safe Transaction Service base URL (tests and local demos). */
   txServiceUrl?: string;
   safeApiKey?: string;
+  /** Renewed key lists proposed earlier, and where to save the one the session switches to. */
+  candidateTrees?: TreeFile[];
+  onTreeChange?: (tree: TreeFile) => void;
 }
 
 /** Nonces on this network and mainnet, and the guard's staging history on this network since its first deployment. */
@@ -46,6 +49,8 @@ export function createSession(config: SessionConfig, source: AddressSource): { s
     tree: config.tree,
     safe: config.tree.safe,
     gasFunding: true,
+    candidateTrees: config.candidateTrees,
+    onTreeChange: config.onTreeChange,
   });
   return { session, chain, executionRpc };
 }
