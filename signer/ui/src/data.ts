@@ -33,9 +33,11 @@ export function useSignerData(): SignerData {
     if (busy.current) return;
     setRefreshing(true);
     try {
-      const [nextStatus, nextQueue, nextDraft] = await Promise.all([api.status(), api.queue(), api.draft()]);
+      // The queue comes from the Transaction Service, which can be briefly unavailable or rate-limited: keep the last
+      // queue then, and let the status's own queueError warn, instead of reporting the signer as unreachable.
+      const [nextStatus, nextQueue, nextDraft] = await Promise.all([api.status(), api.queue().catch(() => undefined), api.draft()]);
       setStatus(nextStatus);
-      setQueue(nextQueue);
+      if (nextQueue) setQueue(nextQueue);
       setDraft(nextDraft);
       setError(undefined);
       setUpdatedAt(new Date());

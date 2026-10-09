@@ -100,8 +100,9 @@ describe("dApp browser wallet", { skip }, () => {
   it("answers eth_sendTransaction with the real execution hash, which a dApp's own RPC can find", async () => {
     const sending = call("eth_sendTransaction", [{ from: chain.safe, to: ALICE, value: "0x1", nonce: "0x1" }]) as Promise<Hex>;
     let queue = await sessions[1]!.queue();
-    for (let i = 0; i < 50 && queue.length === 0; i++) {
-      await new Promise((r) => setTimeout(r, 50));
+    // Another signer's client reuses its pending list for a few seconds, so its view can lag the proposal briefly.
+    for (let i = 0; i < 100 && queue.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 100));
       queue = await sessions[1]!.queue();
     }
     const executed = await sessions[1]!.execute(queue[0]!.safeTxHash);

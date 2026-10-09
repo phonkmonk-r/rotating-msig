@@ -637,7 +637,7 @@ export class SignerSession {
       const { state, owner, ownerError } = await this.snapshot();
       if (!owner) throw new Error(ownerError ?? "your current owner key could not be resolved");
       if (state.threshold < 2) throw new Error("proposing needs a threshold of at least 2: with 1, the executor signs alone");
-      const queue = await this.options.txService.pending(this.options.safe, state.nonce);
+      const queue = await this.options.txService.pending(this.options.safe, state.nonce, { fresh: true });
       // A recovery is proposed at the current nonce on purpose: landing it cancels the transaction it replaces.
       const pendingOthers = options.replacing ? queue.filter((tx) => tx.tx.nonce !== state.nonce) : queue;
       if (pendingOthers.length > 0) throw new Error(`transaction #${pendingOthers[0]!.tx.nonce} is still pending: execute it or replace it in Safe{Wallet} first`);
@@ -672,7 +672,7 @@ export class SignerSession {
    */
   async recover(preview = false): Promise<ProposalResult & { slotIds: number[] }> {
     const { state } = await this.snapshot();
-    const pending = await this.options.txService.pending(this.options.safe, state.nonce);
+    const pending = await this.options.txService.pending(this.options.safe, state.nonce, { fresh: true });
     const { exposure } = this.exposures(state, pending);
     if (!exposure) throw new Error("no exposed keys to replace");
     const result = await this.propose({ kind: "force-rotate", slotIds: exposure.slotIds }, preview, { replacing: true });
@@ -1376,7 +1376,7 @@ export class SignerSession {
   private async load(safeTxHash: Hex) {
     const { state, owner, ownerError } = await this.snapshot();
     if (!owner) throw new Error(ownerError ?? "your current owner key could not be resolved");
-    const pending = await this.options.txService.pending(this.options.safe, state.nonce);
+    const pending = await this.options.txService.pending(this.options.safe, state.nonce, { fresh: true });
     const tx = pending.find((candidate) => candidate.safeTxHash.toLowerCase() === safeTxHash.toLowerCase());
     if (!tx) throw new Error(`transaction ${safeTxHash} is not pending for this Safe`);
     return { state, owner, pending, tx };
