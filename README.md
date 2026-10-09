@@ -1,4 +1,8 @@
+<img src="signer/desktop/assets/icon.png" alt="Cicada icon" width="96" align="left">
+
 # Cicada
+
+<br clear="left">
 
 [![CI](https://github.com/phonkmonk-r/rotating-msig/actions/workflows/test.yml/badge.svg)](https://github.com/phonkmonk-r/rotating-msig/actions/workflows/test.yml)
 ![Solidity 0.8.30](https://img.shields.io/badge/Solidity-0.8.30-363636?logo=solidity&logoColor=white)
