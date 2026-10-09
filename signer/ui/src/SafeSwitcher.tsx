@@ -10,6 +10,7 @@ export function SafeSwitcher({ status, onSwitched, onAdd }: { status: StatusView
   const [open, setOpen] = useState(() => window.location.hash.includes("switcher"));
   const [safes, setSafes] = useState<SafeSummary[]>();
   const [error, setError] = useState<string>();
+  const [forgetting, setForgetting] = useState<string>();
   const box = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -22,6 +23,18 @@ export function SafeSwitcher({ status, onSwitched, onAdd }: { status: StatusView
     window.addEventListener("mousedown", close);
     return () => window.removeEventListener("mousedown", close);
   }, [open]);
+
+  async function forget(key: string) {
+    setError(undefined);
+    try {
+      await desktop!.removeSafe(key);
+      setForgetting(undefined);
+      setSafes(await desktop!.listSafes());
+      onSwitched();
+    } catch (caught) {
+      setError((caught as Error).message);
+    }
+  }
 
   async function select(key: string) {
     setError(undefined);
@@ -60,8 +73,22 @@ export function SafeSwitcher({ status, onSwitched, onAdd }: { status: StatusView
       {open && (
         <div className="safe-menu" role="menu">
           {!safes && !error && <div className="muted small safe-menu-note">Loading…</div>}
-          {safes?.map((safe) => (
-            <button key={safe.key} type="button" role="menuitem" className={`safe-option ${safe.active ? "active" : ""}`} onClick={() => void select(safe.key)}>
+          {safes?.map((safe) =>
+            forgetting === safe.key ? (
+              <div key={safe.key} className="safe-forget">
+                <span className="small">Forget {short(safe.safe)} on this computer? Nothing changes on-chain; you can add it again.</span>
+                <div className="safe-forget-actions">
+                  <button type="button" onClick={() => setForgetting(undefined)}>
+                    Keep
+                  </button>
+                  <button type="button" className="danger" onClick={() => void forget(safe.key)}>
+                    Forget
+                  </button>
+                </div>
+              </div>
+            ) : (
+            <div key={safe.key} className="safe-option-row">
+            <button type="button" role="menuitem" className={`safe-option ${safe.active ? "active" : ""}`} onClick={() => void select(safe.key)}>
               <Avatar address={safe.safe} size={24} />
               <span className="safe-option-text">
                 <span className="mono small">{short(safe.safe)}</span>
@@ -77,7 +104,12 @@ export function SafeSwitcher({ status, onSwitched, onAdd }: { status: StatusView
                 </span>
               )}
             </button>
-          ))}
+            <button type="button" className="icon-button" title="Forget on this computer" aria-label={`Forget ${short(safe.safe)}`} onClick={() => setForgetting(safe.key)}>
+              ✕
+            </button>
+            </div>
+            ),
+          )}
           {error && <div className="note critical safe-menu-note">{error}</div>}
           {onAdd && (
             <button

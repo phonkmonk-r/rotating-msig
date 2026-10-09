@@ -24,6 +24,11 @@ export interface Bounds {
   height: number;
 }
 
+/** Clears every dApp's cookies and storage, for when no profile is left on this computer. */
+export async function clearDappStorage(): Promise<void> {
+  await electronSession.fromPartition(PARTITION).clearStorageData();
+}
+
 function allowed(url: URL): boolean {
   return url.protocol === "https:" || (url.protocol === "http:" && LOCAL_HOSTS.has(url.hostname));
 }

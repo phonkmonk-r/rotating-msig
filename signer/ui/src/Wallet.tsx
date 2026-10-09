@@ -124,26 +124,74 @@ export function AddProfile({ suggestedName, onDone, onCancel }: { suggestedName:
 /** Lists the profiles on this device; choosing one leads to its unlock screen. */
 export function ProfilePicker({ profiles, onPicked, onAdd }: { profiles: ProfileView[]; onPicked: () => void; onAdd: () => void }) {
   const [error, setError] = useState<string>();
+  const [removing, setRemoving] = useState<string>();
+  const [confirm, setConfirm] = useState("");
+
+  async function remove(profile: ProfileView) {
+    setError(undefined);
+    try {
+      await desktop!.removeProfile(profile.id);
+      setRemoving(undefined);
+      setConfirm("");
+      onPicked();
+    } catch (caught) {
+      setError((caught as Error).message);
+    }
+  }
+
   return (
     <div className="auth-card">
       <h2>Choose a profile</h2>
       <div className="profile-list">
         {profiles.map((profile) => (
-          <button
-            key={profile.id}
-            type="button"
-            className="profile-option"
-            onClick={() => {
-              desktop!.selectProfile(profile.id).then(onPicked, (caught: Error) => setError(caught.message));
-            }}
-          >
-            <Avatar address={profile.operator} size={34} />
-            <span className="profile-option-text">
-              <span className="profile-option-name">{profile.name}</span>
-              <span className="muted small mono">{profile.safe ? `Safe ${short(profile.safe)}` : short(profile.operator)}</span>
-            </span>
-            <Badge tone={profile.kind === "ledger" ? "accent" : "neutral"}>{profile.kind === "ledger" ? "Ledger" : "Seed"}</Badge>
-          </button>
+          <div key={profile.id} className="profile-row">
+            <div className="profile-row-main">
+              <button
+                type="button"
+                className="profile-option"
+                onClick={() => {
+                  desktop!.selectProfile(profile.id).then(onPicked, (caught: Error) => setError(caught.message));
+                }}
+              >
+                <Avatar address={profile.operator} size={34} />
+                <span className="profile-option-text">
+                  <span className="profile-option-name">{profile.name}</span>
+                  <span className="muted small mono">
+                    {profile.safe ? `Safe ${short(profile.safe)}${profile.safeCount > 1 ? ` +${profile.safeCount - 1}` : ""}` : short(profile.operator)}
+                  </span>
+                </span>
+                <Badge tone={profile.kind === "ledger" ? "accent" : "neutral"}>{profile.kind === "ledger" ? "Ledger" : "Seed"}</Badge>
+              </button>
+              <button
+                type="button"
+                className="icon-button"
+                title="Remove from this computer"
+                aria-label={`Remove ${profile.name}`}
+                onClick={() => {
+                  setConfirm("");
+                  setRemoving(removing === profile.id ? undefined : profile.id);
+                }}
+              >
+                ✕
+              </button>
+            </div>
+            {removing === profile.id && (
+              <div className="profile-remove">
+                <p className="muted small">
+                  {profile.kind === "seed"
+                    ? "Deletes this profile's encrypted seed, settings and key lists from this computer. Your Safes, your signer slots and your funds are not affected, and you can add the seed again here or on another computer. Without your own backup of the seed phrase, its keys are gone."
+                    : "Forgets this Ledger and its settings on this computer. The keys stay on the device; your Safes are not affected."}{" "}
+                  Type the profile name to confirm.
+                </p>
+                <div className="inline-edit">
+                  <input value={confirm} placeholder={profile.name} onChange={(e) => setConfirm(e.target.value)} />
+                  <button type="button" className="danger" disabled={confirm !== profile.name} onClick={() => void remove(profile)}>
+                    Remove
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         ))}
       </div>
       {error && <div className="note critical">{error}</div>}

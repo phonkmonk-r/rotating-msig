@@ -22,7 +22,7 @@ import { detectChains, JoinError, joinSafe, readClient, type JoinProgress } from
 import { chainFor } from "../src/networks.js";
 import { createSafe, planSafe, prepareNewSlot, prepareSlot, type NewSafeContext } from "../src/newsafe.js";
 import type { SignerSession } from "../src/session.js";
-import { DappBrowser, type Bounds } from "./browser.js";
+import { clearDappStorage, DappBrowser, type Bounds } from "./browser.js";
 import { ProfileStore, type ProfileEntry } from "./profiles.js";
 import { readVault, unlockVault } from "./vault.js";
 
@@ -537,9 +537,11 @@ handle("profiles:deselect", async () => {
 
 handle("profiles:rename", (id: unknown, name: unknown) => profiles.rename(String(id), String(name)));
 
+/** Deletes the profile's folder (vault, settings, key lists, Safes being set up); dApp data too once none is left. */
 handle("profiles:remove", async (id: unknown) => {
   if (activeId === id) await activate(undefined);
   profiles.remove(String(id));
+  if (profiles.list().length === 0) await clearDappStorage();
   return true;
 });
 
