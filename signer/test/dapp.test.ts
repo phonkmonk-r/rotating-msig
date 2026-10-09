@@ -61,7 +61,11 @@ describe("dApp browser wallet", { skip }, () => {
 
   it("presents the Safe as the account and forwards reads", async () => {
     assert.equal(await call("eth_chainId"), numberToHex(foundry.id));
+    assert.deepEqual(await call("eth_accounts"), [], "no account until the site asks to connect");
+    assert.deepEqual(await call("wallet_getPermissions"), []);
     assert.deepEqual(await call("eth_requestAccounts"), [chain.safe]);
+    assert.deepEqual(await call("eth_accounts"), [chain.safe]);
+    assert.deepEqual(await provider.request("https://other.example", "eth_accounts", []), [], "connecting is per site");
     assert.equal(await call("wallet_switchEthereumChain", [{ chainId: numberToHex(foundry.id) }]), null);
     await rejectsWith(call("wallet_switchEthereumChain", [{ chainId: "0x1" }]), 4902);
     assert.equal(BigInt((await call("eth_getBalance", [chain.safe, "latest"])) as string) > 0n, true);

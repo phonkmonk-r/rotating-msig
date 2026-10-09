@@ -6,13 +6,23 @@ import type { Simulation } from "../../src/simulate.js";
 
 export type { DappCall, DappRequest, DraftItem, DraftView, Execution, Exposure, ProposalInput, ProposalResult, QueueItem, Refill, Simulation, SignerView, StatusView, TokenInfo };
 
-/** The dApp browser's page, as the main process reports it. */
+/** One open page in the dApp browser; a new tab has no URL until something is opened in it. */
+export interface BrowserTab {
+  id: number;
+  url: string;
+  title: string;
+  loading: boolean;
+}
+
+/** The dApp browser's selected page and every open tab, as the main process reports them. */
 export interface BrowserState {
   url: string;
   title: string;
   loading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
+  tabs: BrowserTab[];
+  activeTab?: number;
 }
 
 export interface Bounds {
@@ -169,6 +179,9 @@ interface DesktopBridge {
   draftSimulate(): Promise<Result<Simulation>>;
   draftPropose(preview: boolean): Promise<Result<ProposalResult>>;
   browserOpen(url: string): Promise<Result<BrowserState>>;
+  browserNewTab(url?: string): Promise<Result<BrowserState>>;
+  browserSelectTab(id: number): Promise<Result<BrowserState>>;
+  browserCloseTab(id: number): Promise<Result<BrowserState>>;
   browserBounds(bounds: Bounds | null): Promise<Result<null>>;
   browserNavigate(action: "back" | "forward" | "reload" | "stop"): Promise<Result<null>>;
   browserState(): Promise<Result<BrowserState>>;
@@ -304,6 +317,9 @@ export const desktop = bridge
 export const browser = bridge
   ? {
       open: (url: string) => unwrap(bridge.browserOpen(url)),
+      newTab: (url?: string) => unwrap(bridge.browserNewTab(url)),
+      selectTab: (id: number) => unwrap(bridge.browserSelectTab(id)),
+      closeTab: (id: number) => unwrap(bridge.browserCloseTab(id)),
       bounds: (bounds: Bounds | null) => unwrap(bridge.browserBounds(bounds)),
       navigate: (action: "back" | "forward" | "reload" | "stop") => unwrap(bridge.browserNavigate(action)),
       state: () => unwrap(bridge.browserState()),

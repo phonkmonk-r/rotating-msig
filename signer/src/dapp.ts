@@ -105,12 +105,23 @@ export class DappProvider {
 
   /** Origins that have read the chain through this wallet. */
   private readonly readingOrigins = new Set<string>();
+  /**
+   * Origins that asked to connect (or sent a request, which the user reviews). Others see no account, as with
+   * MetaMask: a dApp that finds an account on a network it does not support may stall instead of loading (Curve on
+   * Sepolia), while without one it loads read-only until the user connects.
+   */
+  private readonly connectedOrigins = new Set<string>();
 
   constructor(
     private readonly host: DappHost,
     /** How often to check whether a proposal a dApp is waiting for has executed. */
     private readonly pollMs = 4_000,
   ) {}
+
+  /** Forgets every connected site; on lock, so a dApp asks again after the next unlock. */
+  disconnectAll(): void {
+    this.connectedOrigins.clear();
+  }
 
   async request(origin: string, method: string, params: unknown = []): Promise<unknown> {
     const session = this.host.session();
@@ -125,13 +136,17 @@ export class DappProvider {
       case "net_version":
         return String(session.chainId);
       case "eth_accounts":
+        return this.connectedOrigins.has(origin) ? [session.safe] : [];
       case "eth_requestAccounts":
+        this.connectedOrigins.add(origin);
         return [session.safe];
       case "eth_coinbase":
-        return session.safe;
+        return this.connectedOrigins.has(origin) ? session.safe : null;
       case "wallet_requestPermissions":
-      case "wallet_getPermissions":
+        this.connectedOrigins.add(origin);
         return [{ parentCapability: "eth_accounts", caveats: [] }];
+      case "wallet_getPermissions":
+        return this.connectedOrigins.has(origin) ? [{ parentCapability: "eth_accounts", caveats: [] }] : [];
       case "wallet_switchEthereumChain": {
         const requested = (args[0] as { chainId?: string } | undefined)?.chainId;
         if (typeof requested === "string" && BigInt(requested) === BigInt(session.chainId)) return null;
@@ -140,6 +155,7 @@ export class DappProvider {
       case "wallet_getCapabilities":
         return { [chainHex]: { atomic: { status: "supported" } } };
       case "eth_sendTransaction": {
+        this.connectedOrigins.add(origin);
         const tx = args[0] as { from?: string; to?: string; value?: string; data?: string; input?: string; nonce?: string } | undefined;
         if (!tx || typeof tx.to !== "string") throw new ProviderError(INVALID_PARAMS, "Contract creation is not supported");
         this.checkFrom(session, tx.from);
@@ -151,6 +167,7 @@ export class DappProvider {
         return this.executionOf(session, sent.hash);
       }
       case "wallet_sendCalls": {
+        this.connectedOrigins.add(origin);
         const request = args[0] as { from?: string; chainId?: string; calls?: { to?: string; value?: string; data?: string }[] } | undefined;
         if (!request || !Array.isArray(request.calls)) throw new ProviderError(INVALID_PARAMS, "Expected a list of calls");
         if (request.chainId !== undefined && BigInt(request.chainId) !== BigInt(session.chainId)) {

@@ -720,6 +720,9 @@ handle("browser:open", (url: unknown) => {
   requireSession();
   return requireBrowser().open(String(url));
 });
+handle("browser:newTab", (url: unknown) => requireBrowser().newTab(typeof url === "string" && url ? url : undefined));
+handle("browser:selectTab", (id: unknown) => requireBrowser().selectTab(Number(id)));
+handle("browser:closeTab", (id: unknown) => requireBrowser().closeTab(Number(id)));
 handle("browser:bounds", (bounds: Bounds | null) => browser?.setBounds(bounds) ?? null);
 handle("browser:navigate", (action: unknown) => {
   if (action === "back" || action === "forward" || action === "reload" || action === "stop") browser?.navigate(action);

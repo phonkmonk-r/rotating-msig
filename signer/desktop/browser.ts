@@ -1,6 +1,6 @@
 import { appendFileSync, readFileSync } from "node:fs";
 
-import { ipcMain, session as electronSession, shell, WebContentsView, type BrowserWindow } from "electron";
+import { ipcMain, session as electronSession, shell, WebContentsView, type BrowserWindow, type BrowserWindowConstructorOptions, type WebContents } from "electron";
 
 import { DappProvider, ProviderError, USER_REJECTED, type DappRequest } from "../src/dapp.js";
 import type { DraftItem, ProposalResult, SignerSession } from "../src/session.js";
@@ -9,12 +9,23 @@ import type { DraftItem, ProposalResult, SignerSession } from "../src/session.js
 const PARTITION = "persist:dapps";
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
+/** One open page; a new tab has no URL until something is opened in it. */
+export interface BrowserTab {
+  id: number;
+  url: string;
+  title: string;
+  loading: boolean;
+}
+
+/** The selected tab's page, plus every open tab in order. */
 export interface BrowserState {
   url: string;
   title: string;
   loading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
+  tabs: BrowserTab[];
+  activeTab?: number;
 }
 
 export interface Bounds {
@@ -62,7 +73,12 @@ interface Pending {
  * for the user's review in the app's own UI, where the view is hidden.
  */
 export class DappBrowser {
-  private view?: WebContentsView;
+  /** Open tabs in display order. A page's popup or new window opens as another tab, keeping its opener. */
+  private tabs: { id: number; view: WebContentsView }[] = [];
+  private activeTab?: number;
+  private nextTab = 1;
+  /** Where the UI wants the selected page drawn, or null while it is hidden. */
+  private bounds: Bounds | null = null;
   private pending?: Pending;
   readonly provider: DappProvider;
 
@@ -82,7 +98,7 @@ export class DappBrowser {
     partition.setPermissionCheckHandler((_contents, permission) => permission === "clipboard-sanitized-write");
 
     ipcMain.handle("dapp:request", async (event, method: unknown, params: unknown) => {
-      if (!this.view || event.sender !== this.view.webContents) return { error: { code: 4100, message: "Unauthorized" } };
+      if (!this.tabs.some((tab) => tab.view.webContents === event.sender)) return { error: { code: 4100, message: "Unauthorized" } };
       const origin = event.senderFrame?.origin ?? "unknown";
       let reply: { result?: unknown; error?: { code: number; message: string; data?: string } };
       try {
@@ -97,15 +113,46 @@ export class DappBrowser {
     });
   }
 
+  /** Opens `url` in the selected tab, or in a new one if none is open. */
   open(url: string): BrowserState {
     const target = browsableUrl(url);
-    const view = this.ensureView();
+    const view = this.active()?.view ?? this.select(this.createTab()).view;
     void view.webContents.loadURL(target);
     return this.state();
   }
 
+  /** Opens a new, empty tab (or one showing `url`) and selects it. */
+  newTab(url?: string): BrowserState {
+    const target = url ? browsableUrl(url) : undefined;
+    const tab = this.select(this.createTab());
+    if (target) void tab.view.webContents.loadURL(target);
+    return this.state();
+  }
+
+  selectTab(id: number): BrowserState {
+    const tab = this.tabs.find((candidate) => candidate.id === id);
+    if (tab) this.select(tab);
+    return this.state();
+  }
+
+  /** Closes a tab; the one after it (or before, if it was last) becomes selected. */
+  closeTab(id: number): BrowserState {
+    const index = this.tabs.findIndex((tab) => tab.id === id);
+    if (index < 0) return this.state();
+    const [tab] = this.tabs.splice(index, 1);
+    this.deps.window()?.contentView.removeChildView(tab!.view);
+    if (!tab!.view.webContents.isDestroyed()) tab!.view.webContents.close();
+    if (this.activeTab === id) {
+      const next = this.tabs[index] ?? this.tabs[index - 1];
+      this.activeTab = undefined;
+      if (next) this.select(next);
+    }
+    this.update();
+    return this.state();
+  }
+
   navigate(action: "back" | "forward" | "reload" | "stop"): void {
-    const contents = this.view?.webContents;
+    const contents = this.active()?.view.webContents;
     if (!contents) return;
     if (action === "back" && contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack();
     if (action === "forward" && contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward();
@@ -113,32 +160,31 @@ export class DappBrowser {
     if (action === "stop") contents.stop();
   }
 
-  /** Places the view over the UI's viewport, or hides it with `null`. */
+  /** Places the selected tab over the UI's viewport, or hides it with `null`; other tabs stay hidden. */
   setBounds(bounds: Bounds | null): void {
-    if (!this.view) return;
-    if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
-      this.view.setVisible(false);
-      return;
-    }
-    this.view.setBounds({ x: Math.round(bounds.x), y: Math.round(bounds.y), width: Math.round(bounds.width), height: Math.round(bounds.height) });
-    this.view.setVisible(true);
+    this.bounds = bounds && bounds.width > 0 && bounds.height > 0 ? bounds : null;
+    this.layout();
   }
 
   state(): BrowserState {
-    const contents = this.view?.webContents;
-    if (!contents) return { url: "", title: "", loading: false, canGoBack: false, canGoForward: false };
+    const tabs = this.tabs.map(({ id, view }) => ({ id, url: view.webContents.getURL(), title: view.webContents.getTitle(), loading: view.webContents.isLoading() }));
+    const contents = this.active()?.view.webContents;
+    if (!contents) return { url: "", title: "", loading: false, canGoBack: false, canGoForward: false, tabs, activeTab: this.activeTab };
     return {
       url: contents.getURL(),
       title: contents.getTitle(),
       loading: contents.isLoading(),
       canGoBack: contents.navigationHistory.canGoBack(),
       canGoForward: contents.navigationHistory.canGoForward(),
+      tabs,
+      activeTab: this.activeTab,
     };
   }
 
-  /** Test hook: the page as an image (window captures leave out child views). */
+  /** Test hook: the selected page as an image (window captures leave out child views). */
   async capture(): Promise<Buffer | undefined> {
-    return this.view ? (await this.view.webContents.capturePage()).toPNG() : undefined;
+    const view = this.active()?.view;
+    return view ? (await view.webContents.capturePage()).toPNG() : undefined;
   }
 
   pendingRequest(): DappRequest | null {
@@ -170,14 +216,17 @@ export class DappBrowser {
     this.settle()?.reject(new ProviderError(USER_REJECTED, "User rejected the request"));
   }
 
-  /** Closes the page and refuses any request waiting for review; used on lock and when the Safe changes. */
+  /** Closes every tab, forgets connected sites and refuses any request waiting for review; on lock and Safe change. */
   close(): void {
     this.settle()?.reject(new ProviderError(4900, "Cicada was locked"));
-    if (!this.view) return;
-    this.deps.window()?.contentView.removeChildView(this.view);
-    this.view.webContents.close();
-    this.view = undefined;
-    this.deps.send("browser:state", this.state());
+    this.provider.disconnectAll();
+    for (const { view } of this.tabs) {
+      this.deps.window()?.contentView.removeChildView(view);
+      if (!view.webContents.isDestroyed()) view.webContents.close();
+    }
+    this.tabs = [];
+    this.activeTab = undefined;
+    this.update();
   }
 
   private review(request: DappRequest): Promise<ProposalResult | { queued: DraftItem }> {
@@ -208,20 +257,60 @@ export class DappBrowser {
     return session;
   }
 
-  private ensureView(): WebContentsView {
-    if (this.view) return this.view;
+  private active(): { id: number; view: WebContentsView } | undefined {
+    return this.tabs.find((tab) => tab.id === this.activeTab);
+  }
+
+  private select(tab: { id: number; view: WebContentsView }): { id: number; view: WebContentsView } {
+    this.activeTab = tab.id;
+    this.layout();
+    this.update();
+    return tab;
+  }
+
+  /** Shows only the selected tab, at the bounds the UI asked for. */
+  private layout(): void {
+    for (const { id, view } of this.tabs) {
+      const visible = id === this.activeTab && this.bounds !== null;
+      if (visible) {
+        const { x, y, width, height } = this.bounds!;
+        view.setBounds({ x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) });
+      }
+      view.setVisible(visible);
+    }
+  }
+
+  private update(): void {
+    this.deps.send("browser:state", this.state());
+  }
+
+  /**
+   * A new tab: a fresh sandboxed page, or the page Chromium created for another tab's `window.open` (`opened`), which
+   * keeps its opener so sign-in and connect popups can report back. Both get the wallet preload.
+   */
+  private createTab(opened?: BrowserWindowConstructorOptions): { id: number; view: WebContentsView } {
     const window = this.deps.window();
     if (!window) throw new Error("no window");
-    const view = new WebContentsView({
-      webPreferences: { preload: this.deps.preload, partition: PARTITION, contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true },
-    });
+    const webPreferences = { preload: this.deps.preload, partition: PARTITION, contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true };
+    // Electron passes a popup's prepared page in `options.webContents`, outside the typings; it must be adopted as is.
+    const webContents = (opened as { webContents?: WebContents } | undefined)?.webContents;
+    const view = new WebContentsView(webContents ? { webContents, webPreferences: { ...opened?.webPreferences, ...webPreferences } } : { webPreferences });
     view.setVisible(false);
     window.contentView.addChildView(view);
+    const tab = { id: this.nextTab++, view };
+    this.tabs.push(tab);
 
     const contents = view.webContents;
     contents.setWindowOpenHandler(({ url }) => {
-      if (url.startsWith("https://")) void shell.openExternal(url);
-      return { action: "deny" };
+      // Popups often start blank and are navigated by their opener (sign-in, wallet connect).
+      if (url !== "about:blank" && !navigable(url)) {
+        if (url.startsWith("https://")) void shell.openExternal(url);
+        return { action: "deny" };
+      }
+      return {
+        action: "allow",
+        createWindow: (options) => this.select(this.createTab(options)).view.webContents,
+      };
     });
     contents.on("will-navigate", (event) => {
       if (!navigable(event.url)) event.preventDefault();
@@ -229,13 +318,15 @@ export class DappBrowser {
     contents.on("will-redirect", (event) => {
       if (!navigable(event.url)) event.preventDefault();
     });
+    // A popup that closes itself (window.close() after sign-in) closes its tab.
+    contents.on("destroyed", () => {
+      if (this.tabs.some((candidate) => candidate.id === tab.id)) this.closeTab(tab.id);
+    });
     const script = process.env.ROTATION_SIGNER_TEST_DAPP_SCRIPT;
     if (script) contents.once("did-finish-load", () => void contents.executeJavaScript(readFileSync(script, "utf8")).catch(() => undefined));
-    const update = () => this.deps.send("browser:state", this.state());
     for (const name of ["did-start-loading", "did-stop-loading", "did-navigate", "did-navigate-in-page", "page-title-updated"] as const) {
-      contents.on(name as "did-start-loading", update);
+      contents.on(name as "did-start-loading", () => this.update());
     }
-    this.view = view;
-    return view;
+    return tab;
   }
 }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { eth, explorer, short, signedAmount, UNLIMITED_APPROVAL } from "../src/format.js";
+import { tabLabel } from "../src/lib/browser.js";
 import { executionInFlight, executionTone, nextStep, requestValue, sendLabel } from "../src/lib/execution.js";
 import { profileFormProblems, seedWordCount, type ProfileForm } from "../src/lib/profileForm.js";
 import { packagePreview } from "../src/lib/slotPackage.js";
@@ -113,5 +114,15 @@ describe("the only signer", () => {
     assert.equal(sendLabel(true), "Execute");
     assert.match(nextStep(false), /Another signer executes it/);
     assert.match(nextStep(true), /only signer, so it is executing now/);
+  });
+});
+
+describe("browser tabs", () => {
+  it("names a tab by its title, else its host, else as a new tab", () => {
+    assert.equal(tabLabel({ title: "Uniswap Interface", url: "https://app.uniswap.org/" }), "Uniswap Interface");
+    assert.equal(tabLabel({ title: "", url: "https://app.uniswap.org/swap" }), "app.uniswap.org");
+    assert.equal(tabLabel({ title: "https://curve.finance/", url: "https://curve.finance/" }), "curve.finance", "a title that is just the URL");
+    assert.equal(tabLabel({ title: "", url: "" }), "New tab");
+    assert.equal(tabLabel({ title: "", url: "about:blank" }), "New tab");
   });
 });

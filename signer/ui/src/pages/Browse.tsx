@@ -3,7 +3,8 @@ import { formatEther } from "viem";
 
 import { browser, type BrowserState, type DappRequest, type ProposalResult, type StatusView } from "../api";
 import { short } from "../format";
-import { IconAlert, IconBack, IconCheck, IconForward, IconGlobe, IconRefresh } from "../icons";
+import { IconAlert, IconBack, IconCheck, IconClose, IconForward, IconGlobe, IconPlus, IconRefresh } from "../icons";
+import { tabLabel } from "../lib/browser";
 import { requestValue, sendLabel } from "../lib/execution";
 import { Badge, useSoleSigner } from "../ui";
 
@@ -14,7 +15,7 @@ const SUGGESTIONS = [
   { name: "Revoke.cash", url: "https://revoke.cash", note: "Review token approvals" },
 ];
 
-const EMPTY: BrowserState = { url: "", title: "", loading: false, canGoBack: false, canGoForward: false };
+const EMPTY: BrowserState = { url: "", title: "", loading: false, canGoBack: false, canGoForward: false, tabs: [] };
 
 /**
  * The dApp browser. The page itself is a native view the main process lays over the viewport below; it is hidden
@@ -79,8 +80,40 @@ export function Browse({ status, request, queueMode }: { status: StatusView; req
     if (address.trim()) void open(address);
   }
 
+  async function tabAction(action: () => Promise<BrowserState>) {
+    setError(undefined);
+    try {
+      setState(await action());
+      setEditing(false);
+    } catch (caught) {
+      setError((caught as Error).message);
+    }
+  }
+
   return (
     <div className="browser">
+      {state.tabs.length > 0 && (
+        <div className="browser-tabs" role="tablist" aria-label="Open pages">
+          {state.tabs.map((tab) => {
+            const label = tabLabel(tab);
+            const active = tab.id === state.activeTab;
+            return (
+              <div key={tab.id} className={`browser-tab ${active ? "active" : ""}`}>
+                <button type="button" role="tab" aria-selected={active} className="browser-tab-title" title={tab.url || label} onClick={() => void tabAction(() => browser!.selectTab(tab.id))}>
+                  {tab.loading && <span className="spinner" />}
+                  <span className="browser-tab-label">{label}</span>
+                </button>
+                <button type="button" className="browser-tab-close" aria-label={`Close ${label}`} title="Close tab" onClick={() => void tabAction(() => browser!.closeTab(tab.id))}>
+                  <IconClose width="12" height="12" />
+                </button>
+              </div>
+            );
+          })}
+          <button type="button" className="browser-tab-new icon-button" aria-label="New tab" title="New tab" onClick={() => void tabAction(() => browser!.newTab())}>
+            <IconPlus width="14" height="14" />
+          </button>
+        </div>
+      )}
       <form className="browser-bar" onSubmit={submit}>
         <button type="button" className="icon-button" title="Back" aria-label="Back" disabled={!state.canGoBack} onClick={() => void browser!.navigate("back")}>
           <IconBack />

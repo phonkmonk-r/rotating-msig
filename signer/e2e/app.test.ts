@@ -151,8 +151,18 @@ describe("Cicada desktop app", { skip, timeout: 5 * TIMEOUT }, () => {
   it("gives dApps a wallet they can extend, as MetaMask-era code expects", async () => {
     // Uniswap sets a legacy MetaMask field on window.ethereum at startup; a frozen provider made that throw and
     // the whole app render blank. This page does the same before asking for a transaction.
-    dapp = createServer((_req, res) => {
+    dapp = createServer((req, res) => {
       res.setHeader("content-type", "text/html");
+      if (req.url === "/opener") {
+        res.end(`<!doctype html><title>Opener</title><body><script>window.open("/popup", "_blank");</script></body>`);
+        return;
+      }
+      if (req.url === "/popup") {
+        res.end(`<!doctype html><title>Popup</title><body><script>
+          document.title = "Popup " + (window.opener ? "with opener" : "without opener") + " " + typeof window.ethereum;
+        </script></body>`);
+        return;
+      }
       res.end(`<!doctype html><title>Legacy dApp</title><body><script>
         "use strict"; // like a bundled dApp: writing to a frozen object throws instead of failing silently
         window.ethereum.autoRefreshOnNetworkChange = false;
@@ -171,6 +181,25 @@ describe("Cicada desktop app", { skip, timeout: 5 * TIMEOUT }, () => {
     await page.getByRole("heading", { name: "Wants the Safe to" }).waitFor();
     await page.getByRole("button", { name: "Reject" }).click();
     await page.getByRole("heading", { name: "Wants the Safe to" }).waitFor({ state: "detached" });
+  });
+
+  it("opens a page's popup as a tab that keeps its opener and the wallet, and opens and closes tabs", async () => {
+    const address = page.getByPlaceholder(/Enter a dApp address/);
+    await address.fill(`${dappUrl}opener`);
+    await address.press("Enter");
+    const popup = page.getByRole("tab", { name: "Popup with opener object" });
+    await popup.waitFor();
+    assert.equal(await popup.getAttribute("aria-selected"), "true", "the popup's tab is selected");
+    assert.equal(await page.getByRole("tab").count(), 2);
+
+    await page.getByRole("button", { name: "Close Popup with opener object" }).click();
+    await popup.waitFor({ state: "detached" });
+    assert.equal(await page.getByRole("tab", { name: "Opener" }).getAttribute("aria-selected"), "true");
+
+    await page.getByRole("button", { name: "New tab" }).click();
+    await page.getByRole("tab", { name: "New tab" }).waitFor();
+    await page.getByRole("heading", { name: "Use any dApp with your Safe" }).waitFor();
+    assert.equal(await page.getByRole("tab").count(), 2);
   });
 
   it("removes the profile and its files from this computer", async () => {

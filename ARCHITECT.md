@@ -363,6 +363,10 @@ What the dApp gets back depends on how it reads the chain:
 - Queued requests get a placeholder hash whose receipt reports success at once, and while the queue is not empty the dApp's reads run on top of the queued calls (`readAfterDraft`), so approve then deposit works before anything is on-chain. This only helps dApps that read through the wallet; Cicada detects dApps that read their own RPC (they set the nonce, or never read through the wallet) and recommends proposing instead.
 - `wallet_sendCalls` answers with an ID that `wallet_getCallsStatus` follows.
 
+The wallet connects per site, like MetaMask: `eth_accounts` is empty until the site calls `eth_requestAccounts` (or sends a request, which the user reviews), and connected sites are forgotten on lock. A dApp that finds an account on a network it does not support may stall instead of loading (Curve on Sepolia did); without one it loads read-only until the user connects. The injected `window.ethereum` stays extensible and writable, since dApps set legacy MetaMask fields on it (Uniswap crashed on a frozen one).
+
+The browser has tabs (`DappBrowser`: one `WebContentsView` per tab, only the selected one shown over the UI's viewport). A page's `window.open` or popup opens as a new, selected tab through Electron's `createWindow`, adopting the page Chromium prepared, so it keeps `window.opener` (sign-in and connect popups report back to their opener) and the wallet preload; a popup that closes itself closes its tab. Every tab may send wallet requests. Links to non-https pages still go to the system browser.
+
 ## 8. Keys: where each Safe's keys live
 
 Each signer's seed (or Ledger) holds:
