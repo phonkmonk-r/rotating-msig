@@ -109,8 +109,14 @@ function TxCard({
   onBusy: (busy: boolean) => void;
   onRefresh: () => void;
 }) {
-  // An execution this signer already has out (also after a restart) is followed instead of offering Execute again.
+  // An execution this signer already has out (also after a restart, or started elsewhere in the app, such as a dApp
+  // request on a Safe where it is the only signer) is followed instead of offering Execute again.
   const [stage, setStage] = useState<Stage>(() => (item.attempt ? { kind: "executing", execution: item.attempt } : { kind: "idle" }));
+  useEffect(() => {
+    if (item.attempt && (stage.kind === "idle" || stage.kind === "review")) setStage({ kind: "executing", execution: item.attempt });
+    // Only when an attempt appears; the polling below follows it from then on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.attempt?.safeTxHash]);
   const busy = useRef(false);
   const needed = Math.max(status.threshold - 1, 0);
   const counting = item.confirmations.filter((c) => c.counts).length;

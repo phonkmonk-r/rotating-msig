@@ -340,6 +340,14 @@ export interface RefillStatus {
 /** Ether amount as a decimal string, for JSON. */
 const wei = (value: bigint) => value.toString();
 
+/** An ETH amount for reading: at most six decimals (the explorer link has the exact value), "< 0.000001" below that. */
+export function etherAmount(value: bigint): string {
+  if (value > 0n && value < 10n ** 12n) return "< 0.000001";
+  const [whole, fraction = ""] = formatEther(value).split(".");
+  const kept = fraction.slice(0, 6).replace(/0+$/, "");
+  return kept ? `${whole}.${kept}` : whole!;
+}
+
 /**
  * The gas limit for an execution: the simulated cost with a margin, plus the whole `safeTxGas`. The inner call may use
  * all of `safeTxGas` on-chain even if it used less in simulation (a callee that behaves differently once sent), and
@@ -449,6 +457,15 @@ export class SignerSession {
     if (!attempt?.record.transactionHash) return undefined;
     const { status } = attempt.record;
     return status === "pending" || status === "stuck" ? attempt : undefined;
+  }
+
+  /**
+   * The execution of a transaction this signer is running right now, for the UI: also while it is still being prepared
+   * (simulated, its key funded) and has no transaction hash yet, so the app never offers Execute again meanwhile.
+   */
+  private inFlightExecution(safeTxHash: Hex): Execution | undefined {
+    const record = this.executions.get(safeTxHash.toLowerCase())?.record;
+    return record && (record.status === "preparing" || record.status === "pending" || record.status === "stuck") ? record : undefined;
   }
 
   /** Brings every open attempt up to date with the chain, so one that landed stops counting as out. */
@@ -635,7 +652,7 @@ export class SignerSession {
     return pending.map((tx) => {
       const verdict = owner ? this.evaluate(state, tx, pending, owner) : undefined;
       return {
-        attempt: this.openAttempt(tx.safeTxHash)?.record,
+        attempt: this.inFlightExecution(tx.safeTxHash),
         tx: { to: tx.tx.to, value: wei(tx.tx.value), data: tx.tx.data, operation: tx.tx.operation, safeTxGas: wei(tx.tx.safeTxGas) },
         proposer: tx.proposer,
         safeTxHash: tx.safeTxHash,
@@ -1016,7 +1033,7 @@ export class SignerSession {
         step("gas", { detail: "sending gas from your gas account, waiting for it to be mined" }),
       );
       record.funding = funding;
-      step("gas", funding ? { status: "done", detail: `${formatEther(BigInt(funding.amount))} ETH from your gas account`, transactionHash: funding.transactionHash } : { status: "skipped", detail: "your key already holds enough" });
+      step("gas", funding ? { status: "done", detail: `${etherAmount(BigInt(funding.amount))} ETH from your gas account`, transactionHash: funding.transactionHash } : { status: "skipped", detail: "your key already holds enough" });
     }
 
     step("send", { status: "active", detail: "signing" });
@@ -1376,7 +1393,7 @@ export class SignerSession {
     const syncSweep = () => {
       const sweep = record.sweep;
       if (!sweep || sweep.status === "waiting") return;
-      if (sweep.status === "sent") step("sweep", { status: "done", detail: `${formatEther(BigInt(sweep.amount ?? "0"))} ETH back to your gas account`, transactionHash: sweep.transactionHash });
+      if (sweep.status === "sent") step("sweep", { status: "done", detail: `${etherAmount(BigInt(sweep.amount ?? "0"))} ETH back to your gas account`, transactionHash: sweep.transactionHash });
       else if (sweep.status === "nothing") step("sweep", { status: "skipped", detail: "nothing left to return" });
       else step("sweep", { status: "failed", detail: sweep.message });
     };

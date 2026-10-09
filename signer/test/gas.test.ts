@@ -114,3 +114,14 @@ describe("paying executions from the gas account", { skip }, () => {
     assert.equal(await balance(key), 0n);
   });
 });
+
+describe("ETH amounts in execution steps", () => {
+  it("keeps at most six decimals", async () => {
+    const { etherAmount } = await import("../src/session.js");
+    assert.equal(etherAmount(2398680284278921n), "0.002398");
+    assert.equal(etherAmount(10n ** 18n), "1");
+    assert.equal(etherAmount(15n * 10n ** 17n), "1.5");
+    assert.equal(etherAmount(5n), "< 0.000001");
+    assert.equal(etherAmount(0n), "0");
+  });
+});

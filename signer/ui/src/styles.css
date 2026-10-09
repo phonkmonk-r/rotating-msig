@@ -2369,6 +2369,28 @@ button.safe-chip.open {
 
 /* ---------- Execution steps ---------- */
 
+/* A neutral panel: the outcome shows in the card's badge and the step icons, not in a tinted background. */
+.note.execution-steps {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-top: 12px;
+}
+
+.note.execution-steps.critical {
+  border-color: color-mix(in srgb, var(--critical) 40%, var(--border));
+}
+
+.note.execution-steps.warning {
+  border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
+}
+
+.note.execution-steps > span {
+  color: var(--muted);
+}
+
 .execution-steps ol {
   list-style: none;
   margin: 0;
@@ -2382,8 +2404,8 @@ button.safe-chip.open {
   position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding-bottom: 12px;
+  gap: 12px;
+  padding-bottom: 14px;
 }
 
 .execution-steps .step:last-child {
@@ -2395,16 +2417,15 @@ button.safe-chip.open {
 .execution-steps .step:not(:last-child)::after {
   content: "";
   position: absolute;
-  left: 8px;
+  left: 8.25px;
   top: 22px;
-  bottom: 2px;
-  width: 2px;
+  bottom: 4px;
+  width: 1.5px;
   border-radius: 1px;
 }
 
 .execution-steps .step:not(:last-child)::before {
-  background: currentColor;
-  opacity: 0.15;
+  background: var(--border-strong);
 }
 
 .execution-steps .step.done:not(:last-child)::before {
@@ -2452,9 +2473,9 @@ button.safe-chip.open {
 
 .step.done .step-icon svg,
 .step.failed .step-icon svg {
-  width: 11px;
-  height: 11px;
-  stroke-width: 2.4;
+  width: 10px;
+  height: 10px;
+  stroke-width: 2.6;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -2483,8 +2504,8 @@ button.safe-chip.open {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  border: 1.5px solid currentColor;
-  opacity: 0.4;
+  border: 1.5px solid var(--border-strong);
+  background: var(--surface);
 }
 
 .step-text {
@@ -2494,9 +2515,16 @@ button.safe-chip.open {
   flex-direction: column;
 }
 
+.step-label {
+  font-size: 13.5px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
 .step.waiting .step-label,
 .step.skipped .step-label {
-  opacity: 0.55;
+  color: var(--muted);
+  font-weight: 400;
 }
 
 .step.active .step-label {
@@ -2504,12 +2532,33 @@ button.safe-chip.open {
 }
 
 .step-detail {
-  opacity: 0.75;
+  color: var(--muted);
+  font-size: 12.5px;
+  margin-top: 1px;
+  overflow-wrap: anywhere;
+}
+
+.step.failed .step-detail {
+  color: var(--critical);
 }
 
 .step-link {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   white-space: nowrap;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.step-link:hover {
+  color: var(--text);
+  background: var(--border);
 }
 
 .package-signer {
