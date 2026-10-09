@@ -17,6 +17,9 @@
 
 </p>
 
+> [!CAUTION]
+> **Not production ready. The `RotationGuard` contract has not been audited.** This is experimental software, deployed only on Sepolia. Do not use it to hold real funds.
+
 A Safe multisig where no owner key signs twice. Each signature is the last thing its key ever does: the key is swapped out of the owner list in the same transaction, for a fresh one that was committed in advance. Cicada is the desktop app that makes this usable, and `RotationGuard` is the contract that enforces it.
 
 <img src="screenshots/overview.png" alt="The Cicada overview page: your slot, current key, gas account and staged next keys" width="800">
