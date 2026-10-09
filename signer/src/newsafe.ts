@@ -97,6 +97,9 @@ export async function prepareSlot(
   return { tree, package: await signPackage(source, pkg) };
 }
 
+/** Per-transaction gas cap (EIP-7825). */
+const TRANSACTION_GAS_CAP = 16_777_216n;
+
 export type CreationStage = "deploying" | "installing" | "done";
 
 export interface CreationResult {
@@ -121,7 +124,8 @@ export async function createSafe(
   const deployments = deploymentsOf(context);
   const signatureErrors = await verifySignedPackages(invite, packages);
   if (signatureErrors.length > 0) throw new Error(signatureErrors.join("; "));
-  const install = installFromPackages(invite, packages, deployments);
+  // Builds the install once to check every package before anything is sent.
+  installFromPackages(invite, packages, deployments);
   const operator = await source.signer(OPERATOR_ACCOUNT);
   if (!invite.owners.some((owner) => isAddressEqual(owner, operator.address))) throw new Error("only one of the Safe's signers can create it");
   const wallet = createWalletClient({ account: operator, chain, transport: custom(client) });
@@ -147,16 +151,30 @@ export async function createSafe(
   }
 
   onStage?.("installing");
-  // The install runs before the guard is active; with safeTxGas 0 a failing step reverts the whole call with its reason.
-  const tx = plainSafeTx({ ...install, nonce: 0n }, 0n);
-  const data = execTransactionData(tx, preValidatedSignature(operator.address).data);
-  let gas: bigint;
-  try {
-    gas = await client.estimateGas({ account: operator.address, to: invite.safe, data });
-  } catch (error) {
-    throw new Error(`installing would fail: ${describeRevert(error)}`);
+  // Staging every package's keys costs about 1M gas per signer under Sepolia's repricing, so a large Safe's install
+  // would pass the per-transaction cap (15 signers at most with 5 keys each, measured 2026-10-09). Stage fewer keys
+  // until the install fits; each signer's app stages the rest of its own slot once it joins.
+  let data: Hex | undefined;
+  let gas = 0n;
+  let failure: unknown;
+  for (const stagedPerSlot of [Infinity, 1, 0]) {
+    // The install runs before the guard is active; with safeTxGas 0 a failing step reverts the whole call with its reason.
+    const tx = plainSafeTx({ ...installFromPackages(invite, packages, deployments, stagedPerSlot), nonce: 0n }, 0n);
+    const candidate = execTransactionData(tx, preValidatedSignature(operator.address).data);
+    try {
+      gas = await client.estimateGas({ account: operator.address, to: invite.safe, data: candidate });
+    } catch (error) {
+      failure = error;
+      continue;
+    }
+    if (gas <= TRANSACTION_GAS_CAP) {
+      data = candidate;
+      break;
+    }
   }
-  const installTx = await wallet.sendTransaction({ to: invite.safe, data, gas: (gas * 12n) / 10n, chain });
+  if (!data) throw new Error(`installing would fail: ${describeRevert(failure) ?? "it does not fit in one transaction"}`);
+  const limit = (gas * 12n) / 10n < TRANSACTION_GAS_CAP ? (gas * 12n) / 10n : TRANSACTION_GAS_CAP;
+  const installTx = await wallet.sendTransaction({ to: invite.safe, data, gas: limit, chain });
   const receipt = await client.waitForTransactionReceipt({ hash: installTx });
   if (receipt.status !== "success") throw new Error(`the install reverted (${installTx})`);
 

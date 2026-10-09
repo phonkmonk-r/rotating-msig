@@ -60,18 +60,19 @@ describe("core against a local chain", { skip }, () => {
     return getAddress(receipt.contractAddress!);
   }
 
-  /** The guard requires a non-zero safeTxGas; Safe hands exactly this much gas to the inner call. */
+  /** The guard requires safeTxGas and gasPrice non-zero; Safe hands at most this much gas to the inner call. */
   const SAFE_TX_GAS = 1_000_000n;
 
   /** Executes as Safe owners: `signer` signs the safeTxHash off-chain, `executor` sends with a pre-validated signature. */
   async function execute(tx: MetaTx, executor: PrivateKeyAccount, signer: PrivateKeyAccount) {
     const nonce = await client.readContract({ address: safe, abi: safeAbi, functionName: "nonce" });
     const zero = "0x0000000000000000000000000000000000000000" as const;
+    const { gasPrice } = plainSafeTx({ ...tx, nonce }, SAFE_TX_GAS);
     const hash = await client.readContract({
       address: safe,
       abi: safeAbi,
       functionName: "getTransactionHash",
-      args: [tx.to, tx.value, tx.data, tx.operation, SAFE_TX_GAS, 0n, 0n, zero, zero, nonce],
+      args: [tx.to, tx.value, tx.data, tx.operation, SAFE_TX_GAS, 0n, gasPrice, zero, zero, nonce],
     });
     assert.equal(safeTxHash(foundry.id, safe, { ...plainSafeTx({ ...tx, nonce }, SAFE_TX_GAS) }), hash, "local SafeTx hash must match the contract");
     const ecdsa = await signer.sign({ hash });
@@ -82,7 +83,7 @@ describe("core against a local chain", { skip }, () => {
       address: safe,
       abi: safeAbi,
       functionName: "execTransaction",
-      args: [tx.to, tx.value, tx.data, tx.operation, SAFE_TX_GAS, 0n, 0n, zero, zero, signatures],
+      args: [tx.to, tx.value, tx.data, tx.operation, SAFE_TX_GAS, 0n, gasPrice, zero, zero, signatures],
     });
     const receipt = await client.waitForTransactionReceipt({ hash: sent });
     assert.equal(receipt.status, "success");

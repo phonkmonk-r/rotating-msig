@@ -319,9 +319,10 @@ export function verifyPackages(invite: SafeInvite, packages: readonly SlotPackag
 
 /**
  * The install for a Safe created from an invite: enable the guard, swap each operator for its slot's first key, stage
- * the next keys, and set the final threshold, as one MultiSendCallOnly batch.
+ * up to `stagedPerSlot` of each package's next keys, and set the final threshold, as one MultiSendCallOnly batch.
+ * Staging fewer keeps a large Safe's install under the per-transaction gas cap; each signer's app stages the rest.
  */
-export function installFromPackages(invite: SafeInvite, packages: readonly SlotPackage[], deployments: SafeDeployments): MetaTx {
+export function installFromPackages(invite: SafeInvite, packages: readonly SlotPackage[], deployments: SafeDeployments, stagedPerSlot = Infinity): MetaTx {
   const errors = verifyPackages(invite, packages);
   if (!deployments.rotationGuard) errors.push("the rotation guard is not deployed on this network yet");
   if (errors.length > 0) throw new Error(errors.join("; "));
@@ -330,7 +331,7 @@ export function installFromPackages(invite: SafeInvite, packages: readonly SlotP
     guard: deployments.rotationGuard!,
     oldOwners: invite.owners,
     configs: packages.map((pkg) => pkg.config),
-    stage: packages.map((pkg) => pkg.stage),
+    stage: packages.map((pkg) => pkg.stage.slice(0, stagedPerSlot)),
     multiSendCallOnly: deployments.multiSendCallOnly,
   });
   if (invite.threshold !== 1) calls.push(safeCalls.changeThreshold(invite.safe, invite.threshold));

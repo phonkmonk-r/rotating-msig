@@ -102,6 +102,8 @@ export const DEFAULT_EXECUTION_TIMEOUT_MS = 180_000;
  * more for some recipients), so the sweep itself estimates its exact cost.
  */
 const SWEEP_GAS_ALLOWANCE = 60_000n;
+/** Per-transaction gas cap (EIP-7825). */
+const TRANSACTION_GAS_CAP = 16_777_216n;
 /** An execution's gas allowance for warning when the operator account runs low. */
 const EXECUTION_GAS_ALLOWANCE = 1_000_000n;
 /** Refill once the buffer has this many free places, so one transaction stages several keys. */
@@ -326,6 +328,16 @@ export interface RefillStatus {
 
 /** Ether amount as a decimal string, for JSON. */
 const wei = (value: bigint) => value.toString();
+
+/**
+ * The gas limit for an execution: the simulated cost with a margin, plus the whole `safeTxGas`. The inner call may use
+ * all of `safeTxGas` on-chain even if it used less in simulation (a callee that behaves differently once sent), and
+ * the rotation after it must still have its gas, or the whole transaction reverts with every signature public.
+ */
+export function executionGasLimit(simulated: bigint, safeTxGas: bigint): bigint {
+  const limit = (simulated * 12n) / 10n + safeTxGas;
+  return limit < TRANSACTION_GAS_CAP ? limit : TRANSACTION_GAS_CAP;
+}
 
 const isOwner = (state: SafeState, address: Address) => state.owners.some((owner) => isAddressEqual(owner, address));
 
@@ -672,7 +684,9 @@ export class SignerSession {
    * transaction and undo the rotation); it is sized from a simulation when the RPC offers one, else a generous default.
    */
   private async safeTxGasFor(input: ProposalInput, state: SafeState): Promise<bigint> {
-    if (input.kind === "escape") return DEFAULT_SAFE_TX_GAS;
+    // The escape hatch is exactly setGuard(0), which cannot fail; without safeTxGas it also needs no refund, so it
+    // works even when the Safe holds no ETH.
+    if (input.kind === "escape") return 0n;
     const calls = batchCalls(input.kind === "batch" ? input.items : [input], this.context(state));
     const simulation = await simulateCalls(this.options.publicClient, state.safe, calls);
     if (!simulation.available || simulation.calls.some((call) => !call.ok)) return DEFAULT_SAFE_TX_GAS;
@@ -927,7 +941,7 @@ export class SignerSession {
     ];
     const record: Execution = { safeTxHash: tx.safeTxHash, sentThrough: host, status: "preparing", steps, sweep: gasFunding ? { status: "waiting" } : undefined };
     this.executions.set(tx.safeTxHash.toLowerCase(), { record, nonce: tx.tx.nonce.toString(), index: owner.index, sentAtMs: Date.now(), account: owner.account });
-    return { record, state, data, from, gasLimit: (gas * 12n) / 10n, fees, owner, nonce: tx.tx.nonce };
+    return { record, state, data, from, gasLimit: executionGasLimit(gas, tx.tx.safeTxGas), fees, owner, nonce: tx.tx.nonce };
   }
 
   /** Funds the key if needed, then signs and sends. Inclusion and the sweep are followed by `execution`. */

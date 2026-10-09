@@ -115,19 +115,24 @@ interface IRotationGuard {
 
     /// @notice The Safe has not called `initialize`.
     error NotInitialized(address safe);
-    /// @notice `execTransaction` was re-entered for the same Safe while a guarded transaction was in progress.
+    /// @notice `execTransaction` was re-entered for the same Safe while a guarded transaction was in progress, or the
+    ///         hook was called again for the same Safe nonce (replayed from inside the transaction).
     error NestedExecution();
     /// @notice `checkAfterExecution` was called without a matching `checkTransaction`.
     error NoTransactionInProgress();
     /// @notice A delegatecall targeted something other than the allowlisted MultiSendCallOnly.
     error DelegateCallNotAllowed(address to);
-    /// @notice `safeTxGas` and `gasPrice` are both zero, so a failing inner call would revert the whole transaction and
-    ///         undo the rotation of signers whose signatures are already public.
+    /// @notice `safeTxGas` or `gasPrice` is zero. With `gasPrice` zero Safe hands the inner call all remaining gas (a
+    ///         callee can burn it and starve the rotation), and with both zero it reverts the whole transaction on a
+    ///         failing inner call; either way signatures already public would not rotate.
     error SafeTxGasRequired();
+    /// @notice The gas refund names a gas token or a refund receiver; a failing refund would revert the whole
+    ///         transaction, so refunds are paid only in ETH to the executor.
+    error RefundNotAllowed();
     /// @notice A recovered signer is not an owner. Unreachable from the Safe's own hook call, which follows its
     ///         signature check; rejects the hook being replayed from inside the transaction.
     error SignerNotOwner(address signer);
-    /// @notice An escape transaction did not remove the guard, or changed the owner set.
+    /// @notice An escape transaction did not remove the guard.
     error InvalidEscape();
     /// @notice The signatures are not exactly `threshold` static 65-byte signatures.
     error UnexpectedSignatureLength(uint256 length, uint256 expected);

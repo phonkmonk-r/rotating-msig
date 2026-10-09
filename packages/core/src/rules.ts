@@ -1,6 +1,7 @@
 import { decodeFunctionData, isAddressEqual, type Address } from "viem";
 
 import { rotationGuardAbi } from "./abi/rotationGuard.js";
+import { ZERO_ADDRESS } from "./addresses.js";
 import { decodeActions, type Action, type DecodeContext } from "./decode.js";
 import { type OwnerSignature } from "./safetx.js";
 import type { SafeState } from "./state.js";
@@ -88,8 +89,11 @@ export function evaluate(input: EvaluateInput): Verdict {
   if (pending.tx.nonce > state.nonce) blockers.push(`transactions run in order: nonce ${state.nonce} must execute first`);
   if (actions.some((a) => a.kind === "blocked")) blockers.push("the guard would reject this transaction");
   const escape = actions.some((a) => a.kind === "escape");
-  if (!escape && pending.tx.safeTxGas === 0n && pending.tx.gasPrice === 0n) {
-    blockers.push("safeTxGas is 0: the guard rejects this, since a failing call would then undo the rotation; propose it again from this app");
+  if (!escape && (pending.tx.safeTxGas === 0n || pending.tx.gasPrice === 0n)) {
+    blockers.push("safeTxGas or gasPrice is 0: the guard rejects this, since the call could then undo the rotation; propose it again from this app");
+  }
+  if (!escape && (!isAddressEqual(pending.tx.gasToken, ZERO_ADDRESS) || !isAddressEqual(pending.tx.refundReceiver, ZERO_ADDRESS))) {
+    blockers.push("the gas refund names a token or a receiver: the guard only allows an ETH refund to the executor");
   }
   if (escape) warnings.push("escape hatch: nobody rotates in this transaction; every signer's key must be treated as burned");
 

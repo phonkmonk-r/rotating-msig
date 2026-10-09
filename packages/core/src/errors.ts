@@ -4,6 +4,8 @@ import { rotationGuardAbi } from "./abi/rotationGuard.js";
 
 /** Safe's own revert codes ("GS0xx") that the app is likely to hit, with a plain description. */
 const SAFE_ERRORS: Record<string, string> = {
+  GS010: "not enough gas for safeTxGas: raise the gas limit",
+  GS011: "the Safe has too little ETH left to refund the executor's gas (a few hundred thousand wei); keep a little ETH in the Safe",
   GS013: "Safe transaction failed (inner call reverted with safeTxGas and gasPrice both 0)",
   GS020: "signatures too short for the threshold",
   GS025: "pre-validated signature from someone other than the executor without approveHash",

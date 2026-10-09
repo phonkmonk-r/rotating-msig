@@ -889,6 +889,11 @@ export const rotationGuardAbi = [
   },
   {
     "type": "error",
+    "name": "RefundNotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RootIndexConsumed",
     "inputs": [
       {

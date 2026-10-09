@@ -139,8 +139,14 @@ abstract contract RotationFixture is Test {
         return SafeTx(to, value, data, Enum.Operation.Call, SAFE_TX_GAS);
     }
 
+    /// @dev The guard requires a non-zero `gasPrice` (refunded in ETH to the executor); only transactions without
+    ///      `safeTxGas` (the escape hatch, or before the guard is installed) keep it at zero.
+    function gasPriceFor(uint256 safeTxGas) internal pure returns (uint256) {
+        return safeTxGas == 0 ? 0 : 1;
+    }
+
     function txHash(SafeTx memory t) internal view returns (bytes32) {
-        return safe.getTransactionHash(t.to, t.value, t.data, t.operation, t.safeTxGas, 0, 0, address(0), payable(address(0)), safe.nonce());
+        return safe.getTransactionHash(t.to, t.value, t.data, t.operation, t.safeTxGas, 0, gasPriceFor(t.safeTxGas), address(0), payable(address(0)), safe.nonce());
     }
 
     function ecdsaSignature(address signer, bytes32 hash, bool ethSign) internal view returns (bytes memory) {
@@ -184,7 +190,7 @@ abstract contract RotationFixture is Test {
 
     function execRaw(SafeTx memory t, bytes memory sigs, address executor) internal returns (bool) {
         vm.prank(executor);
-        return safe.execTransaction(t.to, t.value, t.data, t.operation, t.safeTxGas, 0, 0, address(0), payable(address(0)), sigs);
+        return safe.execTransaction(t.to, t.value, t.data, t.operation, t.safeTxGas, 0, gasPriceFor(t.safeTxGas), address(0), payable(address(0)), sigs);
     }
 
     function exec(SafeTx memory t, address signer, address executor) internal returns (bool) {

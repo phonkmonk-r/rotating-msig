@@ -76,11 +76,17 @@ export function execTransactionData(tx: SafeTx, signatures: Hex): Hex {
 }
 
 /**
- * `safeTxGas` when no simulation is available. The guard rejects `safeTxGas == 0 && gasPrice == 0`: Safe would then
- * revert the whole transaction on a failing inner call, undoing the rotation while the signatures stay public.
- * The executor pays only for gas actually used, so a generous value costs nothing beyond a higher gas limit.
+ * `safeTxGas` when no simulation is available. The guard requires `safeTxGas` and `gasPrice` both non-zero: Safe then
+ * caps the inner call at `safeTxGas` and never reverts the whole transaction on a failing inner call, so the rotation
+ * always keeps its gas. The inner call can use all of it, so the executor's gas limit must cover it in full.
  */
 export const DEFAULT_SAFE_TX_GAS = 1_000_000n;
+/**
+ * `gasPrice` of guarded transactions: the guard requires it non-zero, and Safe refunds the executor
+ * `(gasUsed + baseGas) * min(gasPrice, tx.gasprice)` in ETH, so 1 wei refunds a negligible amount. The Safe must hold
+ * that much ETH after the inner call, or the refund fails and the whole transaction reverts.
+ */
+export const GUARDED_GAS_PRICE = 1n;
 /** Floor for an estimated `safeTxGas`, covering estimate drift between proposal and execution. */
 export const MIN_SAFE_TX_GAS = 100_000n;
 
@@ -90,7 +96,11 @@ export function estimatedSafeTxGas(gasUsed: bigint): bigint {
   return withMargin > MIN_SAFE_TX_GAS ? withMargin : MIN_SAFE_TX_GAS;
 }
 
-/** A Safe transaction with no refund fields. `safeTxGas` is non-zero unless the caller says otherwise. */
+/**
+ * A Safe transaction refunding the executor in ETH at `GUARDED_GAS_PRICE`, as the guard requires. With `safeTxGas`
+ * 0 (the escape hatch, or a Safe without the guard yet) there is no refund and Safe gives the call all remaining gas.
+ */
 export function plainSafeTx(fields: Pick<SafeTx, "to" | "value" | "data" | "operation" | "nonce">, safeTxGas: bigint = DEFAULT_SAFE_TX_GAS): SafeTx {
-  return { ...fields, safeTxGas, baseGas: 0n, gasPrice: 0n, gasToken: ZERO_ADDRESS, refundReceiver: ZERO_ADDRESS };
+  const gasPrice = safeTxGas === 0n ? 0n : GUARDED_GAS_PRICE;
+  return { ...fields, safeTxGas, baseGas: 0n, gasPrice, gasToken: ZERO_ADDRESS, refundReceiver: ZERO_ADDRESS };
 }

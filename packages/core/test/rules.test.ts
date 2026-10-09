@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { getAddress, type Address, type Hex } from "viem";
+import { encodeFunctionData, getAddress, type Address, type Hex } from "viem";
+
+import { rotationGuardAbi } from "../src/abi/rotationGuard.js";
+import { safeAbi } from "../src/abi/safe.js";
 
 import { MAINNET } from "../src/addresses.js";
 import { batch, guardCalls, safeCalls } from "../src/calls.js";
@@ -55,13 +58,35 @@ function run(overrides: Partial<EvaluateInput> & { pending?: PendingTx } = {}) {
 }
 
 describe("rules", () => {
-  it("blocks a transaction whose safeTxGas and gasPrice are both zero, except the escape hatch", () => {
-    const zero = run({ pending: pending([], { safeTxGas: 0n }) });
-    assert.equal(zero.action, "none");
-    assert.ok(zero.blockers.some((b) => b.includes("safeTxGas is 0")));
-    assert.equal(run({ pending: pending([], { safeTxGas: 0n, gasPrice: 1n }) }).action, "confirm");
-    const escape = run({ pending: pending([], { ...safeCalls.escape(SAFE), safeTxGas: 0n }) });
+  it("blocks a transaction whose safeTxGas or gasPrice is zero, except the escape hatch", () => {
+    assert.equal(run().action, "confirm", "plainSafeTx sets both");
+    for (const overrides of [{ safeTxGas: 0n }, { gasPrice: 0n }, { safeTxGas: 0n, gasPrice: 0n }]) {
+      const verdict = run({ pending: pending([], overrides) });
+      assert.equal(verdict.action, "none");
+      assert.ok(verdict.blockers.some((b) => b.includes("safeTxGas or gasPrice is 0")));
+    }
+    const escape = run({ pending: pending([], { ...safeCalls.escape(SAFE), safeTxGas: 0n, gasPrice: 0n }) });
     assert.ok(!escape.blockers.some((b) => b.includes("safeTxGas")));
+  });
+
+  it("blocks calls to the guard's hooks and owner or hook changes that bypass the guard", () => {
+    const hook = encodeFunctionData({ abi: rotationGuardAbi, functionName: "checkAfterExecution", args: [`0x${"00".repeat(32)}`, true] });
+    const addOwner = encodeFunctionData({ abi: safeAbi, functionName: "addOwnerWithThreshold", args: [ROTATED, 1n] });
+    const threshold = encodeFunctionData({ abi: safeAbi, functionName: "changeThreshold", args: [1n] });
+    for (const call of [{ to: GUARD, value: 0n, data: hook, operation: 0 as const }, { to: SAFE, value: 0n, data: addOwner, operation: 0 as const }]) {
+      const verdict = run({ pending: pending([], { ...batch([call], MAINNET.multiSendCallOnly), safeTxGas: 1_000_000n }) });
+      assert.equal(verdict.action, "none");
+      assert.equal(verdict.actions[0]!.kind, "blocked");
+    }
+    assert.equal(run({ pending: pending([], { to: SAFE, value: 0n, data: threshold }) }).action, "confirm");
+  });
+
+  it("blocks a gas refund in a token or to another receiver", () => {
+    for (const overrides of [{ gasToken: B }, { refundReceiver: B }]) {
+      const verdict = run({ pending: pending([], overrides) });
+      assert.equal(verdict.action, "none");
+      assert.ok(verdict.blockers.some((b) => b.includes("ETH refund to the executor")));
+    }
   });
 
   it("lets the first signer confirm and the last signer execute", () => {

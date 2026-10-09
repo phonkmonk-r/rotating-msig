@@ -149,11 +149,15 @@ The other low-level detail is `_readAddress`: the guard reads the Safe's guard a
 
 **`checkTransaction(to, value, data, operation, …, signatures, msgSender)`**, called by the Safe before executing:
 
-1. Revert `NestedExecution` if this Safe already has a guarded transaction in progress.
-2. If the transaction is exactly the escape hatch (3.8), snapshot the owner set into transient storage, mark `TX_ESCAPE` and return: nothing else is checked here.
+1. Revert `NestedExecution` if this Safe already has a guarded transaction in progress, or if this hook already ran for the Safe's current nonce in this Ethereum transaction (the nonce lock, 3.8). Safe increments its nonce before calling the hook, so a genuine call always sees a fresh nonce; a call replayed from inside the transaction sees the same one.
+2. If the transaction is exactly the escape hatch (3.8), mark `TX_ESCAPE` and return: nothing else is checked here.
 3. Revert `NotInitialized` if the Safe never called `initialize`.
 4. Allow delegatecall only to `MULTI_SEND_CALL_ONLY` (`DelegateCallNotAllowed`). Batches therefore go through MultiSendCallOnly, which cannot itself delegatecall.
-5. Require `safeTxGas` or `gasPrice` to be non-zero (`SafeTxGasRequired`). With both zero, Safe reverts the whole `execTransaction` when the inner call fails, which would undo the rotation while the signatures stay public in the reverted calldata. With `safeTxGas` set, a failing inner call burns the nonce and the signers still rotate. The app sizes `safeTxGas` from a simulation, or uses a generous default; the executor pays only for gas used.
+5. Require `safeTxGas` and `gasPrice` both non-zero (`SafeTxGasRequired`), and the refund in ETH to the executor: no `gasToken`, no `refundReceiver` (`RefundNotAllowed`). Each closes a way for the whole `execTransaction` to revert after the signatures are public, which would undo the rotation:
+   - with both zero, Safe reverts the whole transaction when the inner call fails;
+   - with `gasPrice` zero, Safe hands the inner call all remaining gas (63/64 of it reaches the callee), so a callee that burns it leaves too little for `checkAfterExecution`; with `gasPrice` set, Safe caps the inner call at `safeTxGas`;
+   - a refund to a receiver that rejects ETH, or in a token that fails, reverts the whole transaction (GS011, GS012); a refund in ETH to `tx.origin`, an account, cannot fail by design.
+   The app signs `gasPrice` = 1 wei, so Safe refunds the executor `(gasUsed + baseGas) × min(gasPrice, tx.gasprice)`, a few hundred thousand wei, and the Safe must keep that much ETH after the inner call (GS011 otherwise, caught by the execution's simulation). It sizes `safeTxGas` from a simulation (1.5x, at least 100k) or uses 1M, and sends executions with a gas limit covering the simulated cost plus the whole `safeTxGas`, so the rotation keeps its gas even if the inner call uses all of it on-chain. The escape hatch keeps both at zero: it cannot fail and needs no refund, so it works even when the Safe holds no ETH.
 6. Require `signatures.length == threshold * 65` exactly (`UnexpectedSignatureLength`). Extra signatures would be public without being rotated, so they are rejected rather than ignored.
 7. Recompute the Safe transaction hash with `nonce - 1` (Safe has already incremented the nonce) and recover each signer the same way Safe does:
    - `v == 0` (contract signature): rejected. With the exact-length rule this is unreachable (a contract signature needs dynamic data after the static part); kept as defense in depth.
@@ -166,7 +170,7 @@ The other low-level detail is `_readAddress`: the guard reads the Safe's guard a
 
 **`checkAfterExecution(hash, success)`**, called by the Safe after executing:
 
-1. If `TX_ESCAPE`, clear it, then require the guard slot to be empty and the owner set to match the snapshot (`InvalidEscape`). A genuine escape changes nothing but the guard, so this costs it nothing. Threshold, module guard and module are not in the snapshot: changing them is reachable anyway, through a normal transaction or by the owners after the escape, so including them would buy nothing and cost bytecode.
+1. If `TX_ESCAPE`, clear it and require the guard slot to be empty (`InvalidEscape`). Only a genuine escape reaches this state (the nonce lock stops a replay from inside a transaction), and it changes nothing but the guard.
 2. Read and clear the signer list.
 3. For every signer still an owner, find its slot and rotate it, **whether or not the inner call succeeded**: a failed call still used the nonce and exposed the signatures. Signers no longer owners (removed or force-rotated by this very transaction) are skipped. A signer with no slot is `UnmanagedOwner`, unreachable while the owner-set check below holds, pinned by a test that corrupts storage.
 4. `_checkOwnerSet`: the Safe's owner list must have exactly `activeSlots` entries and each owner must be some slot's owner. Owners are distinct and each slot has one owner, so with equal counts this is a one-to-one match. Any direct `addOwner`, `removeOwner` or `swapOwner` that bypasses the guard breaks it and reverts the whole transaction.
@@ -174,7 +178,7 @@ The other low-level detail is `_readAddress`: the guard reads the Safe's guard a
 
 ### 3.5 Rotation and the ring buffer
 
-`_rotate(safe, epoch, slotId)` pops the head of the slot's buffer (`BufferEmpty` if nothing is staged), sets `slot.owner` to it, and calls `swapOwner(prev, old, new)` on the Safe as a module. `prev` is found by `_prevOwner`, which walks Safe's linked owner list (`getOwners()`); Safe needs the predecessor to unlink an owner. The new owner's tree index is `nextStageIndex - count` before popping, and `OwnerRotated(safe, slotId, oldOwner, newOwner, index)` is emitted.
+`_rotate(safe, epoch, slotId)` first drops staged entries that are already owners: staging checks only current owners and the slot's own buffer, so another slot (a malicious signer whose key list includes this slot's next address, or a newcomer's crafted package) can rotate into an address this slot has staged, and rotating into an existing owner would revert every transaction this slot signs. The dropped indexes count as used. It then pops the head of the slot's buffer (`BufferEmpty` if nothing is left), sets `slot.owner` to it, and calls `swapOwner(prev, old, new)` on the Safe as a module. `prev` is found by `_prevOwner`, which walks Safe's linked owner list (`getOwners()`); Safe needs the predecessor to unlink an owner. The new owner's tree index is `nextStageIndex - count` before popping, and `OwnerRotated(safe, slotId, oldOwner, newOwner, index)` is emitted.
 
 The buffer holds 5 addresses (`BUFFER_SIZE`). It exists because rotation happens inside the Safe's transaction, where the guard cannot receive Merkle proofs; proofs are checked earlier, at staging, and rotation just pops a pre-verified address.
 
@@ -211,7 +215,7 @@ All are called by the Safe on itself (so they need the Safe's threshold, through
 
 The escape hatch is a transaction that is exactly `setGuard(address(0))` on the Safe itself (value 0, plain call). Both hooks return immediately for it, so it works even if the guard's own checks are what is broken. Its signers are not rotated, so their keys must be treated as burned. `to == safe` is essential: without it, any transaction carrying that calldata to any address would skip rotation (caught by mutation testing). After the escape, the Safe is a plain Safe; the module and module guard can then be removed by the owners.
 
-The hooks cannot tell the Safe's genuine calls from calls the Safe makes from inside a transaction: a MultiSendCallOnly batch, or a fallback handler, runs with the Safe as `msg.sender`. Such a batch could call `checkAfterExecution` (rotating and resetting the state), then `checkTransaction` with escape-shaped arguments, and the real after-hook would then skip every check. Decoding the payload cannot close this, because of the fallback handler path, so the escape path constrains the outcome instead: the snapshot taken in `checkTransaction` must match at the end and the guard must be gone. Re-arming to the non-escape state needs `threshold` signatures from current owners over the transaction's own hash, which cannot embed them; the signers it carries have in any case just been rotated out (`SignerNotOwner`). Pinned by `test/RotationGuard.poc.t.sol`.
+The hooks cannot tell the Safe's genuine calls from calls the Safe makes from inside a transaction: a MultiSendCallOnly batch, or a fallback handler, runs with the Safe as `msg.sender`. Such a batch could call `checkAfterExecution` (rotating and resetting the state), change the owners, then call `checkTransaction` with escape-shaped arguments, and the real after-hook would then skip every check. Decoding the payload cannot close this, because of the fallback handler path. The first review's fix snapshotted the owner set in the escape `checkTransaction`, but a batch could change the owners before that call (second review, 2026-10-09). The guard now runs `checkTransaction` at most once per Safe nonce, tracked in transient storage: Safe increments its nonce before calling the hook, so the genuine call always sees a fresh nonce and any replay inside the same Safe transaction sees the same nonce and reverts with `NestedExecution`. The batch then fails as a whole and the real after-hook rotates the signers and checks everything; a lone fake `checkAfterExecution` leaves nothing for the real one (`NoTransactionInProgress`), which reverts the transaction. Pinned by `test/RotationGuard.poc.t.sol`.
 
 ### 3.9 Views and events
 
@@ -401,8 +405,10 @@ Joining tries them in that order. Each derivation step has a fixed cost regardle
 | A retired key comes back | `_consumedUpTo` per root; staging requires strictly sequential indexes. |
 | Owners changed around the guard | Owner-set check after every transaction; module guard blocks other modules. |
 | Guard removed silently | Hooks-installed check; only the exact escape transaction skips it. |
-| Hooks replayed from inside a transaction | Escape requires the guard removed and the owner set unchanged since `checkTransaction`; non-escape re-arm needs current owners' signatures. |
-| A failing call undoes the rotation | `safeTxGas` or `gasPrice` must be non-zero, so Safe never reverts the whole transaction on inner failure. |
+| Hooks replayed from inside a transaction | `checkTransaction` runs at most once per Safe nonce (transient nonce lock), so a replay reverts. Keyturn also blocks transactions that call the hooks or change owners or hooks directly. |
+| A failing or gas-burning call undoes the rotation | `safeTxGas` and `gasPrice` must both be non-zero: Safe never reverts the whole transaction on inner failure and caps the inner call at `safeTxGas`; the app's gas limit covers all of `safeTxGas` plus the rotation. |
+| A failing refund undoes the rotation | Refunds only in ETH to the executor (`RefundNotAllowed`); the Safe keeps a little ETH. |
+| Another slot rotates into a staged address | Rotation skips staged entries that are already owners. |
 | Off-chain confirmations exposing too many keys | Rules engine: at most threshold − 1 confirmations, exposure checked across the queue. |
 | Seed theft from disk | Encrypted vault (scrypt, AES-256-GCM), unlocked per session, wiped on lock. |
 | A web page | dApp view sandboxed, own storage, no permissions, review hidden from the page, no message signing, no calls to Safe or guard. |

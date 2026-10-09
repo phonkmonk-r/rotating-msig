@@ -72,7 +72,7 @@ contract RotationGuardGasTest is Test {
         address[] memory owners = safe.getOwners();
         address[] memory signers = new address[](threshold);
         for (uint256 i = 0; i < threshold; ++i) signers[i] = owners[i];
-        bytes32 hash = safe.getTransactionHash(recipient, 1, "", Enum.Operation.Call, SAFE_TX_GAS, 0, 0, address(0), address(0), safe.nonce());
+        bytes32 hash = safe.getTransactionHash(recipient, 1, "", Enum.Operation.Call, SAFE_TX_GAS, 0, 1, address(0), address(0), safe.nonce());
 
         bytes[] memory sigs = new bytes[](threshold);
         sigs[0] = abi.encodePacked(bytes32(uint256(uint160(signers[0]))), bytes32(0), uint8(1));
@@ -85,7 +85,7 @@ contract RotationGuardGasTest is Test {
 
         vm.prank(executor);
         uint256 before = gasleft();
-        safe.execTransaction(recipient, 1, "", Enum.Operation.Call, SAFE_TX_GAS, 0, 0, address(0), payable(address(0)), packed);
+        safe.execTransaction(recipient, 1, "", Enum.Operation.Call, SAFE_TX_GAS, 0, 1, address(0), payable(address(0)), packed);
         gasUsed = before - gasleft();
     }
 

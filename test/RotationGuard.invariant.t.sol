@@ -352,7 +352,7 @@ contract RotationHandler is Test {
         for (uint256 i = 0; i < threshold; ++i) signersCopy[i] = signers[i];
 
         vm.prank(executor);
-        try safe.execTransaction(to, value, data, operation, safeTxGas, 0, 0, address(0), payable(address(0)), _pack(signers, sigs)) returns (bool success) {
+        try safe.execTransaction(to, value, data, operation, safeTxGas, 0, safeTxGas == 0 ? 0 : 1, address(0), payable(address(0)), _pack(signers, sigs)) returns (bool success) {
             executed = success;
             ++executions;
             bool escaped = to == address(safe) && keccak256(data) == keccak256(abi.encodeCall(safe.setGuard, (address(0))));
@@ -399,7 +399,7 @@ contract RotationHandler is Test {
         view
         returns (bytes32)
     {
-        return safe.getTransactionHash(to, value, data, operation, safeTxGas, 0, 0, address(0), address(0), safe.nonce());
+        return safe.getTransactionHash(to, value, data, operation, safeTxGas, 0, safeTxGas == 0 ? 0 : 1, address(0), address(0), safe.nonce());
     }
 
     function _ecdsa(address signer, bytes32 hash, bool ethSign) internal view returns (bytes memory) {

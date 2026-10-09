@@ -96,6 +96,16 @@ function describeGuardCall(name: string, args: readonly unknown[]): string | und
   }
 }
 
+/** The guard's hooks: the Safe calls them around every transaction, and a transaction never should. */
+const GUARD_HOOKS = new Set(["checkTransaction", "checkAfterExecution", "checkModuleTransaction", "checkAfterModuleExecution"]);
+
+/**
+ * Safe calls a guarded transaction cannot make: owner changes outside the guard break the owner-set check, and removing
+ * the hooks inside a batch fails the hooks check, so the guard reverts the whole transaction after its signatures are
+ * public. The escape hatch (`setGuard(0)` alone) and `changeThreshold` are decoded separately.
+ */
+const GUARD_BYPASS = new Set(["addOwnerWithThreshold", "removeOwner", "swapOwner", "setGuard", "setModuleGuard", "disableModule"]);
+
 function callFields(tx: Pick<MetaTx, "to" | "value" | "data"> & Partial<Pick<MetaTx, "operation">>): Pick<Action, "to" | "value" | "data" | "operation" | "selector"> {
   return { to: tx.to, value: tx.value, data: tx.data, operation: tx.operation === 1 ? 1 : 0, selector: size(tx.data) >= 4 ? sliceHex(tx.data, 0, 4) : undefined };
 }
@@ -116,6 +126,9 @@ function decodeCall(tx: Pick<MetaTx, "to" | "value" | "data">, context: DecodeCo
       if (decoded.functionName === "changeThreshold") {
         return { ...named, kind: "safe-admin", summary: `Require ${decoded.args[0]} signature(s) to execute` };
       }
+      if (GUARD_BYPASS.has(decoded.functionName)) {
+        return { ...named, kind: "blocked", summary: `Safe: ${decoded.functionName}(${formatArgs(decoded.args)}) changes owners or removes the rotation outside the guard, so the guard reverts the whole transaction` };
+      }
       return { ...named, kind: "safe-admin", summary: `Safe: ${decoded.functionName}(${formatArgs(decoded.args)})` };
     } catch {
       return { ...base, kind: "call", summary: `Unknown call to the Safe itself (selector ${tx.data.slice(0, 10)})` };
@@ -125,8 +138,11 @@ function decodeCall(tx: Pick<MetaTx, "to" | "value" | "data">, context: DecodeCo
   if (context.guard && isAddressEqual(tx.to, context.guard)) {
     try {
       const decoded = decodeFunctionData({ abi: rotationGuardAbi, data: tx.data });
-      const friendly = describeGuardCall(decoded.functionName, decoded.args as readonly unknown[]);
       const named = { ...base, functionName: decoded.functionName };
+      if (GUARD_HOOKS.has(decoded.functionName)) {
+        return { ...named, kind: "blocked", summary: `Rotation guard: ${decoded.functionName} is a hook only the Safe calls around a transaction; calling it from inside one is an attack` };
+      }
+      const friendly = describeGuardCall(decoded.functionName, decoded.args as readonly unknown[]);
       if (friendly) return { ...named, kind: "guard-admin", summary: friendly };
       return { ...named, kind: "guard-admin", summary: `Rotation guard: ${decoded.functionName}(${formatArgs(decoded.args, decoded.functionName === "stage")})` };
     } catch {

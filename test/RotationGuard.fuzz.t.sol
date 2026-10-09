@@ -66,7 +66,7 @@ contract RotationGuardFuzzTest is RotationFixture {
 
         address[] memory before = safe.getOwners();
         vm.prank(executor);
-        try safe.execTransaction(t.to, t.value, t.data, t.operation, SAFE_TX_GAS, 0, 0, address(0), payable(address(0)), packed) {
+        try safe.execTransaction(t.to, t.value, t.data, t.operation, SAFE_TX_GAS, 0, 1, address(0), payable(address(0)), packed) {
             assertFalse(safe.isOwner(executor));
             uint256 stillOwners;
             for (uint256 i = 0; i < before.length; ++i) if (safe.isOwner(before[i])) ++stillOwners;
@@ -144,7 +144,7 @@ contract RotationGuardFuzzTest is RotationFixture {
 
         bytes memory packed = _packFirst(c.signers, c.sigs, c.threshold);
         vm.prank(c.executor);
-        try safe.execTransaction(t.to, t.value, t.data, t.operation, SAFE_TX_GAS, 0, 0, address(0), payable(address(0)), packed) {
+        try safe.execTransaction(t.to, t.value, t.data, t.operation, SAFE_TX_GAS, 0, 1, address(0), payable(address(0)), packed) {
             assertTrue(c.modelAccepts, "guard accepted a case the model rejects");
             for (uint256 slot = 0; slot < SLOTS; ++slot) {
                 bool didSign;

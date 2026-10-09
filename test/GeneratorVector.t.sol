@@ -92,7 +92,7 @@ contract GeneratorVectorTest is Test {
             assertEq(executor, i == 0 ? configs[0].owner : entries[i - 1].owner);
             vm.prank(executor);
             safe.execTransaction(
-                makeAddr("recipient"), 1, "", Enum.Operation.Call, 1_000_000, 0, 0, address(0), payable(address(0)),
+                makeAddr("recipient"), 1, "", Enum.Operation.Call, 1_000_000, 0, 1, address(0), payable(address(0)),
                 abi.encodePacked(bytes32(uint256(uint160(executor))), bytes32(0), uint8(1))
             );
             assertFalse(safe.isOwner(executor));
