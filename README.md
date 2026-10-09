@@ -1,8 +1,10 @@
-<img src="signer/desktop/assets/icon.png" alt="Cicada icon" width="96" align="left">
+<p align="center">
+  <img src="signer/desktop/assets/icon.svg" alt="Cicada icon" width="128">
+</p>
 
-# Cicada
+<h1 align="center">Cicada</h1>
 
-<br clear="left">
+<p align="center">
 
 [![CI](https://github.com/phonkmonk-r/rotating-msig/actions/workflows/test.yml/badge.svg)](https://github.com/phonkmonk-r/rotating-msig/actions/workflows/test.yml)
 ![Solidity 0.8.30](https://img.shields.io/badge/Solidity-0.8.30-363636?logo=solidity&logoColor=white)
@@ -12,6 +14,8 @@
 ![Node 22](https://img.shields.io/badge/Node-22-339933?logo=node.js&logoColor=white)
 ![Electron 44](https://img.shields.io/badge/Electron-44-47848f?logo=electron&logoColor=white)
 ![Ledger](https://img.shields.io/badge/Ledger-supported-000000?logo=ledger&logoColor=white)
+
+</p>
 
 A Safe multisig where no owner key signs twice. Each signature is the last thing its key ever does: the key is swapped out of the owner list in the same transaction, for a fresh one that was committed in advance. Cicada is the desktop app that makes this usable, and `RotationGuard` is the contract that enforces it.
 
