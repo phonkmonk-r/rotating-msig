@@ -127,6 +127,16 @@ describe("queueing actions and proposing them together", { skip }, () => {
     assert.equal(await allowanceSeenByDapp(), 0n, "with the queue empty, reads go to the chain again");
   });
 
+  it("names token amounts with the token's symbol, name and decimals", async () => {
+    const amount = encodeFunctionData({ abi: tokenAbi(), functionName: "approve", args: [vault, 1_234_500_000_000_000_000_000n] });
+    const unlimited = encodeFunctionData({ abi: tokenAbi(), functionName: "approve", args: [vault, 2n ** 256n - 1n] });
+    const named = await sessions[0]!.addToDraft({ kind: "calls", origin: ORIGIN, calls: [{ to: token, data: amount }] });
+    assert.match(named.actions[0]!.summary, /^Approve 0x\w{4}…\w{4} to spend 1,234\.5 MOCK \(Mock\)$/);
+    const max = await sessions[0]!.addToDraft({ kind: "calls", origin: ORIGIN, calls: [{ to: token, data: unlimited }] });
+    assert.match(max.actions[0]!.summary, /to spend an unlimited amount of MOCK \(Mock\)$/);
+    sessions[0]!.clearDraft();
+  });
+
   it("shows which queued action would fail before anyone signs", async () => {
     await sessions[0]!.addToDraft({ kind: "calls", origin: ORIGIN, calls: [{ to: token, data: approve(5000n) }] });
     await sessions[0]!.addToDraft({ kind: "calls", origin: ORIGIN, calls: [{ to: vault, data: deposit(5000n) }] });

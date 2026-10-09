@@ -46,8 +46,10 @@ import { generateTree, OPERATOR_ACCOUNT, resolveCurrentOwner, type AddressSource
 import {
   createWalletClient,
   custom,
+  decodeFunctionData,
   erc20Abi,
   formatEther,
+  formatUnits,
   getAddress,
   http,
   isAddressEqual,
@@ -340,6 +342,26 @@ export interface RefillStatus {
 /** Ether amount as a decimal string, for JSON. */
 const wei = (value: bigint) => value.toString();
 
+interface TokenMeta {
+  decimals: number;
+  symbol?: string;
+  name?: string;
+}
+
+/** Approvals at or above this are shown as unlimited (the usual "max" approval is 2^256 - 1). */
+const UNLIMITED_APPROVAL = 2n ** 255n;
+
+const shortAddress = (address: string) => `${getAddress(address).slice(0, 6)}…${address.slice(-4)}`;
+
+/** A token amount in whole tokens, with thousands separators and at most six decimals. */
+export function tokenAmount(amount: bigint, decimals: number): string {
+  const [whole, fraction = ""] = formatUnits(amount, decimals).split(".");
+  const grouped = whole!.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const kept = fraction.slice(0, 6).replace(/0+$/, "");
+  if (!kept && amount > 0n && whole === "0") return `< 0.${"0".repeat(5)}1`;
+  return kept ? `${grouped}.${kept}` : grouped;
+}
+
 /** An ETH amount for reading: at most six decimals (the explorer link has the exact value), "< 0.000001" below that. */
 export function etherAmount(value: bigint): string {
   if (value > 0n && value < 10n ** 12n) return "< 0.000001";
@@ -386,6 +408,8 @@ export class SignerSession {
   private lastRefill?: RefillStatus;
   private keyAlert?: { usedKeys: (UsedKey & { index: number })[]; currentKeyUsed?: string[] };
   private readonly executions = new Map<string, Attempt>();
+  /** Token decimals, symbol and name by address, read once per token. */
+  private readonly tokens = new Map<string, Promise<TokenMeta | undefined>>();
   /** Transactions of a threshold-1 Safe, executed directly instead of proposed; kept until their nonce is used. */
   private readonly directTxs = new Map<string, PendingTx>();
   private readonly store: SessionStore;
@@ -457,6 +481,46 @@ export class SignerSession {
     if (!attempt?.record.transactionHash) return undefined;
     const { status } = attempt.record;
     return status === "pending" || status === "stuck" ? attempt : undefined;
+  }
+
+  /**
+   * Token transfers and approvals described with the token's symbol, name and decimals read from the chain (once per
+   * token), instead of base units of an address. An action stays as decoded if the token does not answer.
+   */
+  private async withTokenNames(actions: readonly Action[]): Promise<Action[]> {
+    return Promise.all(
+      actions.map(async (action) => {
+        if (action.kind !== "token" || (action.functionName !== "transfer" && action.functionName !== "approve")) return action;
+        const token = await this.tokenMeta(action.to);
+        if (!token) return action;
+        let args: readonly unknown[];
+        try {
+          args = decodeFunctionData({ abi: erc20Abi, data: action.data }).args ?? [];
+        } catch {
+          return action;
+        }
+        const [counterparty, amount] = args as [Address, bigint];
+        const label = token.symbol ? (token.name && token.name !== token.symbol ? `${token.symbol} (${token.name})` : token.symbol) : shortAddress(action.to);
+        if (action.functionName === "transfer") return { ...action, summary: `Transfer ${tokenAmount(amount, token.decimals)} ${label} to ${shortAddress(counterparty)}` };
+        const spend = amount >= UNLIMITED_APPROVAL ? `an unlimited amount of ${label}` : `${tokenAmount(amount, token.decimals)} ${label}`;
+        return { ...action, summary: `Approve ${shortAddress(counterparty)} to spend ${spend}` };
+      }),
+    );
+  }
+
+  /** A token's decimals, symbol and name, read once; undefined if it does not report its decimals. */
+  private tokenMeta(address: Address): Promise<TokenMeta | undefined> {
+    const key = address.toLowerCase();
+    let meta = this.tokens.get(key);
+    if (!meta) {
+      const read = <T>(functionName: "decimals" | "symbol" | "name") =>
+        this.options.publicClient.readContract({ address, abi: erc20Abi, functionName }).then((value) => value as T, () => undefined);
+      meta = Promise.all([read<number>("decimals"), read<string>("symbol"), read<string>("name")]).then(([decimals, symbol, name]) =>
+        decimals === undefined ? undefined : { decimals, symbol: symbol?.trim() || undefined, name: name?.trim() || undefined },
+      );
+      this.tokens.set(key, meta);
+    }
+    return meta;
   }
 
   /**
@@ -649,7 +713,7 @@ export class SignerSession {
   async queue(): Promise<QueueItem[]> {
     const { state, owner } = await this.snapshot();
     const pending = this.withDirect(state, await this.options.txService.pending(this.options.safe, state.nonce));
-    return pending.map((tx) => {
+    return Promise.all(pending.map(async (tx) => {
       const verdict = owner ? this.evaluate(state, tx, pending, owner) : undefined;
       return {
         attempt: this.inFlightExecution(tx.safeTxHash),
@@ -657,7 +721,7 @@ export class SignerSession {
         proposer: tx.proposer,
         safeTxHash: tx.safeTxHash,
         nonce: tx.tx.nonce.toString(),
-        actions: verdict?.actions ?? [],
+        actions: await this.withTokenNames(verdict?.actions ?? []),
         confirmations: tx.confirmations.map((c) => ({
           owner: c.owner,
           signatureType: c.signatureType,
@@ -668,7 +732,7 @@ export class SignerSession {
           : { action: "none", blockers: ["your key could not be resolved; see status"], warnings: [] },
         submissionDate: tx.submissionDate,
       };
-    });
+    }));
   }
 
   /**
@@ -695,7 +759,7 @@ export class SignerSession {
       const verdict = this.evaluate(state, { safeTxHash: hash, tx, confirmations: [] }, queue, owner);
       if (verdict.action !== (direct ? "execute" : "confirm")) throw new Error(`cannot propose: ${verdict.blockers.join("; ")}`);
 
-      const result = { safeTxHash: hash, nonce: tx.nonce.toString(), actions: verdict.actions, warnings: verdict.warnings, proposed: false, direct };
+      const result = { safeTxHash: hash, nonce: tx.nonce.toString(), actions: await this.withTokenNames(verdict.actions), warnings: verdict.warnings, proposed: false, direct };
       if (preview) return result;
       if (direct) {
         // Nothing is signed for the Transaction Service: the executor's own pre-validated signature is the only one,
@@ -838,7 +902,7 @@ export class SignerSession {
     const context = this.context(state);
     const call = buildProposal(input, context);
     await this.check(input, state, call);
-    const item: DraftItem = { id: String(++this.nextDraftId), input, origin, actions: decodeActions(call, context), addedAt: new Date().toISOString() };
+    const item: DraftItem = { id: String(++this.nextDraftId), input, origin, actions: await this.withTokenNames(decodeActions(call, context)), addedAt: new Date().toISOString() };
     this.draftItems.push(item);
     return item;
   }
@@ -1010,7 +1074,7 @@ export class SignerSession {
       steps,
       sweep: gasFunding ? { status: "waiting" } : undefined,
       nonce: tx.tx.nonce.toString(),
-      actions: verdict.actions,
+      actions: await this.withTokenNames(verdict.actions),
     };
     this.executions.set(tx.safeTxHash.toLowerCase(), { record, nonce: tx.tx.nonce.toString(), index: owner.index, sentAtMs: Date.now(), account: owner.account });
     const gasLimit = executionGasLimit(gas, tx.tx.safeTxGas);
