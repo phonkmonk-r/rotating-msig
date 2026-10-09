@@ -56,7 +56,7 @@ describe("joining a Safe from a seed alone", { skip }, () => {
     await session(0).confirm(hash);
     const executor = session(1);
     const sent = await executor.execute(hash);
-    for (let i = 0; i < 50 && (await executor.execution(sent.transactionHash)).status === "pending"; i++) {
+    for (let i = 0; i < 50 && (await executor.execution(sent.transactionHash!)).status === "pending"; i++) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
 

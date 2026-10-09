@@ -45,7 +45,7 @@ describe("refilling staged keys from the gas account", { skip }, () => {
   async function transfer(proposer: number, executor: number) {
     const proposal = await sessions[proposer]!.propose({ kind: "eth", to: RECIPIENT, amount: parseEther("0.001").toString() });
     const sent = await sessions[executor]!.execute(proposal.safeTxHash);
-    await chain.client.waitForTransactionReceipt({ hash: sent.transactionHash });
+    await chain.client.waitForTransactionReceipt({ hash: sent.transactionHash! });
   }
 
   it("does nothing while the buffer is full", async () => {

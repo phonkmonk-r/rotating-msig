@@ -46,7 +46,7 @@ describe("managing signers from the app", { skip }, () => {
   async function run(input: ProposalInput) {
     const proposal = await sessions[0]!.propose(input);
     const sent = await sessions[1]!.execute(proposal.safeTxHash);
-    const receipt = await chain.client.waitForTransactionReceipt({ hash: sent.transactionHash });
+    const receipt = await chain.client.waitForTransactionReceipt({ hash: sent.transactionHash! });
     assert.equal(receipt.status, "success");
     return proposal;
   }

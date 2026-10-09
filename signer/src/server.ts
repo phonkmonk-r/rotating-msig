@@ -71,7 +71,7 @@ export async function serve(session: SignerSession, options: ServeOptions): Prom
       const hash = (body as { safeTxHash?: unknown }).safeTxHash;
       if (typeof hash !== "string" || !isHex(hash) || hash.length !== 66) return send(res, 400, { error: "safeTxHash must be a 32-byte hex string" });
       try {
-        const result = url.pathname === "/api/confirm" ? await session.confirm(hash) : await session.execute(hash);
+        const result = url.pathname === "/api/confirm" ? await session.confirm(hash) : await session.execute(hash, { untilSent: false });
         return send(res, 200, result);
       } catch (error) {
         return send(res, 409, { error: (error as Error).message });

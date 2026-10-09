@@ -171,13 +171,27 @@ export interface TokenInfo {
 }
 
 /** An execution this signer sent, as tracked until it is included or reported stuck. */
+export type ExecutionStepId = "simulate" | "gas" | "send" | "include" | "rotate" | "sweep";
+
+/** One step of an execution, as the app shows it while it happens. */
+export interface ExecutionStep {
+  id: ExecutionStepId;
+  label: string;
+  status: "waiting" | "active" | "done" | "skipped" | "failed";
+  detail?: string;
+  transactionHash?: Hex;
+}
+
 export interface Execution {
   safeTxHash: Hex;
-  transactionHash: Hex;
+  /** Set once the execution is sent. */
+  transactionHash?: Hex;
   /** Host of the RPC it was sent through. */
   sentThrough: string;
-  sentAt: string;
-  status: "pending" | "success" | "reverted" | "stuck";
+  sentAt?: string;
+  /** `preparing`: funding the key or signing; `failed`: nothing was sent (see message). */
+  status: "preparing" | "pending" | "success" | "reverted" | "stuck" | "failed";
+  steps: ExecutionStep[];
   gasUsed?: string;
   rotated?: { slotId: number; from: Address; to: Address }[];
   message?: string;
@@ -601,53 +615,102 @@ export class SignerSession {
    * transaction hash. Inclusion is tracked separately (`execution`), so a private RPC that holds the transaction can
    * never leave the signer waiting silently.
    */
-  execute(safeTxHash: Hex): Promise<Execution> {
-    return this.exclusive(async () => {
-      const { publicClient, chain, executionRpcUrl } = this.options;
-      const { state, owner, pending, tx } = await this.load(safeTxHash);
-      const verdict = this.evaluate(state, tx, pending, owner);
-      if (verdict.action !== "execute" || !verdict.executeWith) {
-        throw new Error(`cannot execute: ${[...verdict.blockers, `allowed action is ${verdict.action}`].join("; ")}`);
-      }
-
-      const signatures = packSignatures([...verdict.executeWith, preValidatedSignature(owner.account.address)]);
-      const data = execTransactionData(tx.tx, signatures);
-      const from = owner.account.address;
-
-      let gas: bigint;
-      try {
-        await publicClient.call({ account: from, to: state.safe, data });
-        gas = await publicClient.estimateGas({ account: from, to: state.safe, data });
-      } catch (error) {
-        throw new Error(`simulation failed, nothing was sent: ${describeRevert(error) ?? (error as Error).message}`);
-      }
-
-      const gasLimit = (gas * 12n) / 10n;
-      const fees = await publicClient.estimateFeesPerGas();
-      const funding = this.options.gasFunding ? await this.fund(from, (gasLimit + SWEEP_GAS_ALLOWANCE) * fees.maxFeePerGas) : undefined;
-
-      const wallet = createWalletClient({ account: owner.account, chain, transport: http(executionRpcUrl) });
-      const transactionHash = await wallet.sendTransaction({
-        to: state.safe,
-        data,
-        gas: gasLimit,
-        maxFeePerGas: fees.maxFeePerGas,
-        maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
-        chain,
+  execute(safeTxHash: Hex, options: { untilSent?: boolean } = {}): Promise<Execution> {
+    const untilSent = options.untilSent ?? true;
+    return new Promise((resolve, reject) => {
+      void this.exclusive(async () => {
+        let prepared: Awaited<ReturnType<SignerSession["prepareExecution"]>>;
+        try {
+          prepared = await this.prepareExecution(safeTxHash);
+        } catch (error) {
+          reject(error);
+          return;
+        }
+        if (!untilSent) resolve(prepared.record);
+        try {
+          await this.sendExecution(prepared);
+          if (untilSent) resolve(prepared.record);
+        } catch (error) {
+          const { record } = prepared;
+          record.status = "failed";
+          record.message = (error as Error).message;
+          const active = record.steps.find((step) => step.status === "active");
+          if (active) Object.assign(active, { status: "failed", detail: record.message });
+          if (untilSent) reject(error);
+        }
       });
-      const record: Execution = {
-        safeTxHash: tx.safeTxHash,
-        transactionHash,
-        sentThrough: new URL(executionRpcUrl).host,
-        sentAt: new Date().toISOString(),
-        status: "pending",
-        funding,
-        sweep: this.options.gasFunding ? { status: "waiting" } : undefined,
-      };
-      this.executions.set(transactionHash.toLowerCase(), { record, before: state, sentAtMs: Date.now(), account: owner.account });
-      if (this.options.gasFunding) void this.sweepWhenMined(transactionHash);
-      return record;
     });
+  }
+
+  /** Checks the rules and simulates; nothing is sent. The record starts with its steps laid out. */
+  private async prepareExecution(safeTxHash: Hex) {
+    const { publicClient, executionRpcUrl, gasFunding } = this.options;
+    const { state, owner, pending, tx } = await this.load(safeTxHash);
+    const verdict = this.evaluate(state, tx, pending, owner);
+    if (verdict.action !== "execute" || !verdict.executeWith) {
+      throw new Error(`cannot execute: ${[...verdict.blockers, `allowed action is ${verdict.action}`].join("; ")}`);
+    }
+
+    const signatures = packSignatures([...verdict.executeWith, preValidatedSignature(owner.account.address)]);
+    const data = execTransactionData(tx.tx, signatures);
+    const from = owner.account.address;
+    let gas: bigint;
+    try {
+      await publicClient.call({ account: from, to: state.safe, data });
+      gas = await publicClient.estimateGas({ account: from, to: state.safe, data });
+    } catch (error) {
+      throw new Error(`simulation failed, nothing was sent: ${describeRevert(error) ?? (error as Error).message}`);
+    }
+    const fees = await publicClient.estimateFeesPerGas();
+    const host = new URL(executionRpcUrl).host;
+    const steps: ExecutionStep[] = [
+      { id: "simulate", label: "Simulated", status: "done", detail: `succeeds, about ${gas.toLocaleString("en-US")} gas` },
+      ...(gasFunding ? [{ id: "gas" as const, label: "Gas for your key", status: "waiting" as const }] : []),
+      { id: "send", label: `Signed and sent via ${host}`, status: "waiting" },
+      { id: "include", label: "Included in a block", status: "waiting" },
+      { id: "rotate", label: "Signers rotated", status: "waiting" },
+      ...(gasFunding ? [{ id: "sweep" as const, label: "Unused gas returned", status: "waiting" as const }] : []),
+    ];
+    const record: Execution = { safeTxHash: tx.safeTxHash, sentThrough: host, status: "preparing", steps, sweep: gasFunding ? { status: "waiting" } : undefined };
+    this.executions.set(tx.safeTxHash.toLowerCase(), { record, before: state, sentAtMs: Date.now(), account: owner.account });
+    return { record, state, data, from, gasLimit: (gas * 12n) / 10n, fees, account: owner.account };
+  }
+
+  /** Funds the key if needed, then signs and sends. Inclusion and the sweep are followed by `execution`. */
+  private async sendExecution(prepared: Awaited<ReturnType<SignerSession["prepareExecution"]>>): Promise<void> {
+    const { chain, executionRpcUrl, gasFunding } = this.options;
+    const { record, state, data, from, gasLimit, fees, account } = prepared;
+    const step = (id: ExecutionStepId, patch: Partial<ExecutionStep>) => {
+      const found = record.steps.find((candidate) => candidate.id === id);
+      if (found) Object.assign(found, patch);
+    };
+
+    if (gasFunding) {
+      step("gas", { status: "active", detail: "checking your key's balance" });
+      const funding = await this.fund(from, (gasLimit + SWEEP_GAS_ALLOWANCE) * fees.maxFeePerGas, () =>
+        step("gas", { detail: "sending gas from your gas account, waiting for it to be mined" }),
+      );
+      record.funding = funding;
+      step("gas", funding ? { status: "done", detail: `${formatEther(BigInt(funding.amount))} ETH from your gas account`, transactionHash: funding.transactionHash } : { status: "skipped", detail: "your key already holds enough" });
+    }
+
+    step("send", { status: "active", detail: "signing" });
+    const wallet = createWalletClient({ account, chain, transport: http(executionRpcUrl) });
+    const transactionHash = await wallet.sendTransaction({
+      to: state.safe,
+      data,
+      gas: gasLimit,
+      maxFeePerGas: fees.maxFeePerGas,
+      maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
+      chain,
+    });
+    Object.assign(record, { transactionHash, sentAt: new Date().toISOString(), status: "pending" });
+    step("send", { status: "done", detail: undefined, transactionHash });
+    step("include", { status: "active", detail: "waiting for a block" });
+    const entry = this.executions.get(record.safeTxHash.toLowerCase())!;
+    entry.sentAtMs = Date.now();
+    this.executions.set(transactionHash.toLowerCase(), entry);
+    if (gasFunding) void this.sweepWhenMined(transactionHash);
   }
 
   /**
@@ -766,7 +829,7 @@ export class SignerSession {
   }
 
   /** Tops `key` up from the operator account to `needed` wei, waiting until the transfer is mined. */
-  private async fund(key: Address, needed: bigint): Promise<Execution["funding"]> {
+  private async fund(key: Address, needed: bigint, onSending?: () => void): Promise<Execution["funding"]> {
     const { publicClient, chain, source } = this.options;
     const balance = await publicClient.getBalance({ address: key });
     if (balance >= needed) return undefined;
@@ -782,6 +845,7 @@ export class SignerSession {
     if (operatorBalance < required) {
       throw new Error(`your gas account ${operator.address} needs about ${formatEther(required)} ETH for this execution and holds ${formatEther(operatorBalance)}; nothing was sent`);
     }
+    onSending?.();
     const wallet = createWalletClient({ account: operator, chain, transport: custom(publicClient) });
     const transactionHash = await wallet.sendTransaction({ to: key, value: amount, chain });
     const receipt = await publicClient.waitForTransactionReceipt({ hash: transactionHash });
@@ -840,11 +904,26 @@ export class SignerSession {
   }
 
   /** Current status of an execution this signer sent. */
-  async execution(transactionHash: Hex): Promise<Execution> {
-    const entry = this.executions.get(transactionHash.toLowerCase());
-    if (!entry) throw new Error(`no execution ${transactionHash} was sent by this signer`);
+  async execution(hash: Hex): Promise<Execution> {
+    const entry = this.executions.get(hash.toLowerCase());
+    if (!entry) throw new Error(`no execution ${hash} was started by this signer`);
     const { record, before, sentAtMs } = entry;
-    if (record.status === "success" || record.status === "reverted") return record;
+    const step = (id: ExecutionStepId, patch: Partial<ExecutionStep>) => {
+      const found = record.steps.find((candidate) => candidate.id === id);
+      if (found) Object.assign(found, patch);
+    };
+    const syncSweep = () => {
+      const sweep = record.sweep;
+      if (!sweep || sweep.status === "waiting") return;
+      if (sweep.status === "sent") step("sweep", { status: "done", detail: `${formatEther(BigInt(sweep.amount ?? "0"))} ETH back to your gas account`, transactionHash: sweep.transactionHash });
+      else if (sweep.status === "nothing") step("sweep", { status: "skipped", detail: "nothing left to return" });
+      else step("sweep", { status: "failed", detail: sweep.message });
+    };
+    if (!record.transactionHash || record.status === "failed") return record;
+    if (record.status === "success" || record.status === "reverted") {
+      syncSweep();
+      return record;
+    }
 
     const receipt = await this.options.publicClient.getTransactionReceipt({ hash: record.transactionHash }).catch(() => undefined);
     if (receipt) {
@@ -856,15 +935,22 @@ export class SignerSession {
           .filter((log) => isAddressEqual(log.args.safe, before.safe))
           .map((log) => ({ slotId: Number(log.args.slotId), from: log.args.oldOwner, to: log.args.newOwner }));
         record.message = undefined;
+        step("include", { status: "done", detail: `block ${receipt.blockNumber}, ${receipt.gasUsed.toLocaleString("en-US")} gas` });
+        step("rotate", { status: "done", detail: record.rotated.map((change) => `slot ${change.slotId}`).join(", ") || "none" });
+        if (record.sweep?.status === "waiting") step("sweep", { status: "active", detail: "sending the rest back" });
       } else {
         record.status = "reverted";
         record.message = "The transaction was mined but reverted: its signatures are public and nobody rotated. Refill buffers and force-rotate those signers now.";
+        step("include", { status: "failed", detail: "mined but reverted" });
+        step("rotate", { status: "failed", detail: "nobody rotated" });
       }
+      syncSweep();
       return record;
     }
 
     const timeout = this.options.executionTimeoutMs ?? DEFAULT_EXECUTION_TIMEOUT_MS;
     if (Date.now() - sentAtMs > timeout) {
+      step("include", { detail: `not included yet after ${Math.round(timeout / 60_000) || 1} minute(s)` });
       record.status = "stuck";
       record.message =
         `Not included after ${Math.round(timeout / 60_000) || 1} minute(s) through ${record.sentThrough}; it may still land. ` +

@@ -78,10 +78,23 @@ describe("paying executions from the gas account", { skip }, () => {
 
     const sent = await sessions[1]!.execute(proposal!.safeTxHash);
     assert.ok(sent.funding, "the key was topped up");
-    const record = await settled(sessions[1]!, sent.transactionHash);
+    const record = await settled(sessions[1]!, sent.transactionHash!);
     assert.equal(record.status, "success");
     assert.equal(record.sweep!.status, "sent");
     await chain.client.waitForTransactionReceipt({ hash: record.sweep!.transactionHash! });
+    const steps = (await sessions[1]!.execution(sent.safeTxHash)).steps;
+    assert.deepEqual(
+      steps.map((step) => [step.id, step.status]),
+      [
+        ["simulate", "done"],
+        ["gas", "done"],
+        ["send", "done"],
+        ["include", "done"],
+        ["rotate", "done"],
+        ["sweep", "done"],
+      ],
+    );
+    assert.equal(steps[1]!.transactionHash, sent.funding!.transactionHash, "the funding transfer is linked");
 
     assert.equal(await balance(key), 0n, "nothing is left on the retired key");
     const after = await readSafeState(chain.client, chain.safe);
@@ -95,7 +108,7 @@ describe("paying executions from the gas account", { skip }, () => {
     await setBalance(key, parseEther("0.05"));
     const sent = await sessions[2]!.execute(proposal.safeTxHash);
     assert.equal(sent.funding, undefined);
-    const record = await settled(sessions[2]!, sent.transactionHash);
+    const record = await settled(sessions[2]!, sent.transactionHash!);
     assert.equal(record.sweep!.status, "sent");
     await chain.client.waitForTransactionReceipt({ hash: record.sweep!.transactionHash! });
     assert.equal(await balance(key), 0n);

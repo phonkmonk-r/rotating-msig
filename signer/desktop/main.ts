@@ -650,7 +650,7 @@ handle("safes:remove", (key: unknown) => {
 handle("signer:status", () => requireSession().status());
 handle("signer:queue", () => requireSession().queue());
 handle("signer:confirm", (hash: unknown) => requireSession().confirm(requireHash(hash)));
-handle("signer:execute", (hash: unknown) => requireSession().execute(requireHash(hash)));
+handle("signer:execute", (hash: unknown) => requireSession().execute(requireHash(hash), { untilSent: false }));
 handle("signer:execution", (hash: unknown) => requireSession().execution(requireHash(hash)));
 handle("signer:propose", (input: unknown, preview: unknown) => requireSession().propose(input as never, preview === true));
 handle("signer:refill", () => requireSession().refill());

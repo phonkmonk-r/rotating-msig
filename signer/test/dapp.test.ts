@@ -86,13 +86,13 @@ describe("dApp browser wallet", { skip }, () => {
     assert.equal(queue[0]!.safeTxHash, id);
     assert.equal(queue[0]!.actions.length, 2);
     const sent = await sessions[1]!.execute(id);
-    for (let i = 0; i < 50 && (await sessions[1]!.execution(sent.transactionHash)).status === "pending"; i++) await new Promise((r) => setTimeout(r, 100));
+    for (let i = 0; i < 50 && (await sessions[1]!.execution(sent.transactionHash!)).status === "pending"; i++) await new Promise((r) => setTimeout(r, 100));
 
     const status = (await call("wallet_getCallsStatus", [id])) as { status: number; receipts: { transactionHash: Hex; status: Hex }[] };
     assert.equal(status.status, 200);
-    assert.equal(status.receipts[0]!.transactionHash, sent.transactionHash);
+    assert.equal(status.receipts[0]!.transactionHash, sent.transactionHash!);
     const receipt = (await call("eth_getTransactionReceipt", [id])) as { transactionHash: Hex; status: Hex };
-    assert.equal(receipt.transactionHash, sent.transactionHash);
+    assert.equal(receipt.transactionHash, sent.transactionHash!);
     assert.equal(receipt.status, "0x1");
     assert.equal(await chain.client.getBalance({ address: BOB }), parseEther("0.01"));
   });
@@ -106,7 +106,7 @@ describe("dApp browser wallet", { skip }, () => {
     }
     const executed = await sessions[1]!.execute(queue[0]!.safeTxHash);
     const hash = await sending;
-    assert.equal(hash, executed.transactionHash);
+    assert.equal(hash, executed.transactionHash!);
     assert.equal(reviewed.at(-1)?.readsOwnRpc, true, "a dApp that sets the nonce reads its own RPC");
     assert.equal((await chain.client.getTransactionReceipt({ hash })).status, "success", "the hash is a mined transaction");
   });

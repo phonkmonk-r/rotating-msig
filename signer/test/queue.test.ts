@@ -121,7 +121,7 @@ describe("queueing actions and proposing them together", { skip }, () => {
     assert.equal(sessions[0]!.draft().items.length, 0, "the queue empties once proposed");
 
     const sent = await sessions[1]!.execute(proposal.safeTxHash);
-    assert.equal((await chain.client.waitForTransactionReceipt({ hash: sent.transactionHash })).status, "success");
+    assert.equal((await chain.client.waitForTransactionReceipt({ hash: sent.transactionHash! })).status, "success");
     const deposited = await chain.client.readContract({ address: vault, abi: vaultAbi(), functionName: "deposits", args: [chain.safe] });
     assert.equal(deposited, 100n);
     assert.equal(await allowanceSeenByDapp(), 0n, "with the queue empty, reads go to the chain again");

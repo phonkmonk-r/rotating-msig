@@ -42,7 +42,7 @@ describe("proposing from the app", { skip }, () => {
   async function executeAndWait(session: SignerSession, hash: `0x${string}`) {
     const sent = await session.execute(hash);
     for (let i = 0; i < 50; i++) {
-      const status = await session.execution(sent.transactionHash);
+      const status = await session.execution(sent.transactionHash!);
       if (status.status !== "pending") return status;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }

@@ -47,7 +47,7 @@ describe("never staging keys that were used elsewhere", { skip }, () => {
 
   it("flags the used key and refuses to stage it", async () => {
     const proposal = await sessions[0]!.propose({ kind: "eth", to: RECIPIENT, amount: parseEther("0.001").toString() });
-    await chain.client.waitForTransactionReceipt({ hash: (await sessions[1]!.execute(proposal.safeTxHash)).transactionHash });
+    await chain.client.waitForTransactionReceipt({ hash: (await sessions[1]!.execute(proposal.safeTxHash)).transactionHash! });
     assert.equal((await slot0()).staged.length, 4);
 
     await sessions[0]!.autoRefill();
@@ -63,7 +63,7 @@ describe("never staging keys that were used elsewhere", { skip }, () => {
     assert.equal(input.kind === "skip-keys" && input.index, 7);
     const proposal = await sessions[0]!.propose(input);
     assert.match(proposal.actions.map((action) => action.summary).join(" | "), /Skip slot 0 ahead to key 7.*Stage 5 next key/);
-    await chain.client.waitForTransactionReceipt({ hash: (await sessions[1]!.execute(proposal.safeTxHash)).transactionHash });
+    await chain.client.waitForTransactionReceipt({ hash: (await sessions[1]!.execute(proposal.safeTxHash)).transactionHash! });
 
     const slot = await slot0();
     assert.equal(slot.ownerIndex, 7, "slot 0 rotated straight to key 7, never key 6");

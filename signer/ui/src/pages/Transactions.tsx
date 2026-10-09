@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import { api, type DraftView, type Execution, type QueueItem, type StatusView } from "../api";
-import { eth, explorer, short } from "../format";
+import { explorer, short } from "../format";
 import { IconAlert, IconCheck, IconExternal, IconInbox, IconPlus } from "../icons";
 import { Avatar, Badge, PageHeader } from "../ui";
 import { NewTransaction } from "./NewTransaction";
@@ -85,9 +85,9 @@ function TxCard({ item, status, onBusy }: { item: QueueItem; status: StatusView;
       } else {
         let execution = await api.execute(item.safeTxHash);
         setStage({ kind: "executing", execution });
-        while (execution.status === "pending" || execution.status === "stuck" || execution.sweep?.status === "waiting") {
-          await new Promise((resolve) => setTimeout(resolve, EXECUTION_POLL_MS));
-          execution = await api.execution(execution.transactionHash);
+        while (execution.status === "preparing" || execution.status === "pending" || execution.status === "stuck" || execution.sweep?.status === "waiting") {
+          await new Promise((resolve) => setTimeout(resolve, execution.status === "preparing" ? 1_000 : EXECUTION_POLL_MS));
+          execution = await api.execution(execution.safeTxHash);
           setStage({ kind: "executing", execution });
         }
       }
@@ -219,50 +219,42 @@ function Review({
   );
 }
 
+/** The execution's steps as they happen: simulate, gas for the key, sign and send, inclusion, rotation, sweep. */
 function ExecutionStatus({ execution, chainId }: { execution: Execution; chainId: number }) {
-  const link = explorer(chainId, "tx", execution.transactionHash);
-  const hash = (
-    <a href={link} target="_blank" rel="noreferrer" className="mono">
-      {short(execution.transactionHash)} <IconExternal />
-    </a>
-  );
-  if (execution.status === "success") {
-    return (
-      <div className="note ok column">
-        <span>
-          <IconCheck width="15" height="15" /> Executed {hash} · {Number(execution.gasUsed).toLocaleString()} gas
-        </span>
-        {execution.rotated && execution.rotated.length > 0 && (
-          <span className="muted small">{execution.rotated.map((r) => `Slot ${r.slotId} → ${short(r.to)}`).join(" · ")}</span>
-        )}
-        <GasNote execution={execution} />
-      </div>
-    );
-  }
-  if (execution.status === "reverted") {
-    return (
-      <div className="note critical column">
-        <span>Reverted {hash}</span>
-        <span className="small">{execution.message}</span>
-      </div>
-    );
-  }
+  const tone =
+    execution.status === "success" ? "ok" : execution.status === "reverted" || execution.status === "failed" ? "critical" : execution.status === "stuck" ? "warning" : "pending";
   return (
-    <div className={`note ${execution.status === "stuck" ? "warning" : "pending"} column`}>
-      {execution.funding && <span className="small">Gas sent from your gas account: {eth(execution.funding.amount, 6)}</span>}
-      <span>
-        <span className="spinner" /> Waiting for inclusion {hash}
-      </span>
+    <div className={`note ${tone} column execution-steps`}>
+      <ol>
+        {execution.steps.map((step) => (
+          <li key={step.id} className={`step ${step.status}`}>
+            <span className="step-icon">
+              {step.status === "done" ? (
+                <IconCheck width="14" height="14" />
+              ) : step.status === "active" ? (
+                <span className="spinner" />
+              ) : step.status === "failed" ? (
+                <IconAlert width="14" height="14" />
+              ) : step.status === "skipped" ? (
+                "–"
+              ) : (
+                <span className="step-dot" />
+              )}
+            </span>
+            <span className="step-text">
+              <span className="step-label">{step.label}</span>
+              {step.detail && <span className="small step-detail">{step.detail}</span>}
+            </span>
+            {step.transactionHash && (
+              <a href={explorer(chainId, "tx", step.transactionHash)} target="_blank" rel="noreferrer" className="mono small step-link">
+                {short(step.transactionHash)} <IconExternal />
+              </a>
+            )}
+          </li>
+        ))}
+      </ol>
       {execution.message && <span className="small">{execution.message}</span>}
     </div>
   );
 }
 
-function GasNote({ execution }: { execution: Execution }) {
-  const sweep = execution.sweep;
-  if (!sweep) return null;
-  if (sweep.status === "waiting") return <span className="muted small">Returning unused gas…</span>;
-  if (sweep.status === "sent") return <span className="muted small">Unused gas ({eth(sweep.amount ?? "0", 6)}) returned to your gas account</span>;
-  if (sweep.status === "failed") return <span className="small">Unused gas was not returned: {sweep.message}</span>;
-  return null;
-}

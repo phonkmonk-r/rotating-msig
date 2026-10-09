@@ -29,14 +29,14 @@ describe("rotation signer end to end", { skip }, () => {
 
   const post = (server: SignerServer, path: string, safeTxHash: string) => api(server, path, { method: "POST", body: JSON.stringify({ safeTxHash }) });
 
-  /** Sends an execution and polls it until it leaves "pending". */
+  /** Starts an execution the way the app does, and follows it by its Safe hash until it is no longer in flight. */
   async function executeAndWait(server: SignerServer, safeTxHash: string) {
     const sent = await post(server, "/api/execute", safeTxHash);
     assert.equal(sent.status, 200, JSON.stringify(sent.body));
-    assert.equal(sent.body.status, "pending");
+    assert.equal(sent.body.status, "preparing", "the API answers at once and reports steps as they happen");
     for (let i = 0; i < 100; i++) {
-      const { body } = await api(server, `/api/executions/${sent.body.transactionHash}`);
-      if (body.status !== "pending") return body;
+      const { body } = await api(server, `/api/executions/${safeTxHash}`);
+      if (body.status !== "pending" && body.status !== "preparing") return body;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     throw new Error("execution stayed pending");
@@ -163,9 +163,9 @@ describe("rotation signer end to end", { skip }, () => {
       const hash = service.propose(plainSafeTx({ to: RECIPIENT, value: 1n, data: "0x", operation: 0, nonce }));
       assert.equal((await post(servers[1]!, "/api/confirm", hash)).status, 200);
       const sent = await post(stuckSigner, "/api/execute", hash);
-      assert.equal(sent.body.status, "pending");
+      assert.equal(sent.status, 200);
       await new Promise((resolve) => setTimeout(resolve, 1200));
-      const { body } = await api(stuckSigner, `/api/executions/${sent.body.transactionHash}`);
+      const { body } = await api(stuckSigner, `/api/executions/${hash}`);
       assert.equal(body.status, "stuck");
       assert.match(String(body.message), /only one can ever be mined/);
       assert.equal(blackHole.swallowed(), 1);
