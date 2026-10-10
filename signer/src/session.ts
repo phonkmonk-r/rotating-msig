@@ -44,6 +44,7 @@ import { readAfter, simulateCalls, type ReadCall, type Simulation } from "./simu
 import { memoryStore, type SessionStore } from "./store.js";
 import { generateTree, OPERATOR_ACCOUNT, resolveCurrentOwner, type AddressSource, type CurrentOwner } from "@rotating-msig/keys";
 import {
+  BaseError,
   createWalletClient,
   custom,
   decodeFunctionData,
@@ -117,6 +118,8 @@ const REFILL_FREE_PLACES = 2;
 /** How long the sweep keeps waiting for an execution that is not mined yet. */
 const SWEEP_WATCH_MS = 30 * 60_000;
 const SWEEP_POLL_MS = 3_000;
+/** Sweep attempts after the execution is mined: a load-balanced RPC can answer from a node a few blocks behind. */
+const SWEEP_TRIES = 10;
 
 export interface Me {
   slotId: number;
@@ -1376,7 +1379,21 @@ export class SignerSession {
         }
         await new Promise((resolve) => setTimeout(resolve, SWEEP_POLL_MS));
       }
-      await this.sweep(await this.attemptAccount(entry), sweep);
+      const key = await this.attemptAccount(entry);
+      for (let tries = 1; ; tries++) {
+        try {
+          await this.sweep(key, sweep, entry.accountNonce);
+          return;
+        } catch (error) {
+          if (tries >= SWEEP_TRIES || sweep.transactionHash) {
+            const reason = error instanceof BaseError ? error.shortMessage : (error as Error).message;
+            sweep.status = "failed";
+            sweep.message = `Not returned yet (${reason.replace(/\.$/, "")}); the ETH stays on ${key.address}.`;
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, SWEEP_POLL_MS));
+        }
+      }
     } catch (error) {
       sweep.status = "failed";
       sweep.message = (error as Error).message;
@@ -1386,15 +1403,20 @@ export class SignerSession {
   /**
    * Sends everything `key` holds to the operator account. A legacy transaction with its gas limit set to the estimate
    * costs exactly limit × price, so the key is left at zero. Waits for the transfer and reports a revert as a failure.
+   * Balance and nonce are read at one block, and the call throws while that block does not include the execution sent
+   * at `executionNonce`, so a lagging RPC node can neither hand out a used nonce nor a balance from before the refund.
    */
-  private async sweep(key: LocalAccount, sweep: NonNullable<Execution["sweep"]>): Promise<void> {
+  private async sweep(key: LocalAccount, sweep: NonNullable<Execution["sweep"]>, executionNonce?: number): Promise<void> {
     const { publicClient, chain, source } = this.options;
     const operator = await source.address(OPERATOR_ACCOUNT);
-    const [balance, gasPrice, gas] = await Promise.all([
-      publicClient.getBalance({ address: key.address }),
+    const blockNumber = await publicClient.getBlockNumber({ cacheTime: 0 });
+    const [nonce, balance, gasPrice, gas] = await Promise.all([
+      publicClient.getTransactionCount({ address: key.address, blockNumber }),
+      publicClient.getBalance({ address: key.address, blockNumber }),
       publicClient.getGasPrice().then((price) => (price * 12n) / 10n),
       publicClient.estimateGas({ account: key.address, to: operator, value: 1n }),
     ]);
+    if (executionNonce !== undefined && nonce <= executionNonce) throw new Error("the RPC has not caught up with the execution");
     const cost = gas * gasPrice;
     if (balance <= cost) {
       sweep.status = "nothing";
@@ -1402,7 +1424,8 @@ export class SignerSession {
     }
     const wallet = createWalletClient({ account: key, chain, transport: custom(publicClient) });
     const amount = balance - cost;
-    const hash = await wallet.sendTransaction({ to: operator, value: amount, gas, gasPrice, type: "legacy", chain });
+    const hash = await wallet.sendTransaction({ to: operator, value: amount, gas, gasPrice, nonce, type: "legacy", chain });
+    sweep.transactionHash = hash;
     const receipt = await publicClient.waitForTransactionReceipt({ hash });
     if (receipt.status !== "success") {
       Object.assign(sweep, { status: "failed", transactionHash: hash, message: "the transfer back to your gas account reverted" });

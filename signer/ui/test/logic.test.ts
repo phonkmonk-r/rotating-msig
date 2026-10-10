@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import { validateMnemonic } from "@scure/bip39";
+import { wordlist } from "@scure/bip39/wordlists/english.js";
+
 import { eth, explorer, short, signedAmount, UNLIMITED_APPROVAL } from "../src/format.js";
 import { isSaved, tabLabel } from "../src/lib/browser.js";
 import { executionInFlight, executionTone, nextStep, requestValue, sendingLabel, sendingNote, sendLabel } from "../src/lib/execution.js";
+import { checkedWordsMatch, newSeedPhrase, pickCheckedWords, positionsLabel } from "../src/lib/newSeed.js";
 import { profileFormProblems, seedWordCount, type ProfileForm } from "../src/lib/profileForm.js";
 import { packagePreview } from "../src/lib/slotPackage.js";
 
@@ -66,6 +70,37 @@ describe("profile form", () => {
     const ledger: ProfileForm = { kind: "ledger", name: "Ledger", mnemonic: "", safe: "", password: "", confirm: "" };
     assert.deepEqual(profileFormProblems(ledger), []);
     assert.deepEqual(profileFormProblems({ ...ledger, safe: "nope" }), ["safe"]);
+  });
+});
+
+describe("new seed", () => {
+  it("creates a valid 12-word phrase, different each time", () => {
+    const phrase = newSeedPhrase();
+    assert.ok(validateMnemonic(phrase, wordlist));
+    assert.equal(phrase.split(" ").length, 12);
+    assert.notEqual(newSeedPhrase(), phrase);
+  });
+
+  it("asks for distinct positions in order", () => {
+    for (let run = 0; run < 50; run++) {
+      const picked = pickCheckedWords(12);
+      assert.equal(new Set(picked).size, 3);
+      assert.deepEqual(picked, [...picked].sort((a, b) => a - b));
+      assert.ok(picked.every((i) => i >= 0 && i < 12));
+    }
+    assert.deepEqual(pickCheckedWords(12, 3, () => 0), [0, 1, 2]);
+    assert.deepEqual(pickCheckedWords(2, 3), [0, 1]);
+  });
+
+  it("checks the answers ignoring case and spaces", () => {
+    assert.ok(checkedWordsMatch(TWELVE, [0, 11], { 0: " Abandon ", 11: "about" }));
+    assert.ok(!checkedWordsMatch(TWELVE, [0, 11], { 0: "abandon", 11: "abandon" }));
+    assert.ok(!checkedWordsMatch(TWELVE, [0, 11], { 0: "abandon" }));
+  });
+
+  it("names the positions the way people count", () => {
+    assert.equal(positionsLabel([2]), "#3");
+    assert.equal(positionsLabel([1, 4, 8]), "#2, #5 and #9");
   });
 });
 

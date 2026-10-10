@@ -2,17 +2,20 @@ import { useState } from "react";
 
 import { desktop, type ProfileView } from "./api";
 import { short } from "./format";
+import { checkedWordsMatch, newSeedPhrase, pickCheckedWords, positionsLabel } from "./lib/newSeed";
 import { MIN_PASSWORD, profileFormProblems, seedWordCount } from "./lib/profileForm";
 import { IconPlus } from "./icons";
 import { Avatar, Badge } from "./ui";
 
-type Kind = "seed" | "ledger";
+type Kind = "seed" | "new" | "ledger";
 
-/** Adds a profile: a seed phrase encrypted on this device, or a Ledger. The first one also asks for the Safe. */
+/** Adds a profile: an imported or newly created seed phrase encrypted on this device, or a Ledger. The first one also asks for the Safe. */
 export function AddProfile({ suggestedName, onDone, onCancel }: { suggestedName: string; onDone: (safe: string) => void; onCancel?: () => void }) {
   const [kind, setKind] = useState<Kind>("seed");
   const [name, setName] = useState(suggestedName);
   const [mnemonic, setMnemonic] = useState("");
+  const [draft, setDraft] = useState(newSeedPhrase);
+  const [created, setCreated] = useState<string>();
   const [safe, setSafe] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -20,7 +23,8 @@ export function AddProfile({ suggestedName, onDone, onCancel }: { suggestedName:
   const [working, setWorking] = useState(false);
 
   const words = seedWordCount(mnemonic);
-  const problems = profileFormProblems({ kind, name, mnemonic, safe, password, confirm });
+  const seed = kind === "new" ? (created ?? "") : mnemonic;
+  const problems = profileFormProblems({ kind: kind === "ledger" ? "ledger" : "seed", name, mnemonic: seed, safe, password, confirm });
   const validSafe = !problems.includes("safe");
   const mismatch = confirm !== "" && confirm !== password;
   const ready = problems.length === 0 && !working;
@@ -29,9 +33,11 @@ export function AddProfile({ suggestedName, onDone, onCancel }: { suggestedName:
     setWorking(true);
     setError(undefined);
     try {
-      if (kind === "seed") await desktop!.addSeedProfile(name, mnemonic, password);
-      else await desktop!.addLedgerProfile(name);
+      if (kind === "ledger") await desktop!.addLedgerProfile(name);
+      else await desktop!.addSeedProfile(name, seed, password);
       setMnemonic("");
+      setDraft("");
+      setCreated(undefined);
       setPassword("");
       setConfirm("");
       onDone(safe.trim());
@@ -58,6 +64,9 @@ export function AddProfile({ suggestedName, onDone, onCancel }: { suggestedName:
         <button type="button" className={kind === "seed" ? "active" : ""} onClick={() => setKind("seed")}>
           Seed phrase
         </button>
+        <button type="button" className={kind === "new" ? "active" : ""} onClick={() => setKind("new")}>
+          New seed
+        </button>
         <button type="button" className={kind === "ledger" ? "active" : ""} onClick={() => setKind("ledger")}>
           Ledger
         </button>
@@ -68,7 +77,9 @@ export function AddProfile({ suggestedName, onDone, onCancel }: { suggestedName:
         <input value={name} maxLength={40} onChange={(e) => setName(e.target.value)} />
       </label>
 
-      {kind === "seed" ? (
+      {kind === "new" ? (
+        <NewSeed phrase={draft} onRegenerate={() => setDraft(newSeedPhrase())} confirmed={created !== undefined} onConfirmed={setCreated} />
+      ) : kind === "seed" ? (
         <label className="field">
           <span className="field-label">
             Seed phrase {words > 0 && <span className="muted">{words} words</span>}
@@ -81,15 +92,17 @@ export function AddProfile({ suggestedName, onDone, onCancel }: { suggestedName:
         </div>
       )}
 
-      <label className="field">
-        <span className="field-label">
-          Safe address <span className="muted">optional</span>
-        </span>
-        <input placeholder="Leave empty to create a Safe or use an invite" spellCheck={false} value={safe} onChange={(e) => setSafe(e.target.value)} />
-        {!validSafe && <span className="field-error">Not a valid address</span>}
-      </label>
+      {(kind !== "new" || created) && (
+        <label className="field">
+          <span className="field-label">
+            Safe address <span className="muted">optional</span>
+          </span>
+          <input placeholder="Leave empty to create a Safe or use an invite" spellCheck={false} value={safe} onChange={(e) => setSafe(e.target.value)} />
+          {!validSafe && <span className="field-error">Not a valid address</span>}
+        </label>
+      )}
 
-      {kind === "seed" && (
+      {((kind === "new" && created) || kind === "seed") && (
         <>
           <div className="field-row">
             <label className="field">
@@ -112,11 +125,128 @@ export function AddProfile({ suggestedName, onDone, onCancel }: { suggestedName:
             Cancel
           </button>
         )}
-        <button type="submit" className="primary" disabled={!ready}>
-          {working ? (kind === "seed" ? "Encrypting…" : "Connecting…") : kind === "seed" ? "Add profile" : "Connect Ledger"}
-        </button>
+        {(kind !== "new" || created) && (
+          <button type="submit" className="primary" disabled={!ready}>
+            {working ? (kind === "ledger" ? "Connecting…" : "Encrypting…") : { seed: "Add profile", new: "Create profile", ledger: "Connect Ledger" }[kind]}
+          </button>
+        )}
       </div>
     </form>
+  );
+}
+
+/**
+ * Creates a seed phrase, shows it to write down, then asks for a few of its words before handing it back.
+ * @param phrase The generated phrase, kept by the form so switching tabs does not replace it.
+ * @param onRegenerate Replaces the phrase with fresh words.
+ * @param confirmed Whether the check passed; the step then shows only that it is done.
+ * @param onConfirmed Receives the phrase after the check passes, or undefined to show the words again.
+ */
+function NewSeed({ phrase, onRegenerate, confirmed, onConfirmed }: { phrase: string; onRegenerate: () => void; confirmed: boolean; onConfirmed: (phrase: string | undefined) => void }) {
+  const [stage, setStage] = useState<"write" | "check">("write");
+  const [written, setWritten] = useState(false);
+  const [checked, setChecked] = useState<number[]>([]);
+  const [answers, setAnswers] = useState<Record<number, string>>({});
+  const [wrong, setWrong] = useState(false);
+  const words = phrase.split(" ");
+
+  if (confirmed) {
+    return (
+      <div className="note ok">
+        <span>
+          Backup checked. Keep your written copy safe: it is the only way to restore this profile.{" "}
+          <button type="button" className="link" onClick={() => (onConfirmed(undefined), setStage("write"), setWritten(false))}>
+            Show the words again
+          </button>
+        </span>
+      </div>
+    );
+  }
+
+  if (stage === "write") {
+    return (
+      <>
+        <div className="note warning">
+          <span>Write these 12 words on paper, in order. Anyone who has them controls this wallet, and without them it can't be restored. Don't screenshot, copy or store them online.</span>
+        </div>
+        <ol className="seed-grid">
+          {words.map((word, i) => (
+            <li key={i} className="seed-word">
+              <span className="seed-index">{i + 1}</span>
+              {word}
+            </li>
+          ))}
+        </ol>
+        <div className="seed-actions">
+          <label className="checkbox">
+            <input type="checkbox" checked={written} onChange={(e) => setWritten(e.target.checked)} />
+            <span>I wrote down all 12 words in order</span>
+          </label>
+          <button type="button" className="link" onClick={() => (onRegenerate(), setWritten(false))}>
+            New words
+          </button>
+        </div>
+        <button
+          type="button"
+          className="primary"
+          disabled={!written}
+          onClick={() => {
+            setChecked(pickCheckedWords(words.length));
+            setAnswers({});
+            setWrong(false);
+            setStage("check");
+          }}
+        >
+          Check my backup
+        </button>
+      </>
+    );
+  }
+
+  const complete = checked.every((i) => (answers[i] ?? "").trim() !== "");
+  function verify() {
+    if (checkedWordsMatch(phrase, checked, answers)) onConfirmed(phrase);
+    else setWrong(true);
+  }
+
+  return (
+    <>
+      <p className="muted small">From your written copy, enter words {positionsLabel(checked)}.</p>
+      <ol className="seed-grid">
+        {words.map((_, i) => (
+          <li key={i} className={`seed-word ${checked.includes(i) ? "asked" : "hidden"}`}>
+            <span className="seed-index">{i + 1}</span>
+            {checked.includes(i) ? (
+              <input
+                aria-label={`Word ${i + 1}`}
+                spellCheck={false}
+                autoComplete="off"
+                autoFocus={i === checked[0]}
+                value={answers[i] ?? ""}
+                onChange={(e) => (setAnswers({ ...answers, [i]: e.target.value }), setWrong(false))}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (complete) verify();
+                  }
+                }}
+              />
+            ) : (
+              "•••••"
+            )}
+          </li>
+        ))}
+      </ol>
+      {wrong && <span className="field-error">Those words don't match. Check your copy, or go back to the words.</span>}
+      <div className="form-actions">
+        <button type="button" onClick={() => (setStage("write"), setWritten(false))}>
+          Back to the words
+        </button>
+        <button type="button" className="primary" disabled={!complete} onClick={verify}>
+          Confirm
+        </button>
+      </div>
+    </>
   );
 }
 
