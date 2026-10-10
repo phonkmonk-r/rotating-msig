@@ -7,7 +7,7 @@ import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { eth, explorer, short, signedAmount, UNLIMITED_APPROVAL } from "../src/format.js";
 import { isSaved, tabLabel } from "../src/lib/browser.js";
 import { executionInFlight, executionTone, nextStep, requestValue, sendingLabel, sendingNote, sendLabel } from "../src/lib/execution.js";
-import { checkedWordsMatch, newSeedPhrase, pickCheckedWords, positionsLabel } from "../src/lib/newSeed.js";
+import { checkedWordCount, checkedWordsMatch, newSeedPhrase, pickCheckedWords, positionsLabel } from "../src/lib/newSeed.js";
 import { profileFormProblems, seedWordCount, type ProfileForm } from "../src/lib/profileForm.js";
 import { packagePreview } from "../src/lib/slotPackage.js";
 
@@ -62,6 +62,8 @@ describe("profile form", () => {
     assert.deepEqual(profileFormProblems({ ...seed, safe: "0x1234" }), ["safe"]);
     assert.deepEqual(profileFormProblems({ ...seed, mnemonic: `${TWELVE} extra` }), ["seed"]);
     assert.deepEqual(profileFormProblems({ ...seed, mnemonic: `${TWELVE} ${TWELVE}` }), [], "24 words are fine");
+    assert.deepEqual(profileFormProblems({ ...seed, mnemonic: `${TWELVE} abandon abandon abandon abandon abandon about` }), [], "and every BIP-39 length between");
+    assert.deepEqual(profileFormProblems({ ...seed, mnemonic: `${TWELVE} about` }), ["seed"]);
     assert.deepEqual(profileFormProblems({ ...seed, password: "short", confirm: "short" }), ["password"]);
     assert.deepEqual(profileFormProblems({ ...seed, confirm: "correct horsE" }), ["confirm"]);
   });
@@ -79,6 +81,17 @@ describe("new seed", () => {
     assert.ok(validateMnemonic(phrase, wordlist));
     assert.equal(phrase.split(" ").length, 12);
     assert.notEqual(newSeedPhrase(), phrase);
+  });
+
+  it("creates 18 and 24-word phrases too, and checks more of their words", () => {
+    for (const length of [18, 24] as const) {
+      const phrase = newSeedPhrase(length);
+      assert.ok(validateMnemonic(phrase, wordlist));
+      assert.equal(phrase.split(" ").length, length);
+    }
+    assert.deepEqual([12, 18, 24].map(checkedWordCount), [3, 4, 5]);
+    assert.equal(pickCheckedWords(24).length, 5);
+    assert.equal(pickCheckedWords(18).length, 4);
   });
 
   it("asks for distinct positions in order", () => {

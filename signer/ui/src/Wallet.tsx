@@ -2,7 +2,7 @@ import { useState } from "react";
 
 import { desktop, type ProfileView } from "./api";
 import { short } from "./format";
-import { checkedWordsMatch, newSeedPhrase, pickCheckedWords, positionsLabel } from "./lib/newSeed";
+import { checkedWordsMatch, newSeedPhrase, pickCheckedWords, positionsLabel, SEED_LENGTHS, type SeedLength } from "./lib/newSeed";
 import { MIN_PASSWORD, profileFormProblems, seedWordCount } from "./lib/profileForm";
 import { IconPlus } from "./icons";
 import { Avatar, Badge } from "./ui";
@@ -78,13 +78,13 @@ export function AddProfile({ suggestedName, onDone, onCancel }: { suggestedName:
       </label>
 
       {kind === "new" ? (
-        <NewSeed phrase={draft} onRegenerate={() => setDraft(newSeedPhrase())} confirmed={created !== undefined} onConfirmed={setCreated} />
+        <NewSeed phrase={draft} onRegenerate={(length) => setDraft(newSeedPhrase(length))} confirmed={created !== undefined} onConfirmed={setCreated} />
       ) : kind === "seed" ? (
         <label className="field">
           <span className="field-label">
             Seed phrase {words > 0 && <span className="muted">{words} words</span>}
           </span>
-          <textarea rows={3} spellCheck={false} autoComplete="off" value={mnemonic} onChange={(e) => setMnemonic(e.target.value)} placeholder="12 or 24 words" />
+          <textarea rows={3} spellCheck={false} autoComplete="off" value={mnemonic} onChange={(e) => setMnemonic(e.target.value)} placeholder="12, 18 or 24 words" />
         </label>
       ) : (
         <div className="note pending">
@@ -138,11 +138,11 @@ export function AddProfile({ suggestedName, onDone, onCancel }: { suggestedName:
 /**
  * Creates a seed phrase, shows it to write down, then asks for a few of its words before handing it back.
  * @param phrase The generated phrase, kept by the form so switching tabs does not replace it.
- * @param onRegenerate Replaces the phrase with fresh words.
+ * @param onRegenerate Replaces the phrase with fresh words of the given length.
  * @param confirmed Whether the check passed; the step then shows only that it is done.
  * @param onConfirmed Receives the phrase after the check passes, or undefined to show the words again.
  */
-function NewSeed({ phrase, onRegenerate, confirmed, onConfirmed }: { phrase: string; onRegenerate: () => void; confirmed: boolean; onConfirmed: (phrase: string | undefined) => void }) {
+function NewSeed({ phrase, onRegenerate, confirmed, onConfirmed }: { phrase: string; onRegenerate: (length: SeedLength) => void; confirmed: boolean; onConfirmed: (phrase: string | undefined) => void }) {
   const [stage, setStage] = useState<"write" | "check">("write");
   const [written, setWritten] = useState(false);
   const [checked, setChecked] = useState<number[]>([]);
@@ -167,7 +167,19 @@ function NewSeed({ phrase, onRegenerate, confirmed, onConfirmed }: { phrase: str
     return (
       <>
         <div className="note warning">
-          <span>Write these 12 words on paper, in order. Anyone who has them controls this wallet, and without them it can't be restored. Don't screenshot, copy or store them online.</span>
+          <span>Write these {words.length} words on paper, in order. Anyone who has them controls this wallet, and without them it can't be restored. Don't screenshot, copy or store them online.</span>
+        </div>
+        <div className="segmented full">
+          {SEED_LENGTHS.map((length) => (
+            <button
+              key={length}
+              type="button"
+              className={words.length === length ? "active" : ""}
+              onClick={() => (onRegenerate(length), setWritten(false))}
+            >
+              {length} words
+            </button>
+          ))}
         </div>
         <ol className="seed-grid">
           {words.map((word, i) => (
@@ -180,9 +192,9 @@ function NewSeed({ phrase, onRegenerate, confirmed, onConfirmed }: { phrase: str
         <div className="seed-actions">
           <label className="checkbox">
             <input type="checkbox" checked={written} onChange={(e) => setWritten(e.target.checked)} />
-            <span>I wrote down all 12 words in order</span>
+            <span>I wrote down all {words.length} words in order</span>
           </label>
-          <button type="button" className="link" onClick={() => (onRegenerate(), setWritten(false))}>
+          <button type="button" className="link" onClick={() => (onRegenerate(words.length as SeedLength), setWritten(false))}>
             New words
           </button>
         </div>

@@ -1,12 +1,18 @@
 import { generateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 
-/** How many words the backup check asks for. */
-export const CHECKED_WORDS = 3;
+/** Lengths offered for a new seed phrase. */
+export const SEED_LENGTHS = [12, 18, 24] as const;
+export type SeedLength = (typeof SEED_LENGTHS)[number];
 
-/** A fresh 12-word BIP-39 seed phrase from the platform's secure random source. */
-export function newSeedPhrase(): string {
-  return generateMnemonic(wordlist, 128);
+/** How many words the backup check asks for: 3 of 12, 4 of 18, 5 of 24. */
+export function checkedWordCount(wordCount: number): number {
+  return Math.floor(wordCount / 6) + 1;
+}
+
+/** A fresh BIP-39 seed phrase of the given length from the platform's secure random source. */
+export function newSeedPhrase(words: SeedLength = 12): string {
+  return generateMnemonic(wordlist, (words / 3) * 32);
 }
 
 /** A uniform random integer in [0, bound) from `crypto.getRandomValues`, without modulo bias. */
@@ -26,7 +32,7 @@ function randomBelow(bound: number): number {
  * @param random Source of integers in [0, bound); defaults to the secure source.
  * @returns Distinct zero-based positions in ascending order.
  */
-export function pickCheckedWords(wordCount: number, count = CHECKED_WORDS, random: (bound: number) => number = randomBelow): number[] {
+export function pickCheckedWords(wordCount: number, count = checkedWordCount(wordCount), random: (bound: number) => number = randomBelow): number[] {
   const positions = Array.from({ length: wordCount }, (_, i) => i);
   const picked: number[] = [];
   while (picked.length < Math.min(count, wordCount)) picked.push(positions.splice(random(positions.length), 1)[0]!);

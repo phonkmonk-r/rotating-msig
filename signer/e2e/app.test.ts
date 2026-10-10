@@ -297,7 +297,7 @@ describe("Cicada desktop app", { skip, timeout: 5 * TIMEOUT }, () => {
     assert.deepEqual(readdirSync(join(userData, "profiles")), [], "the seed vault, settings and key lists are gone");
   });
 
-  it("creates a new seed, checks the written copy, and makes a profile from it", async () => {
+  it("creates a new seed of the chosen length, checks the written copy, and makes a profile from it", async () => {
     await page.getByRole("button", { name: "New seed" }).click();
     await page.getByLabel("Profile name").fill("Fresh");
     const grid = page.locator(".seed-grid .seed-word");
@@ -309,14 +309,19 @@ describe("Cicada desktop app", { skip, timeout: 5 * TIMEOUT }, () => {
     const check = page.getByRole("button", { name: "Check my backup" });
     assert.ok(await check.isDisabled(), "the check waits until the words are written down");
     await page.getByRole("button", { name: "New words" }).click();
+    assert.notDeepEqual(await grid.evaluateAll((cells) => cells.map((cell) => cell.lastChild!.textContent!.trim())), words, "New words replaces the phrase");
+    await page.getByRole("button", { name: "24 words" }).click();
+    assert.equal(await grid.count(), 24);
+    await page.getByRole("button", { name: "18 words" }).click();
     const fresh = await grid.evaluateAll((cells) => cells.map((cell) => cell.lastChild!.textContent!.trim()));
-    assert.notDeepEqual(fresh, words, "New words replaces the phrase");
-    await page.getByLabel("I wrote down all 12 words in order").check();
+    assert.equal(fresh.length, 18);
+    assert.ok(validateMnemonic(fresh.join(" "), wordlist));
+    await page.getByLabel("I wrote down all 18 words in order").check();
     await check.click();
 
     const asked = await page.locator(".seed-word.asked input").evaluateAll((inputs) => inputs.map((input) => input.getAttribute("aria-label")!));
-    assert.equal(asked.length, 3);
-    assert.equal(await page.locator(".seed-word.hidden").count(), 9, "the other words are hidden");
+    assert.equal(asked.length, 4, "18 words ask for 4 back");
+    assert.equal(await page.locator(".seed-word.hidden").count(), 14, "the other words are hidden");
     const wordAt = (label: string) => fresh[Number(label.replace("Word ", "")) - 1]!;
     for (const label of asked) await page.getByLabel(label, { exact: true }).fill(label === asked[0] ? `${wordAt(label)}x` : wordAt(label));
     await page.getByRole("button", { name: "Confirm", exact: true }).click();
