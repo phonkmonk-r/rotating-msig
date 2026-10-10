@@ -7,7 +7,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, afterEach, before, describe, it } from "node:test";
 import { _electron as electron, type ElectronApplication, type Page } from "playwright-core";
+import { validateMnemonic } from "@scure/bip39";
+import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { parseEther, type Address } from "viem";
+import { mnemonicToAccount } from "viem/accounts";
 import { foundry } from "viem/chains";
 
 import { DEPLOYMENTS, plainSafeTx, readSafeState, TxService } from "@rotating-msig/core";
@@ -292,5 +295,43 @@ describe("Cicada desktop app", { skip, timeout: 5 * TIMEOUT }, () => {
     await page.getByRole("button", { name: "Remove", exact: true }).click();
     await page.getByRole("heading", { name: "Add a profile" }).waitFor();
     assert.deepEqual(readdirSync(join(userData, "profiles")), [], "the seed vault, settings and key lists are gone");
+  });
+
+  it("creates a new seed, checks the written copy, and makes a profile from it", async () => {
+    await page.getByRole("button", { name: "New seed" }).click();
+    await page.getByLabel("Profile name").fill("Fresh");
+    const grid = page.locator(".seed-grid .seed-word");
+    const words = await grid.evaluateAll((cells) => cells.map((cell) => cell.lastChild!.textContent!.trim()));
+    assert.equal(words.length, 12);
+    assert.ok(validateMnemonic(words.join(" "), wordlist), "the words are a valid BIP-39 phrase");
+    assert.equal(await page.getByLabel(/Safe address/).count(), 0, "the rest of the form waits for the check");
+
+    const check = page.getByRole("button", { name: "Check my backup" });
+    assert.ok(await check.isDisabled(), "the check waits until the words are written down");
+    await page.getByRole("button", { name: "New words" }).click();
+    const fresh = await grid.evaluateAll((cells) => cells.map((cell) => cell.lastChild!.textContent!.trim()));
+    assert.notDeepEqual(fresh, words, "New words replaces the phrase");
+    await page.getByLabel("I wrote down all 12 words in order").check();
+    await check.click();
+
+    const asked = await page.locator(".seed-word.asked input").evaluateAll((inputs) => inputs.map((input) => input.getAttribute("aria-label")!));
+    assert.equal(asked.length, 3);
+    assert.equal(await page.locator(".seed-word.hidden").count(), 9, "the other words are hidden");
+    const wordAt = (label: string) => fresh[Number(label.replace("Word ", "")) - 1]!;
+    for (const label of asked) await page.getByLabel(label, { exact: true }).fill(label === asked[0] ? `${wordAt(label)}x` : wordAt(label));
+    await page.getByRole("button", { name: "Confirm", exact: true }).click();
+    await page.getByText("Those words don't match").waitFor();
+
+    await page.getByLabel(asked[0]!, { exact: true }).fill(` ${wordAt(asked[0]!).toUpperCase()} `);
+    await page.getByRole("button", { name: "Confirm", exact: true }).click();
+    await page.getByText("Backup checked").waitFor();
+    await page.getByLabel("Password", { exact: true }).fill(PASSWORD);
+    await page.getByLabel("Confirm", { exact: true }).fill(PASSWORD);
+    await page.getByRole("button", { name: "Create profile" }).click();
+
+    await page.getByRole("heading", { name: "Connect a Safe" }).waitFor();
+    const operator = mnemonicToAccount(fresh.join(" "), { addressIndex: 0 }).address;
+    await page.locator(".operator-box").getByText(operator).waitFor();
+    assert.equal(readdirSync(join(userData, "profiles")).length, 1, "the new seed is saved as a profile");
   });
 });

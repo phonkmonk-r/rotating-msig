@@ -386,6 +386,61 @@ button.large {
   gap: 8px;
 }
 
+.seed-grid {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+
+.seed-word {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  font: 550 13px/1 var(--mono);
+}
+
+.seed-word.hidden {
+  color: var(--muted);
+}
+
+.seed-word.asked {
+  background: var(--surface);
+  border-color: var(--accent);
+  padding-right: 2px;
+}
+
+.seed-word input {
+  min-width: 0;
+  height: 28px;
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  box-shadow: none;
+}
+
+.seed-index {
+  min-width: 16px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+}
+
+.seed-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
 .progress-block {
   display: flex;
   flex-direction: column;
